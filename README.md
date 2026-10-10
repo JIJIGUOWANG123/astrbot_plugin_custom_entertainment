@@ -1,0 +1,2 @@
+# astrbot_plugin_custom_entertainment
+astrbot_plugin_custom_entertainment
