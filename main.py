@@ -29,18 +29,11 @@ try:
 except Exception:
     AudioFile = None
 try:
-    from .core import group_card as _group_card
-    _HAS_GROUP_CARD = True
-except Exception as e:
-    _HAS_GROUP_CARD = False
-try:
     from .core import qq_info as _qq_info
     _HAS_QQ_INFO = True
 except Exception as e:
     _HAS_QQ_INFO = False
     logger.warning(f"[apix-meme] qq_info 模块加载失败: {e}")
-    _group_card = None
-    logger.warning(f"[apix-meme] group_card 模块加载失败: {e}")
 
 try:
     from .core.output_mode import OutputModeModule
@@ -485,23 +478,7 @@ except Exception as e:
 # 小鸟素材默认目录（后台可改；改了就用后台的）
 
 
-try:
-    from .core.rps import (RpsModule, parse_rps_args, normalize_choice,
-                           RPS_CHOICES, RPS_EMOJI)
-    _HAS_RPS = True
-except Exception as e:
-    _HAS_RPS = False
-    RpsModule = None
-    RPS_CHOICES = ("石头", "剪刀", "布")
-    RPS_EMOJI = {}
-
-    def parse_rps_args(text, trigger_names=None):
-        return "", []
-
-
-    def normalize_choice(raw):
-        return ""
-    logger.warning(f"[apix-meme] rps 模块加载失败: {e}")
+# ★★ 市场版：猜拳模块（core/rps.py）已整体移除
 
 # ★★ 1.7.7：猜数游戏（娱乐功能）
 try:
@@ -593,9 +570,7 @@ try:
         build_super_admin_menu,
         build_changelog_menu,
         build_entertain_menu,
-        build_card_menu,
-    build_qqinfo_menu,
-        build_rps_menu,
+        build_qqinfo_menu,
         MENU_REGISTRY,
         resolve_menu,
         menu_default,
@@ -616,7 +591,6 @@ except Exception as e:
     def build_daily_menu(p): return ""
     def build_admin_menu(p): return ""
     def build_meme_feature_menu(p): return ""
-    def build_rps_menu(p): return ""
     def build_greeting_morning_menu(p): return ""
     def build_greeting_night_menu(p): return ""
     def build_greeting_rank_menu(p): return ""
@@ -693,7 +667,6 @@ from .core.path_utils import (
     daily_news_data_path as _daily_news_data_path,
     speak_stats_data_path as _speak_stats_data_path,
     pet_data_path as _pet_data_path,
-    rps_data_path as _rps_data_path,
     # ★★ 1.7.7：猜数游戏数据文件
     guess_data_path as _guess_data_path,
     # ★★ 1.7.7：收发消息计数文件
@@ -814,13 +787,11 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_daily_menu_name = "每日系列"
         # ★ 娱乐功能（1.7.3）
         self.cmd_entertain_menu_name = "娱乐功能"
-        self.cmd_card_menu_name = "名片功能"
-        self.cmd_card_gender_style = "v2"   # 名片性别符号样式（后台可改）
+        # ★★ 市场版：名片功能已移除
         # ★ 查询功能（QQ 用户信息）
         self.qqinfo_enable = True
         self.cmd_qqinfo = "查询,查QQ,查qq,查用户"
         self.cmd_qqinfo_menu_name = "查询功能"
-        self.cmd_card_name = "名片,我的名片"
 
         self.cmd_chime_on_name = "整点报时开"
         self.cmd_chime_off_name = "整点报时关"
@@ -1113,27 +1084,9 @@ class ApixIqfkSimpleMeme(Star):
         self.bird_image_dir = BIRD_DIR_DEFAULT
         self.bird_rank_enable = True   # 图鉴左上角显示「收集第几名」
 
-        # ============ 猜拳功能（1.7.5）============
-        self.rps_module = None
-        if _HAS_RPS:
-            try:
-                self.rps_module = RpsModule(_rps_data_path())
-                logger.info("[apix-meme] 猜拳模块初始化成功")
-            except Exception:
-                logger.exception("[apix-meme] 初始化猜拳模块失败")
-        # 猜拳：开关 / 指令名 / 积分上限 / 每日次数
+        # ★★ 市场版：猜拳功能（含名片）已整体移除
         self.score_name = "积分"          # 积分显示名称（后台可改）
-        # ★ 猜拳功能的群号黑名单（留空 = 所有群生效）
-        self.rps_groups = []
-        # ★ 名片功能的群号黑名单（留空 = 所有群生效）
-        self.card_groups = []
-        self.rps_enable = True
-        self.cmd_rps = ["猜拳"]
-        self.cmd_rps_menu = ["猜拳功能"]
         self.cmd_weather_menu_name = "天气查询"
-        self.rps_bet_max = 100          # 单局积分上限（后台可改任意数字）
-        self.rps_daily_limit = 0        # 每人每天次数上限（0 = 不限）
-        self.rps_allow_negative = True  # 是否允许扣成负分
 
         # ============ 猜数游戏（1.7.7，娱乐功能）============
         self.guess_module = None
@@ -3603,13 +3556,7 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_daily_menu_name = to_str(merged.get("cmd_daily_menu", "每日系列")).strip() or "每日系列"
         self.cmd_entertain_menu_name = to_str(
             merged.get("cmd_entertain_menu", "娱乐功能")).strip() or "娱乐功能"
-        self.cmd_card_menu_name = to_str(
-            merged.get("cmd_card_menu", "名片功能")).strip() or "名片功能"
-        self.cmd_card_name = to_str(
-            merged.get("cmd_card", "名片,我的名片")).strip() or "名片"
-        # ★ 名片性别符号样式（v1~v8，后台下拉选）
-        self.cmd_card_gender_style = to_str(
-            merged.get("cmd_card_gender_style", "v2")).strip() or "v2"
+        # ★★ 市场版：名片功能已移除
         # ★ 查询功能（QQ 用户信息）
         self.qqinfo_enable = bool(merged.get("qqinfo_enable", True))
         self.cmd_qqinfo = to_str(
@@ -3715,7 +3662,7 @@ class ApixIqfkSimpleMeme(Star):
             # ★ 积分显示名称（后台可改）
             _sn = str(merged.get("score_name", "") or "积分").strip() or "积分"
             self.score_name = _sn
-            for _mod in ("checkin_module", "pet_module", "rps_module"):
+            for _mod in ("checkin_module", "pet_module"):
                 _m = getattr(self, _mod, None)
                 if _m is not None:
                     try:
@@ -3784,45 +3731,9 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 self._menu_entry_raw = {}
 
-            self.rps_groups = parse_gid_whitelist(
-                merged.get("rps_groups", ""))
-            self.card_groups = parse_gid_whitelist(
-                merged.get("card_groups", ""))
+            # ★★ 市场版：猜拳 / 名片配置读取已移除
             self.qqinfo_groups = parse_gid_whitelist(
                 merged.get("qqinfo_groups", ""))
-            self.rps_enable = bool(merged.get("rps_enable", True))
-            self.cmd_rps = _bn(merged.get("cmd_rps"), ["猜拳"])
-            self.cmd_rps_menu = _bn(merged.get("cmd_rps_menu"),
-                                    ["猜拳功能"])
-            try:
-                self.rps_bet_max = max(
-                    1, int(str(merged.get("rps_bet_max", 100)
-                                ).strip() or 100))
-            except Exception:
-                self.rps_bet_max = 100
-            try:
-                self.rps_daily_limit = max(
-                    0, int(str(merged.get("rps_daily_limit", 0)
-                                ).strip() or 0))
-            except Exception:
-                self.rps_daily_limit = 0
-            self.rps_allow_negative = bool(
-                merged.get("rps_allow_negative", True))
-            if self.rps_module is not None:
-                try:
-                    self.rps_module.enable = self.rps_enable
-                    self.rps_module.trigger_names = list(self.cmd_rps)
-                    self.rps_module.bet_max = self.rps_bet_max
-                    self.rps_module.daily_limit = self.rps_daily_limit
-                    self.rps_module.allow_negative = self.rps_allow_negative
-                except Exception:
-                    logger.exception("[apix-meme] 同步猜拳配置失败")
-            logger.info(
-                "[apix-meme] 猜拳：开关=%s 指令=%s 积分上限=%s 每日上限=%s "
-                "允许负分=%s 积分名称=%s",
-                self.rps_enable, self.cmd_rps, self.rps_bet_max,
-                self.rps_daily_limit, self.rps_allow_negative,
-                self.score_name)
 
             # ★★ 1.7.7：猜数游戏配置
             self.guess_groups = parse_gid_whitelist(
@@ -3876,10 +3787,6 @@ class ApixIqfkSimpleMeme(Star):
                 self.guess_min, self.guess_max, self.guess_max_tries,
                 self.guess_timeout_sec, self.guess_reward_min,
                 self.guess_reward_max, self.guess_penalty)
-            logger.info("[apix-meme] 猜拳群号黑名单：%s",
-                        self.rps_groups or "（未排除任何群）")
-            logger.info("[apix-meme] 名片群号黑名单：%s",
-                        self.card_groups or "（未排除任何群）")
             logger.info(
                 f"[apix-meme] 小鸟图鉴：开关={self.bird_enable} "
                 f"菜单={self.cmd_bird_menu} 抽鸟={self.cmd_bird} "
@@ -4338,7 +4245,6 @@ class ApixIqfkSimpleMeme(Star):
             existing["minecraft_auto_groups"] = "\n".join(self.minecraft_auto_groups)
             existing["minecraft_test_groups"] = "\n".join(self.minecraft_test_groups)
             existing["minecraft_groups"] = ",".join(self.minecraft_groups or [])
-            existing["card_groups"] = ",".join(self.card_groups or [])
             existing["qqinfo_groups"] = ",".join(
                 getattr(self, "qqinfo_groups", None) or [])
             existing["qqinfo_enable"] = bool(
@@ -4346,9 +4252,7 @@ class ApixIqfkSimpleMeme(Star):
             existing["cmd_qqinfo"] = getattr(self, "cmd_qqinfo", "查询")
             existing["cmd_qqinfo_menu"] = getattr(
                 self, "cmd_qqinfo_menu_name", "查询功能")
-            existing["cmd_card_gender_style"] = getattr(
-                self, "cmd_card_gender_style", "v2") or "v2"
-            existing["rps_groups"] = ",".join(self.rps_groups or [])
+            # ★★ 市场版：名片 / 猜拳配置已移除
 
             json.dumps(existing, ensure_ascii=False)
 
@@ -4655,41 +4559,7 @@ class ApixIqfkSimpleMeme(Star):
         nm = getattr(self, "cmd_qqinfo_menu_name", "") or "查询功能"
         return t in (nm, f"/{nm}")
 
-    def _is_card_menu(self, text: str) -> bool:
-        """名片子菜单入口"""
-        return text in (self.cmd_card_menu_name, f"/{self.cmd_card_menu_name}")
 
-    def _match_card_cmd(self, text: str) -> str:
-        """
-        名片指令识别。
-
-        返回：None=没命中；""=查自己；否则=参数原文（@某人 / QQ号）
-
-        ★ 只认「纯指令」或「指令 + @某人 / QQ号」。
-          后面跟了别的字符（如「资料卡abc」「资料卡你好」）一律不触发，
-          避免误吃正常聊天内容。
-        """
-        t = str(text or "").strip()
-        if not t:
-            return None
-        names = self._split_names(getattr(self, "cmd_card_name", "") or "名片")
-        for nm in sorted(names, key=len, reverse=True):
-            if not nm:
-                continue
-            for prefix in (nm, f"/{nm}"):
-                if t == prefix:
-                    return ""                      # 纯指令 -> 查自己
-                if not t.startswith(prefix):
-                    continue
-                rest = t[len(prefix):].strip(" ：:，,")
-                if not rest:
-                    return ""                      # 「资料卡 」（只有空格）
-                # 只接受 @某人 或 纯数字 QQ
-                if rest.startswith("@") or rest.isdigit():
-                    return rest
-                # 其它字符 -> 不算本指令，交给后面的逻辑
-                return None
-        return None
 
     def _pet_parse_target(self, event, arg: str) -> str:
         """
@@ -4941,13 +4811,7 @@ class ApixIqfkSimpleMeme(Star):
         if (str(_mode).startswith("image") and om is not None
                 and hasattr(om, "render_query_card")):
             avatar_path = ""
-            try:
-                if _HAS_GROUP_CARD:
-                    avatar_path = await _group_card.download_avatar_file(
-                        event, target)
-            except Exception:
-                logger.debug("[apix-meme] 查询头像下载失败", exc_info=True)
-                avatar_path = ""
+            # ★★ 市场版：名片/头像模块已移除，查询卡片不再嵌头像
             try:
                 img_path = await om.render_query_card(
                     text, avatar_path=avatar_path,
@@ -5604,8 +5468,6 @@ class ApixIqfkSimpleMeme(Star):
     def _build_qqinfo_menu(self):
         return self._menu("qqinfo", lambda: build_qqinfo_menu(self))
 
-    def _build_card_menu(self):
-        return self._menu("card", lambda: build_card_menu(self))
 
 
 
@@ -5722,60 +5584,8 @@ class ApixIqfkSimpleMeme(Star):
         nm = str(getattr(mod, "score_name", "") or "").strip() if mod else ""
         return nm or str(getattr(self, "score_name", "") or "积分").strip() or "积分"
 
-    def _is_rps_cmd(self, text: str) -> bool:
-        """
-        是否命中「猜拳」**对局**指令（可带前导 / 和参数）。
-
-        ★ 1.7.6：参数**空格可有可无** —— `猜拳石头` / `猜拳 石头` 都要认。
-          以前只判 `s == n2 or s.startswith(n2 + " ")`，
-          于是 `猜拳石头` 完全进不了对局分支（用户反馈的 bug）。
-
-        ★ 但**必须确认是合法手势**（或 @某人 / QQ号），否则
-          `猜拳功能` 这种菜单入口会被误判成对局。
-        """
-        s = str(text or "").strip()
-        if s.startswith("/"):
-            s = s[1:].strip()
-        names = self._split_names(getattr(self, "cmd_rps", None) or ["猜拳"])
-        if not names:
-            return False
-        # 纯指令名（没带手势）也算「猜拳」-> 由 _handle_rps_cmd 决定走菜单
-        if s in names:
-            return True
-        arg = cmd_arg(s, names)
-        if arg is None:
-            return False
-        return self._rps_arg_ok(arg)
 
     @staticmethod
-    def _rps_arg_ok(arg: str) -> bool:
-        """
-        这段参数像不像「猜拳」的合法参数（手势 / @某人 / QQ号）。
-
-        ★ 只用来判断**要不要进对局分支**；真正解析交给 parse_rps_args。
-        """
-        a = str(arg or "").strip()
-        if not a:
-            return False
-        # @某人 / [At:xxx] / 纯数字 QQ
-        if "@" in a or "[at:" in a.lower() or "[cq:at" in a.lower():
-            return True
-        if a.isdigit():
-            return True
-        # 逐段看：只要有一段是合法手势就算（`石头 @某人`）
-        for tok in a.split():
-            try:
-                from .core.rps import normalize_choice as _nc
-            except Exception:
-                try:
-                    from core.rps import normalize_choice as _nc
-                except Exception:
-                    _nc = None
-            if _nc is not None and _nc(tok):
-                return True
-            if "@" in tok or "[at:" in tok.lower() or tok.isdigit():
-                return True
-        return False
 
     def _is_weather_menu(self, text: str) -> bool:
         """是否命中「天气查询」菜单入口指令"""
@@ -5786,71 +5596,13 @@ class ApixIqfkSimpleMeme(Star):
             getattr(self, "cmd_weather_menu_name", "") or "天气查询")
         return s in names or ("/" + s) in names
 
-    def _is_rps_menu(self, text: str) -> bool:
-        """
-        是否命中「猜拳功能」**菜单入口**指令。
-
-        ★ 与对局指令（cmd_rps）分开：
-            猜拳           -> 没带手势，走菜单
-            猜拳 石头      -> 对局
-            猜拳功能       -> 强制看菜单（后台可改这个指令名）
-        """
-        s = str(text or "").strip()
-        if s.startswith("/"):
-            s = s[1:].strip()
-        for n2 in self._split_names(getattr(self, "cmd_rps_menu", None)
-                                    or ["猜拳功能"]):
-            if n2 and s in (n2, "/" + n2):
-                return True
-        return False
 
     def _build_weather_menu(self):
         return self._menu("weather", lambda: build_weather_menu(self))
 
-    def _build_rps_menu(self):
-        return self._menu("rps", lambda: build_rps_menu(self))
 
-    def _rps_footer(self) -> str:
-        """卡片页脚提示"""
-        parts = []
-        try:
-            if int(getattr(self, "rps_daily_limit", 0) or 0) > 0:
-                parts.append(f"每人每天 {int(self.rps_daily_limit)} 局")
-        except Exception:
-            pass
-        parts.append(f"单局最高 {int(getattr(self, 'rps_bet_max', 100) or 100)} 分")
-        parts.append(f"{self._score_sn()}可为负" if getattr(self, "rps_allow_negative", True)
-                     else f"{self._score_sn()}不为负")
-        return " · ".join(parts)
 
-    async def _rps_avatar(self, event, qq: str) -> str:
-        """取头像本地路径（复用名片的下载逻辑，失败返回 ""）"""
-        try:
-            return await _group_card.download_avatar_file(event, str(qq))
-        except Exception:
-            logger.exception("[apix-meme] 取猜拳头像失败 qq=%s", qq)
-            return ""
 
-    def _rps_pick_opponent(self, group_id, exclude) -> str:
-        """
-        随机挑一个对手。
-
-        候选来源：签到模块里该群**有记录的人**（最接近「群里随机一个人」），
-        不足时回落到猜拳自己的记录。
-        """
-        cands = []
-        try:
-            ck = getattr(self, "checkin_module", None)
-            if ck is not None:
-                bucket = ck._gusers(group_id) if hasattr(ck, "_gusers") else {}
-                if isinstance(bucket, dict):
-                    cands = [str(k) for k in bucket.keys()]
-        except Exception:
-            logger.exception("[apix-meme] 取签到群成员失败")
-        if self.rps_module is None:
-            return ""
-        return self.rps_module.pick_opponent(group_id, exclude=exclude,
-                                             candidates=cands)
 
     # ========================================================
     # ★★ 1.7.7：猜数游戏（娱乐功能）
@@ -6170,240 +5922,6 @@ class ApixIqfkSimpleMeme(Star):
         return ""
 
 
-    async def _handle_rps_cmd(self, event, group_id, msg_str: str):
-        """
-        「猜拳 石头 [@某人]」处理器。
-
-        规则：
-          · 不 @   -> 从本群签到成员里随机挑一个对手
-          · @某人  -> 和指定的人对局
-          · 赢了拿随机积分，输了扣同样的分给对方
-          · 平局双方都不动
-        """
-        from astrbot.api.message_components import Image
-        yield_txt = ""
-
-        if not self.rps_enable:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "⚠️ 猜拳功能已关闭"):
-                yield _r
-            return
-        if not group_id:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "⚠️ 请在群聊里玩猜拳"):
-                yield _r
-            return
-        rm = getattr(self, "rps_module", None)
-        if rm is None:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "❌ 猜拳模块未加载，请查看后台日志"):
-                yield _r
-            return
-        ck = getattr(self, "checkin_module", None)
-        if ck is None:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, f"❌ 签到模块未加载，猜拳需要它来记{self._score_sn()}"):
-                yield _r
-            return
-
-        # ---- 解析手势 ----
-        names = self._split_names(getattr(self, "cmd_rps", None) or ["猜拳"])
-        choice, _rest = parse_rps_args(msg_str, names)
-        if not choice:
-            async for _r in self._send_content(event, self._build_rps_menu()):
-                yield _r
-            return
-
-        me = to_str(event.get_sender_id())
-        if not me:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "⚠️ 拿不到你的 QQ 号"):
-                yield _r
-            return
-
-        # ---- 找对手 ----
-        targets = list(event.get_messages()) if hasattr(event, "get_messages") \
-            else []
-        opp = ""
-        try:
-            for seg in targets:
-                uid = getattr(seg, "qq", None)
-                if uid:
-                    opp = str(uid)
-                    break
-        except Exception:
-            opp = ""
-        if not opp:
-            # 兼容 message_str 里 @ 的情况
-            try:
-                import re as _re
-                m = _re.search(r"@(\d{5,12})", str(msg_str or ""))
-                if m:
-                    opp = m.group(1)
-            except Exception:
-                pass
-
-        if opp and opp == me:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "⚠️ 不能和自己猜拳"):
-                yield _r
-            return
-
-        if not opp:
-            opp = self._rps_pick_opponent(group_id, exclude=[me])
-            if not opp:
-                # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-                async for _r in self._send_content(event, "❌ 群里还没有可挑战的人\n"
-                    "💡 让对方先「签到」一次，或直接「猜拳 石头 @某人」"):
-                    yield _r
-                return
-
-        # ---- 每日次数 ----
-        try:
-            lim = int(getattr(self, "rps_daily_limit", 0) or 0)
-        except Exception:
-            lim = 0
-        if lim > 0 and rm.today_count(group_id, me) >= lim:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, f"⚠️ 今天已经猜拳 {lim} 局了，明天再来吧"):
-                yield _r
-            return
-
-        # ---- 判定 ----
-        opp_choice = random.choice(list(RPS_CHOICES))
-        result = rm.judge(choice, opp_choice)
-        allow_neg = bool(getattr(self, "rps_allow_negative", True))
-        # ★ 1.7.6：负债/净值不足时，提示可以去银行借款
-        _loan_hint_txt = ""
-        try:
-            if self.checkin_module is not None:
-                _mw = self.checkin_module.net_worth(group_id, me)
-                _ow = self.checkin_module.net_worth(group_id, opp)
-                if _mw < 0 or _ow < 0:
-                    _hh = self.checkin_module.loan_hint()
-                    if _hh:
-                        _who = []
-                        if self.checkin_module.get_loan(group_id, me) > 0:
-                            _who.append("你")
-                        if self.checkin_module.get_loan(group_id, opp) > 0:
-                            _who.append("对手")
-                        _loan_hint_txt = (
-                            f"📉 {'和'.join(_who)}都在负债中"
-                            f"（你净值 {_mw} / 对手 {_ow}）\n{_hh}")
-        except Exception:
-            _loan_hint_txt = ""
-        bet = 0
-        d_me = d_opp = 0
-        if result == "win":
-            bet = rm.random_bet(1, getattr(self, "rps_bet_max", 100))
-            d_me, d_opp = bet, -bet
-        elif result == "lose":
-            bet = rm.random_bet(1, getattr(self, "rps_bet_max", 100))
-            d_me, d_opp = -bet, bet
-
-        # ---- 改积分（拿到前后值，画在卡片上）----
-        s_me_before = ck.get_score(group_id, me)
-        s_opp_before = ck.get_score(group_id, opp)
-        s_me_after = s_me_before
-        s_opp_after = s_opp_before
-        try:
-            if d_me:
-                s_me_after = ck.add_score(group_id, me, d_me,
-                                          allow_negative=allow_neg)
-            if d_opp:
-                s_opp_after = ck.add_score(group_id, opp, d_opp,
-                                           allow_negative=allow_neg)
-        except Exception:
-            logger.exception("[apix-meme] 猜拳积分结算失败")
-
-        # ---- 记战绩 ----
-        try:
-            rm.record(group_id, me, result, d_me,
-                      detail=f"vs {opp} {choice}{opp_choice}")
-            if result == "win":
-                r_opp = "lose"
-            elif result == "lose":
-                r_opp = "win"
-            else:
-                r_opp = "draw"
-            rm.record(group_id, opp, r_opp, d_opp,
-                      detail=f"vs {me} {opp_choice}{choice}")
-        except Exception:
-            logger.exception("[apix-meme] 猜拳战绩写入失败")
-
-        # ---- 名字 & 头像 ----
-        try:
-            me_name = get_sender_name(event)
-        except Exception:
-            me_name = ""
-        if not me_name:
-            me_name = self._nick_of_group(group_id, me)
-        opp_name = self._nick_of_group(group_id, opp)
-        me_av = await self._rps_avatar(event, me)
-        opp_av = await self._rps_avatar(event, opp)
-
-        # ---- 渲染 ----
-        om = getattr(self, "output_mode_module", None)
-        img_path = ""
-        if om is not None:
-            try:
-                img_path = await om.render_rps(
-                    left={"name": me_name, "choice": choice, "delta": d_me,
-                          "score_before": s_me_before,
-                          "score_after": s_me_after, "avatar_path": me_av},
-                    right={"name": opp_name, "choice": opp_choice,
-                           "delta": d_opp, "score_before": s_opp_before,
-                           "score_after": s_opp_after,
-                           "avatar_path": opp_av},
-                    result=result, bet=bet, footer=self._rps_footer(),
-                    tail=await self._peek_tail_text(event))
-            except Exception:
-                logger.exception("[apix-meme] 猜拳卡片渲染失败")
-
-        if img_path:
-            try:
-                # ★★ 1.7.6：**先把标记打好再 yield**。
-                #   原因：AstrBot 可能「收到图就发」，不等生成器跑完，
-                #   于是 yield 之后的 `_mark_tail_done` 来不及执行，
-                #   钩子会再补一条尾巴文本 -> 「图片 + 重复尾巴」。
-                #   卡片已经把尾巴画进图里了，所以这里直接标记完成。
-                self._mark_tail_done(event)
-                yield event.chain_result([Image.fromFileSystem(img_path)])
-                # ★ 1.7.6：负债时补一条借款提示（卡片里塞不下这些字）
-                if _loan_hint_txt:
-                    # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-                    async for _r in self._send_content(event, _loan_hint_txt):
-                        yield _r
-                return
-            except Exception:
-                logger.exception("[apix-meme] 发送猜拳卡片失败")
-
-        # ---- 回落纯文本 ----
-        emo = RPS_EMOJI or {}
-        vs = f"{emo.get(choice, '')}{choice} vs {emo.get(opp_choice, '')}{opp_choice}"
-        if result == "win":
-            head = "🏆 你赢了！"
-        elif result == "lose":
-            head = "💀 你输了…"
-        else:
-            head = "🤝 平局"
-        lines = [
-            f"{title_bar('猜拳')}",
-            f"🙋 {me_name}　{emo.get(choice, '')}{choice}",
-            f"🎯 {vs}",
-            f"🧑 {opp_name}　{emo.get(opp_choice, '')}{opp_choice}",
-            head,
-        ]
-        if bet:
-            lines.append(f"💰 本局 {bet} 分")
-        lines.append(f"💳 {me_name}：{s_me_before} → {s_me_after}")
-        lines.append(f"💳 {opp_name}：{s_opp_before} → {s_opp_after}")
-        if _loan_hint_txt:
-            lines.append("")
-            lines.append(_loan_hint_txt)
-        # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-        async for _r in self._send_content(event, "\n".join(lines)):
-            yield _r
 
     def _nick_of_group(self, group_id, uid) -> str:
         """取群内昵称（签到模块优先，其次脱敏 QQ 号）"""
@@ -6609,130 +6127,6 @@ class ApixIqfkSimpleMeme(Star):
 
 
 
-    async def _handle_card_cmd(self, event, group_id, arg):
-        """
-        名片指令：生成群名片（固定图片输出）。
-
-        arg 为空 -> 查发送者；否则 @某人 / QQ号。
-        """
-        from astrbot.api.message_components import Image
-
-        if not group_id:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "⚠️ 请在群聊中使用名片功能"):
-                yield _r
-            return
-        if not _HAS_GROUP_CARD or _group_card is None:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "❌ 名片模块未加载，请查看后台日志"):
-                yield _r
-            return
-        om = getattr(self, "output_mode_module", None)
-        if om is None:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "❌ 输出模块未加载，无法生成名片"):
-                yield _r
-            return
-
-        # ---- 目标 QQ：@某人 / 数字 /（默认）自己 ----
-        target = ""
-        try:
-            ats = get_ats_from_msg(event)
-            if ats:
-                target = str(ats[0])
-        except Exception:
-            pass
-        if not target and arg:
-            cleaned = str(arg).lstrip("@").strip().split()[0] if str(arg).strip() else ""
-            if cleaned.isdigit():
-                target = cleaned
-        if not target:
-            target = to_str(event.get_sender_id())
-        if not target.isdigit():
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "⚠️ 无法确定目标 QQ，试试「名片 @某人」"):
-                yield _r
-            return
-        # 诊断日志：方便核对「@别人 / 默认自己」是否按预期取目标
-        try:
-            _ats = get_ats_from_msg(event)
-        except Exception:
-            _ats = []
-        logger.info(
-            f"[apix-meme] 名片目标={target} "
-            f"（@列表={_ats or '无'}，发送者={to_str(event.get_sender_id())}，"
-            f"参数={arg!r}）"
-        )
-
-        # ---- 取资料 ----
-        try:
-            info = await _group_card.fetch_member_info(event, group_id, target)
-        except Exception:
-            logger.exception("[apix-meme] 获取群成员资料失败")
-            info = {"user_id": target, "name": "", "title": "", "role": "",
-                    "level": "", "join_time": 0}
-
-        # 昵称兜底：本地昵称缓存 -> 群号
-        name = (info.get("name") or "").strip()
-        if not name:
-            try:
-                name = self._nickname_cache.get(target, "") or ""
-            except Exception:
-                name = ""
-        if not name:
-            name = f"QQ{target}"
-
-        # ---- 取头像 + 性别 ----
-        avatar_path = ""
-        try:
-            avatar_path = await _group_card.download_avatar_file(event, target)
-        except Exception:
-            logger.exception("[apix-meme] 获取名片头像失败")
-        gender = "unknown"
-        try:
-            gender = await _group_card.fetch_qq_gender(
-                event, target, group_id=group_id)
-        except Exception:
-            logger.exception("[apix-meme] 获取 QQ 性别失败")
-
-        # ---- 最高等级小鸟（资料卡联动）----
-        _top_txt, _top_img = "", ""
-        try:
-            _top_txt, _top_img = self._top_bird_for(target, group_id)
-        except Exception:
-            logger.exception("[apix-meme] 取最高等级小鸟失败")
-
-        # ---- 渲染 ----
-        img_path = ""
-        try:
-            img_path = await om.render_group_card(
-                name=name,
-                title=_group_card.format_title(info),
-                level=_group_card.format_level(info),
-                join_time=_group_card.format_join_time(info.get("join_time")),
-                avatar_path=avatar_path,
-                gender=gender,
-                top_bird=_top_txt,
-                top_bird_img=_top_img,
-                role=_group_card.format_role(info),
-                gender_style=getattr(self, "cmd_card_gender_style", "v2"),
-            )
-        except Exception:
-            logger.exception("[apix-meme] 名片渲染失败")
-
-        if img_path:
-            try:
-                yield event.chain_result([Image.fromFileSystem(img_path)])
-            except Exception:
-                logger.exception("[apix-meme] 加载名片图片失败")
-                # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-                async for _r in self._send_content(event, "❌ 名片生成失败，请查看后台日志"):
-                    yield _r
-        else:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
-            async for _r in self._send_content(event, "❌ 名片生成失败\n"
-                "💡 请确认渲染服务（表情包服务）正在运行"):
-                yield _r
 
 
 
@@ -11254,34 +10648,7 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        if self._is_card_menu(msg_str):
-            async for _r in self._send_content(event, self._build_card_menu()):
-                yield _r
-            GLOBAL_STATS["send"] += 1
-            return
-
-        # ---- 猜拳（1.7.5）----
-        if self._is_rps_cmd(msg_str):
-            # ★ 群号黑名单：后台填了群号就排除这些群
-            if not group_allowed(group_id, self.rps_groups):
-                GLOBAL_STATS["send"] += 1
-                return
-            if self._is_group_feature_enable(group_id, "rps"):
-                async for _r in self._handle_rps_cmd(event, group_id,
-                                                     msg_str):
-                    yield _r
-                GLOBAL_STATS["send"] += 1
-                return
-        if self._is_rps_menu(msg_str):
-            if not group_allowed(group_id, self.rps_groups):
-                GLOBAL_STATS["send"] += 1
-                return
-            if self._is_group_feature_enable(group_id, "rps"):
-                async for _r in self._send_content(event,
-                                                   self._build_rps_menu()):
-                    yield _r
-                GLOBAL_STATS["send"] += 1
-                return
+        # ★★ 市场版：名片 / 猜拳两个入口已移除
 
         # ---- 猜数游戏（1.7.7，娱乐功能）----
         #   ★ 菜单入口必须在**指令**之前判，否则「猜数功能」会被
@@ -11316,17 +10683,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-
-        # ---- 名片（固定图片输出，不受输出模式影响）----
-        _card_arg = self._match_card_cmd(msg_str)
-        if _card_arg is not None:
-            if not group_allowed(group_id, self.card_groups):
-                GLOBAL_STATS["send"] += 1
-                return
-            async for _r in self._handle_card_cmd(event, group_id, _card_arg):
-                yield _r
-            GLOBAL_STATS["send"] += 1
-            return
 
         # ---- 查询功能（QQ 用户信息）----
         async for _r in self._dispatch_qqinfo(event, msg_str, group_id):

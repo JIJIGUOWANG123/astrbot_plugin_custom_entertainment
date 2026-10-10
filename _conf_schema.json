@@ -83,18 +83,6 @@
     "default": "娱乐功能",
     "hint": "主菜单里的「娱乐功能」入口。可写多个，英文逗号分隔"
   },
-  "cmd_card_menu": {
-    "description": "【娱乐功能】名片子菜单指令名",
-    "type": "string",
-    "default": "名片功能",
-    "hint": "娱乐功能下的「名片」子菜单入口，进去可看用法说明"
-  },
-  "cmd_card": {
-    "description": "【娱乐功能】名片指令名",
-    "type": "string",
-    "default": "名片,我的名片",
-    "hint": "输出群名片（群昵称 / 专属称号 / 群聊等级 / 入群时间 + 头像）。默认查自己；也支持「名片 @某人」或「名片 QQ号」"
-  },
   "cmd_meme_menu": {
     "description": "【菜单】接口系统子菜单指令（多个用英文逗号分隔）",
     "type": "string",
@@ -1825,65 +1813,17 @@
     "default": "逼迫",
     "hint": "强行指定老公的指令名（多个用英文逗号分隔）。用法：逼迫 @某人；不指定目标则随机抽一个群成员。今天已经有老公时会拒绝，避免与「今日老公」冲突"
   },
-  "rps_enable": {
-    "description": "【猜拳功能】总开关",
-    "type": "bool",
-    "default": true,
-    "hint": "关闭后「猜拳」不响应"
-  },
-  "cmd_rps": {
-    "description": "【猜拳功能】指令名",
-    "type": "string",
-    "default": "猜拳",
-    "hint": "用法：「猜拳 石头」或「猜拳 石头 @某人」。可写多个，英文逗号分隔"
-  },
-  "rps_bet_max": {
-    "description": "【猜拳功能】单局积分上限",
-    "type": "string",
-    "default": "100",
-    "hint": "每局随机 1 ~ 这个数字的积分。可填任意正整数（如 500）"
-  },
-  "rps_daily_limit": {
-    "description": "【猜拳功能】每人每天次数上限",
-    "type": "string",
-    "default": "0",
-    "hint": "0 = 不限制；填正整数则超过就不再响应"
-  },
-  "rps_allow_negative": {
-    "description": "【猜拳功能】允许扣成负积分",
-    "type": "bool",
-    "default": true,
-    "hint": "开 = 积分不够也能继续扣（可变负数）；关 = 最低扣到 0"
-  },
-  "cmd_rps_menu": {
-    "description": "【猜拳功能】菜单入口指令",
-    "type": "string",
-    "default": "猜拳功能",
-    "hint": "在群里发这个进入猜拳菜单（不带手势时发「猜拳」也会进菜单）。可写多个，英文逗号分隔"
-  },
   "score_name": {
     "description": "积分显示名称",
     "type": "string",
     "default": "积分",
     "hint": "积分在群里显示成什么名字。填「金币」就显示「金币：1000」，填「点券」就显示「点券：1000」。留空或填「积分」= 默认。覆盖：签到统计 / 排行榜 / 偷积分 / 银行 / 坐骑 / 打工 / 宠物 / 猜拳 / 积分调整 等所有显示文案。（加积分、减积分、偷积分这些**指令名**不受影响，另有配置项）"
   },
-  "rps_groups": {
-    "description": "猜拳功能·群号黑名单",
-    "type": "string",
-    "default": "",
-    "hint": "填了群号 = 这些群不能用猜拳。留空 = 所有群都能用。多个群号用英文逗号隔开，例如：123456,789012"
-  },
   "minecraft_groups": {
     "description": "MC系统·群号黑名单",
     "type": "string",
     "default": "",
     "hint": "填了群号 = 这些群不能用 MC 指令。留空 = 所有群都能用。多个群号用英文逗号隔开，例如：123456,789012"
-  },
-  "card_groups": {
-    "description": "名片功能·群号黑名单",
-    "type": "string",
-    "default": "",
-    "hint": "填了群号 = 这些群不能用名片。留空 = 所有群都能用。多个群号用英文逗号隔开，例如：123456,789012"
   },
   "cmd_weather_menu": {
     "description": "天气查询 · 菜单入口指令",
