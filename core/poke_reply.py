@@ -18,13 +18,7 @@ import random
 import threading
 import time
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("poke_reply")
-
-
+from astrbot.api import logger
 # 词库为空时的兜底文案（用户没填词也不会「戳了没反应」）
 DEFAULT_WORDS = (
     "别戳啦，痒～",

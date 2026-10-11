@@ -39,12 +39,7 @@ from .path_utils import nick_display_narrow as _nick_narrow
 # ★★ 1.7.7：榜单名次前缀（前三名奖牌 + 两空格列分隔）
 from .path_utils import rank_tag as _rank_tag
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("speak_stats")
-
+from astrbot.api import logger
 _LOCK = threading.RLock()
 
 # 保留天数（比最长统计窗口 30 天多留一些余量）

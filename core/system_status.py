@@ -5,17 +5,14 @@ import time
 import platform
 import datetime
 import re
+# ★★ 审核整改：`collect_runtime_status()` 里用 `asyncio.to_thread()`
+#   把「含同步阻塞 IO 的取数函数」丢到线程池，避免卡住事件循环。
+import asyncio
 
 # ★★ 1.7.7：本模块以前**没有导入 logger**，但下面有 10 处 `logger.xxx` 调用 ——
 #   那些分支一旦执行就会 `NameError`（例如 LiteMonitor 请求失败、
 #   版本探测失败时会再抛一次异常，把真正的错误盖掉）。
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("system_status")
-
-
+from astrbot.api import logger
 try:
     from .path_utils import read_disk_config as _read_disk_config_util
     _HAS_PATH_UTILS = True
@@ -1379,7 +1376,11 @@ async def collect_runtime_status(event=None, group_id: str = None,
             if not _cfg_bool(cfg, _key, True):
                 continue
             try:
-                _val = str(_fn() or "").strip()
+                # ★★ 审核整改：这些取数函数里有**同步阻塞 IO**
+                #   （LiteMonitor 的 urllib.urlopen、CPU 分核采样的
+                #     time.sleep），直接在事件循环里调会卡住整个机器人。
+                #   统一丢到线程池执行。
+                _val = str(await asyncio.to_thread(_fn) or "").strip()
             except Exception:
                 logger.debug(f"[apix-meme] 取 {_label} 失败", exc_info=True)
                 continue
@@ -1398,7 +1399,9 @@ async def collect_runtime_status(event=None, group_id: str = None,
     #   挤在一行会被卡片自动折行，折在数字中间看着很乱（用户反馈）。
     if show_mem:
         lines.append("运行内存占用：")
-        for line in get_memory_usage_str().splitlines():
+        # ★ 审核整改：内含 LiteMonitor 同步请求，丢线程池
+        _mem = await asyncio.to_thread(get_memory_usage_str)
+        for line in str(_mem or "").splitlines():
             lines.append(f"  {line}")
 
     # ---- 硬盘占用 ----
@@ -1411,18 +1414,20 @@ async def collect_runtime_status(event=None, group_id: str = None,
 
     # ---- 网络速率（★ 1.7.6 新增，在硬盘下面，同一套排版）----
     if show_net:
-        _net = get_net_speed_str()
+        # ★ 审核整改：内含 LiteMonitor 同步请求，丢线程池
+        _net = await asyncio.to_thread(get_net_speed_str)
         if _net:
             lines.append("网络速率：")
-            for line in _net.splitlines():
+            for line in str(_net).splitlines():
                 lines.append(f"  {line}")
 
     # ---- 流量统计（★ 1.7.6 新增，紧跟网络，同一套排版）----
     if show_traffic:
-        _tf = get_traffic_str()
+        # ★ 审核整改：内含 LiteMonitor 同步请求，丢线程池
+        _tf = await asyncio.to_thread(get_traffic_str)
         if _tf:
             lines.append("流量统计：")
-            for line in _tf.splitlines():
+            for line in str(_tf).splitlines():
                 lines.append(f"  {line}")
 
     # ---- ⑤ 北京时间（★ 固定放在最下面）----

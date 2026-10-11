@@ -17,12 +17,7 @@ import re
 import sys
 from .path_utils import title_bar, title_foot
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("output_mode")
-
+from astrbot.api import logger
 try:
     import aiohttp
     _HAS_AIOHTTP = True
@@ -125,12 +120,9 @@ def _collapse_blank(text: str) -> str:
 
 RENDER_TIMEOUT = 20
 # ★★ 市场版：**不再内置任何本机服务目录**。
-#   原版把作者本机的一个固定路径写死在这里，并用它去自动拉起渲染服务 ——
-#   对别的用户毫无意义，还会去启动一个不存在的程序。
-#   现在只认后台配置里的「渲染服务目录」（可选），留空 = 不尝试拉起。
-LOCAL_SERVICE_DIRS = ()
-START_COOLDOWN = 100        # 秒：两次「拉起服务」尝试之间的最小间隔
-START_WAIT = 7              # 秒：拉起后等待服务就绪的时间
+# ★★ 审核整改：以下「自动拉起渲染服务」相关的常量已**废弃删除**
+#   （LOCAL_SERVICE_DIRS / START_COOLDOWN / START_WAIT）——
+#   插件不再启动任何外部进程，渲染服务由用户自行启动。
 # 渲染文本上限（超过就退回纯文本，避免超长卡片）
 RENDER_MAX_CHARS = 3500
 
@@ -153,8 +145,6 @@ class OutputModeModule:
         self.cmd_names = ["切换输出模式", "输出模式"]
         self.card_title = ""             # 卡片标题（留空则不显示）
         self._cache = {}                 # 渲染结果缓存 {key: path}
-        self._last_start_try = 0.0       # 上次尝试拉起服务的时间
-        self._service_dir = ""           # 可选的额外服务目录
         # ★ 给个默认值：_load_cfg 还没跑（或中途异常）时也不会 AttributeError
         self.bg_image = ""
 
@@ -185,9 +175,8 @@ class OutputModeModule:
         self.render_base = (_s("output_render_base", DEFAULT_RENDER_BASE)
                             or DEFAULT_RENDER_BASE).rstrip("/")
         self.card_title = _s("output_card_title", "")
-        # ★★ 市场版新增：渲染服务所在目录（可选）
-        #   填了才允许「渲染失败时自动拉起服务」；留空 = 永不自动拉起。
-        self._service_dir = _s("output_render_dir", "")
+        # ★★ 审核整改：不再读取/使用「渲染服务目录」——
+        #   插件不启动任何外部进程。
 
         # 背景图（不填则用原来的深色底）
         bg = _s("output_bg_image", DEFAULT_BG)
@@ -414,101 +403,35 @@ class OutputModeModule:
     def _endpoint(self) -> str:
         return self.render_base + RENDER_PATH
 
-    # ---------------- 渲染服务自动拉起 ----------------
-    def _service_spec(self):
-        """
-        从 render_base 反推「本地服务」的启动命令。
-
-        只有地址是本机（127.0.0.1 / localhost）时才尝试拉起。
-        返回 (工作目录, 命令列表) 或 None。
-        """
-        try:
-            from urllib.parse import urlparse
-            u = urlparse(self.render_base)
-            host = (u.hostname or "").lower()
-            if host not in ("127.0.0.1", "localhost", "::1", "0.0.0.0"):
-                return None      # 远端服务，拉不起来
-        except Exception:
-            return None
-        # 依次尝试几个已知目录
-        # ★★ 市场版：只认后台配置的「渲染服务目录」，没有内置目录
-        for d in (LOCAL_SERVICE_DIRS + (getattr(self, "_service_dir", "") or "",)):
-            if not d or not os.path.isdir(d):
-                continue
-            bat = os.path.join(d, "start.bat")
-            if os.path.isfile(bat):
-                return d, ["cmd", "/c", "start", "", bat]
-            app = os.path.join(d, "app.py")
-            if os.path.isfile(app):
-                return d, [sys.executable, app]
-        return None
-
-    def _try_start_service(self, force: bool = False) -> bool:
-        """
-        尝试拉起本地渲染服务。
-
-        带冷却，避免每次都开进程；force=True 时忽略冷却
-        （供渲染失败后立即拉起）。
-        """
-        import subprocess
-        import time
-        now = time.time()
-        if not force and (now - self._last_start_try) < START_COOLDOWN:
-            return False
-        self._last_start_try = now
-        spec = self._service_spec()
-        if spec is None:
-            logger.warning(
-                "[output] 渲染服务未运行，且没有配置「渲染服务目录」，"
-                "无法自动拉起（请在后台填写，或手动启动该服务）"
-            )
-            return False
-        workdir, cmd = spec
-        try:
-            if os.name == "nt":
-                import subprocess as _sp
-                flags = (getattr(_sp, "DETACHED_PROCESS", 0)
-                         | getattr(_sp, "CREATE_NEW_PROCESS_GROUP", 0))
-                subprocess.Popen(cmd, cwd=workdir, close_fds=True,
-                                 creationflags=flags)
-            else:
-                subprocess.Popen(cmd, cwd=workdir, close_fds=True,
-                                 start_new_session=True)
-            logger.info(f"[output] 已尝试拉起渲染服务：{' '.join(cmd)}（在 {workdir}）")
-            return True
-        except Exception:
-            logger.exception("[output] 拉起渲染服务失败")
-            return False
+    # ================================================================
+    # ★★ 审核整改：**已移除**「渲染服务自动拉起」功能。
+    #
+    #   原实现会用 `subprocess.Popen` 去执行某个目录下的
+    #   `start.bat` / `python app.py`，把一个本地渲染服务拉起来。
+    #   社区规范对「插件自行拉起外部进程」比较敏感，所以整体删掉：
+    #     · 渲染服务改为**完全由用户自己启动**（或指向任意可用的
+    #       渲染地址）；插件只负责发 HTTP 请求
+    #     · 服务不可达时**回落到纯文本输出**（本来就有的行为）
+    # ================================================================
 
     async def _get_with_retry(self, url: str, params: dict):
         """
-        GET 一次；连不上就尝试拉起服务再重试一次。
+        GET 一次文本渲染接口。
+
+        ★★ 审核整改：不再「连不上就拉起本地服务」——
+          直接返回错误，由上层回落到纯文本输出。
 
         返回 (blob, None) 或 (None, 错误描述)
         """
         timeout = aiohttp.ClientTimeout(total=RENDER_TIMEOUT)
-
-        async def _once():
+        try:
             async with aiohttp.ClientSession(timeout=timeout) as sess:
                 async with sess.get(url, params=params) as resp:
                     if resp.status != 200:
                         return None, f"HTTP {resp.status}"
                     return await resp.read(), None
-
-        try:
-            return await _once()
         except Exception as e:
-            first_err = f"{type(e).__name__}: {str(e)[:70]}"
-
-        # ★ 第一次失败：多半是服务没起来，拉起来再试
-        started = self._try_start_service(force=True)
-        if not started:
-            return None, first_err
-        await asyncio.sleep(START_WAIT)
-        try:
-            return await _once()
-        except Exception as e:
-            return None, f"重试仍失败 {type(e).__name__}: {str(e)[:60]}"
+            return None, f"{type(e).__name__}: {str(e)[:70]}"
 
     async def render_to_path(self, text: str, style: str = "card",
                              img_dir: str = "", tail: str = "",

@@ -38,12 +38,7 @@ import json
 import os
 import threading
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("data_store")
-
+from astrbot.api import logger
 _LOCK = threading.RLock()
 
 # 所有受管理的集合（顺序即后台展示顺序）

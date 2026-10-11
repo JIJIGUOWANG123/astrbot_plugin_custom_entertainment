@@ -15,12 +15,7 @@
 import os
 import re
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("changelog")
-
+from astrbot.api import logger
 # 章节标题（标题里含「更新日志」即可，允许前后有空格）
 _SECTION_RE = re.compile(r"^##\s*[^#\n]*更新日志\s*$", re.M)
 # 单条：**v1.7.3（2026-10-03）** 正文（正文可以是多行，每行一项）

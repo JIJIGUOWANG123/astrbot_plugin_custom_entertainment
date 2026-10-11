@@ -33,12 +33,7 @@ from .path_utils import title_bar, title_foot
 from .path_utils import fmt_num
 from .path_utils import cmd_arg
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("pet")
-
+from astrbot.api import logger
 _LOCK = threading.RLock()
 
 ELEMENTS = ["金", "木", "水", "火", "土"]

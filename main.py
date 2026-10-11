@@ -35,13 +35,34 @@ except Exception as e:
     _HAS_QQ_INFO = False
     logger.warning(f"[apix-meme] qq_info 模块加载失败: {e}")
 
-try:
-    from .core.output_mode import OutputModeModule
-    _HAS_OUTPUT_MODE = True
-except Exception as e:
-    _HAS_OUTPUT_MODE = False
-    OutputModeModule = None
-    logger.warning(f"[apix-meme] output_mode 模块加载失败: {e}")
+# ★★ 市场版：**只支持文字模式**（不再连接 output_mode 模块）
+#
+#   用户要求：市场版仅文本输出，不依赖任何本地渲染服务。
+#   做法：把 `output_mode_module` 恒置 None —— 所有调用点本来就有
+#         `om is None -> 纯文本` 的兜底，于是全线自动走文字模式。
+#   （`core/output_mode.py` 文件保留，方便将来需要时恢复。）
+_HAS_OUTPUT_MODE = False
+OutputModeModule = None
+
+
+def strip_inline_img(text):
+    """
+    去掉文本里的行内图片标记 `[[img:名字]]`。
+
+    ★ 原版在 `core/output_mode.py` 里；市场版只发文本，
+      行内图片本来就不显示，所以这里直接把整行标记抹掉即可。
+    """
+    import re as _re
+    try:
+        out = []
+        for ln in str(text or "").split("\n"):
+            if _re.match(r"^\s*\[\[\s*img\s*:.*?\]\]\s*$", ln, _re.I):
+                continue          # 整行都是标记 -> 去掉这一行
+            out.append(_re.sub(r"\[\[\s*img\s*:.*?\]\]", "", ln, flags=_re.I))
+        return "\n".join(out)
+    except Exception:
+        return str(text or "")
+
 
 # ★★ 市场版：`from .core.music import ...` 已移除（点歌功能整体删除）
 
@@ -739,7 +760,10 @@ class ApixIqfkSimpleMeme(Star):
         self.config = config or {}
         self.rules = []
         self.must_at_bot = False
-        self.default_key = "dd13536f0b5756d4"
+        # ★★ 审核整改：**不再内置第三方接口的默认 key**。
+        #   留空 = 不带 key 请求（很多公开接口本来也不需要）。
+        #   需要 key 的接口请在后台「接口系统」页面自己填。
+        self.default_key = ""
         self.cmd_main_name = "自定义娱乐"
         self.cmd_admin_name = "管理员指令"
         self.cmd_list_name = "表情包列表"
@@ -1165,9 +1189,13 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化戳一戳回复模块失败")
 
-        # ★ 输出模式（1.7.3）：text / image，按群独立
+        # ★★ 市场版：**只支持文字模式**
+        #   不再连接 output_mode 模块（`_HAS_OUTPUT_MODE = False`），
+        #   所以这里恒为 None —— 所有调用点走 `om is None -> 纯文本` 分支。
+        #   好处：不需要任何本地渲染服务，也不会出现"图片模式没反应/渲染失败"。
         self.output_mode_module = None
-        if _HAS_OUTPUT_MODE:
+        logger.info("[apix-meme] 市场版：仅文字输出模式（未启用图片渲染）")
+        if False:  # pragma: no cover —— 保留原逻辑备查，正式版不执行
             try:
                 self.output_mode_module = OutputModeModule(
                     plugin_dir=_plugin_dir()
@@ -2593,6 +2621,19 @@ class ApixIqfkSimpleMeme(Star):
             return bool(self.group_must_at_bot[str(group_id)])
         return bool(self.must_at_bot)
 
+    def _key_pic_suffix(self) -> str:
+        """
+        ★★ 审核整改：拼「可选 key + pic 占位」后缀。
+
+        · 用户在后台填了 key -> 返回 `&key=xxx&pic={pic}`
+        · 没填（默认）      -> 只返回 `&pic={pic}`
+          （不再产生空的 `&key=` 参数）
+        """
+        k = str(getattr(self, "default_key", "") or "").strip()
+        if k:
+            return "&key=" + k + "&pic={pic}"
+        return "&pic={pic}"
+
     async def _check_admin(self, event) -> bool:
         if self.admin_commands is None:
             try:
@@ -2897,7 +2938,7 @@ class ApixIqfkSimpleMeme(Star):
                 if not url_template and old_meme:
                     url_template = (
                         f"{self.BASE_URL}?meme={old_meme}"
-                        f"&key={self.default_key}&pic={{pic}}"
+                        + self._key_pic_suffix()
                     )
                     param_count = param_count or "1"
                     changed = True
@@ -3501,9 +3542,9 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 注入数据文件内容失败")
 
         self.must_at_bot = bool(merged.get("must_at_bot", False))
-        self.default_key = to_str(
-            merged.get("default_key", "dd13536f0b5756d4")
-        ).strip() or "dd13536f0b5756d4"
+        # ★★ 审核整改：默认 key 改为**完全由用户配置**（默认空串）
+        self.default_key = to_str(merged.get("default_key", "")).strip()
+
 
         self.cmd_main_name = to_str(merged.get("cmd_main", "自定义娱乐")).strip() or "自定义娱乐"
         self.cmd_admin_name = to_str(merged.get("cmd_admin", "管理员指令")).strip() or "管理员指令"
@@ -4018,7 +4059,7 @@ class ApixIqfkSimpleMeme(Star):
                 if not url_template and old_meme:
                     url_template = (
                         f"{self.BASE_URL}?meme={old_meme}"
-                        f"&key={self.default_key}&pic={{pic}}"
+                        + self._key_pic_suffix()
                     )
                 if url_template and "meme=&" in url_template and old_meme:
                     url_template = url_template.replace(
@@ -4051,7 +4092,7 @@ class ApixIqfkSimpleMeme(Star):
                     continue
                 url_template = (
                     f"{self.BASE_URL}?meme={meme_id}"
-                    f"&key={self.default_key}&pic={{pic}}"
+                    + self._key_pic_suffix()
                 )
                 disk_rules.append({
                     "keywords": keywords,

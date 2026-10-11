@@ -21,13 +21,7 @@ import random
 import time
 from datetime import datetime
 
-try:
-    from astrbot.api import logger
-except Exception:  # pragma: no cover
-    import logging
-    logger = logging.getLogger("guess")
-
-
+from astrbot.api import logger
 def _today_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
