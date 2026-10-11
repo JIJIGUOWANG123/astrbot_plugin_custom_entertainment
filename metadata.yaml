@@ -12,7 +12,7 @@ astrbot_version: ">=4.27"
 #   字段：version（版本号）/ date（日期）/ desc（说明，建议写成单行）
 #   ★ 最新的写在**最上面**（指令默认只显示最新一天的内容）
 version_history:
-  - version: v1.0
+  - version: 1.0
     date: 2026-10-10
     desc: 测试结束了，正式版1.0已经发布了。
 
