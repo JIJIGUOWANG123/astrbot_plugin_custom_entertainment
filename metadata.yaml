@@ -6,11 +6,6 @@ author: "chicken butt"
 repo: "https://github.com/wanglaoji123/astrbot_plugin_custom_entertainment"
 astrbot_version: ">=4.27"
 
-# ★★ 市场版 1.1：更新日志**已全部挪到根目录 CHANGELOG.md**
-#   （core/changelog.py 读它；插件内「更新日志」指令 = CHANGELOG.md 内容）。
-#   这个 yaml 只放元数据，**不要再往这里写版本更新记录** ——
-#   两处维护迟早会不一致。
-
 tags:
 - entertainment
 - fortune
