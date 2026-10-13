@@ -1002,21 +1002,21 @@
     "hint": "默认 30 秒检查一次，最小 10 秒，一般不用改"
   },
   "cmd_daily_news": {
-    "description": "【每日读报】手动读报指令（多个用英文逗号分隔）",
+    "description": "【读报功能】手动读报指令（多个用英文逗号分隔）",
     "type": "string",
-    "default": "每日读报",
-    "hint": "所有人可用。发送后立即获取并发送今日 60s 读报"
+    "default": "今日读报,每日读报",
+    "hint": "★ 这是**手动读一次**的指令，默认 `今日读报` / `每日读报`。\n「读报功能」是**菜单入口**（在 `menu_news_names` 里配），不要填在这里。\n\n定时推送开关在 `cmd_daily_news_on` / `cmd_daily_news_off`（默认\n`开启功能 读报推送` / `关闭功能 读报推送`）；\n手动读报开关在 `cmd_daily_news_manual_on` / `cmd_daily_news_manual_off`。"
   },
   "cmd_daily_news_on": {
     "description": "【每日读报】开启推送指令（多个用英文逗号分隔）",
     "type": "string",
-    "default": "读报推送开",
+    "default": "开启功能 读报推送,开启读报推送",
     "hint": "可带群号远程开启：读报推送开 123456"
   },
   "cmd_daily_news_off": {
     "description": "【每日读报】关闭推送指令（多个用英文逗号分隔）",
     "type": "string",
-    "default": "读报推送关",
+    "default": "关闭功能 读报推送,关闭读报推送",
     "hint": "可带群号远程关闭：读报推送关 123456"
   },
   "cmd_daily_news_time": {
@@ -2572,5 +2572,89 @@
     "default": "睡眠时长排行,睡眠排行",
     "description": "【打卡·排行3】睡眠排行指令（逗号分隔，可多个别名）",
     "hint": "📊 **三条独立排行指令**，各输出一个**前十**榜，格式和「签到排行」一致：\n\n```\n打卡天数排行   完整打卡天数榜 · 前十（早晚都打才算一天）\n清醒时长排行   累计清醒时长榜 · 前十（早安 → 当晚晚安）\n睡眠时长排行   累计睡眠时长榜 · 前十（晚安 → 次日早安）\n```\n\n★ 多个别名用**英文逗号**分隔\n★ 数据来自**所有群共享**的打卡记录"
+  },
+  "cmd_daily_news_manual_on": {
+    "type": "string",
+    "description": "【读报功能】开启手动读报指令（多个用英文逗号分隔）",
+    "hint": "★ 控制**手动读报**（发 `今日读报` / `每日读报` 立刻出报）。\n默认 `开启功能 读报功能`。\n\n· 改的是「每日读报 · 手动读报不生效的群号」这个**黑名单**\n  （留空 = 所有群都能手动读报）\n· 与 `cmd_daily_news_on`（自动推送开关，白名单）**互不影响**",
+    "default": "开启功能 读报功能,开启读报功能"
+  },
+  "cmd_daily_news_manual_off": {
+    "type": "string",
+    "description": "【读报功能】关闭手动读报指令（多个用英文逗号分隔）",
+    "hint": "★ 关闭后本群发 `今日读报` / `每日读报` 会被静默忽略。\n默认 `关闭功能 读报功能`。\n\n· 改的是「每日读报 · 手动读报不生效的群号」这个**黑名单**\n· 与 `cmd_daily_news_off`（自动推送开关）**互不影响**",
+    "default": "关闭功能 读报功能,关闭读报功能"
+  },
+  "admin_groups": {
+    "type": "string",
+    "description": "【管理系统】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 管理系统」加入本群",
+    "default": ""
+  },
+  "bili_groups": {
+    "type": "string",
+    "description": "【B站功能】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 B站功能」加入本群",
+    "default": ""
+  },
+  "bird_groups": {
+    "type": "string",
+    "description": "【bird】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 bird」加入本群",
+    "default": ""
+  },
+  "card_groups": {
+    "type": "string",
+    "description": "【名片功能】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 名片功能」加入本群",
+    "default": ""
+  },
+  "entertain_groups": {
+    "type": "string",
+    "description": "【娱乐功能】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 娱乐功能」加入本群",
+    "default": ""
+  },
+  "group_admin_groups": {
+    "type": "string",
+    "description": "【group_admin】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 group_admin」加入本群",
+    "default": ""
+  },
+  "member_groups": {
+    "type": "string",
+    "description": "【群员管理】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 群员管理」加入本群",
+    "default": ""
+  },
+  "music_groups": {
+    "type": "string",
+    "description": "【音乐功能】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 音乐功能」加入本群",
+    "default": ""
+  },
+  "oil_groups": {
+    "type": "string",
+    "description": "【油价查询】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 油价查询」加入本群",
+    "default": ""
+  },
+  "poke_groups": {
+    "type": "string",
+    "description": "【互动功能】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 互动功能」加入本群",
+    "default": ""
+  },
+  "rps_groups": {
+    "type": "string",
+    "description": "【猜拳功能】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 猜拳功能」加入本群",
+    "default": ""
+  },
+  "weather_groups": {
+    "type": "string",
+    "description": "【天气查询】不生效的群号（黑名单）",
+    "hint": "留空 = 所有群都生效；填写后这些群不生效。多个群号用英文逗号分隔。可用「关闭功能 天气查询」加入本群",
+    "default": ""
   }
 }

@@ -920,8 +920,11 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_blacklist_list_name = "黑名单列表"
 
         # ★ 每日读报指令
-        self.cmd_daily_news_name = "每日读报"
-        self.cmd_daily_news_on_name = "读报推送开"
+        self.cmd_daily_news_name = "今日读报,每日读报"
+        # ★★ 1.2：手动读报开关（默认「开启功能 读报功能 / 关闭功能 读报功能」）
+        self.cmd_daily_news_manual_on_name = "开启功能 读报功能,开启读报功能"
+        self.cmd_daily_news_manual_off_name = "关闭功能 读报功能,关闭读报功能"
+        self.cmd_daily_news_on_name = "开启功能 读报推送,开启读报推送"
         self.cmd_daily_news_off_name = "读报推送关"
         self.cmd_daily_news_time_name = "读报推送时间"
         self.cmd_daily_news_list_name = "读报推送列表"
@@ -3577,6 +3580,86 @@ class ApixIqfkSimpleMeme(Star):
     #   ★ 用**实例属性**（在 _refresh 里初始化），不要用类属性 ——
     #     类属性会被所有实例共享，多实例时互相干扰。
     # ============================================================
+    async def _group_member_ids(self, event, group_id: str):
+        """
+        取本群**当前真实成员**的 QQ 集合（用于排行榜剔除退群者）。
+
+        ★ 为什么需要：AstrBot 这一版**没有「成员减少」事件**
+          （群里搜不到任何 group_decrease 处理），无法在退群那一刻清数据；
+          所以改成**查询时过滤** —— 拉一次群名单，不在名单里的不上榜。
+
+        ★ 三层兜底拿 bot 对象（和 core/group_admin.get_group_members 同口径）
+        ★ 5 分钟缓存：排行榜点几次不会反复请求群名单
+        ★ **任何失败都返回 None** —— 调用方据此不过滤，
+          绝不能让「名单拉不到」把整个排行榜变成空的。
+        """
+        try:
+            gid = str(group_id or "").strip()
+            if not gid or not gid.isdigit():
+                return None
+            import time as _t
+            _now = _t.monotonic()
+            _cache = getattr(self, "_gmember_cache", None)
+            if _cache is None:
+                _cache = {}
+                self._gmember_cache = _cache
+            _hit = _cache.get(gid)
+            if _hit and _now - _hit[0] < 300:
+                return _hit[1]
+            # ---- 找 bot ----
+            bot = getattr(event, "bot", None)
+            if bot is None:
+                for _a in ("api", "client", "onebot"):
+                    _alt = getattr(event, _a, None)
+                    if _alt is not None:
+                        bot = _alt
+                        break
+            if bot is None:
+                return None
+            _members = None
+            if hasattr(bot, "get_group_member_list"):
+                try:
+                    _members = await bot.get_group_member_list(
+                        group_id=int(gid))
+                except Exception:
+                    _members = None
+            if not _members and hasattr(bot, "call_action"):
+                try:
+                    _members = await bot.call_action(
+                        "get_group_member_list", group_id=int(gid))
+                except Exception:
+                    _members = None
+            if not _members:
+                return None
+            _ids = set()
+            for _m in _members:
+                try:
+                    if isinstance(_m, dict):
+                        _u = (_m.get("user_id") or _m.get("uin")
+                              or _m.get("qq") or "")
+                    else:
+                        _u = (getattr(_m, "user_id", "")
+                              or getattr(_m, "uin", ""))
+                    _u = str(_u).strip()
+                    if _u:
+                        _ids.add(_u)
+                except Exception:
+                    continue
+            if not _ids:
+                return None
+            _cache[gid] = (_now, _ids)
+            logger.info(f"[apix-meme] 群 {gid} 成员名单 {len(_ids)} 人（已缓存）")
+            # ★★ 1.2：拿到名单就**顺手清掉已退群成员的本群数据**
+            try:
+                if self.checkin_module is not None:
+                    self.checkin_module.purge_departed(gid, _ids)
+            except Exception:
+                logger.debug("[apix-meme] 清理退群数据失败", exc_info=True)
+            return _ids
+        except Exception:
+            logger.debug("[apix-meme] 取群成员名单失败", exc_info=True)
+            return None
+
     def _refresh_cfg_if_changed(self) -> bool:
         """
         配置文件变了就自动重载配置。返回**是否发生了重载**。
@@ -3747,9 +3830,50 @@ class ApixIqfkSimpleMeme(Star):
         if self.mute_duration < 60:
             self.mute_duration = 60
 
-        self.cmd_daily_news_name = to_str(merged.get("cmd_daily_news", "每日读报")).strip() or "每日读报"
-        self.cmd_daily_news_on_name = to_str(merged.get("cmd_daily_news_on", "读报推送开")).strip() or "读报推送开"
-        self.cmd_daily_news_off_name = to_str(merged.get("cmd_daily_news_off", "读报推送关")).strip() or "读报推送关"
+        # ★★ 1.2 迁移：老配置里存的是旧默认值，这里自动升级一次
+        #   （只动「仍是旧系统默认」的，用户自定义过的一律保留）
+        try:
+            _mig = {
+                "cmd_daily_news": ("每日读报", "今日读报,每日读报"),
+                "cmd_daily_news": ("读报功能,每日读报", "今日读报,每日读报"),
+                "cmd_daily_news_on": ("读报推送开",
+                                      "开启功能 读报推送,开启读报推送"),
+                "cmd_daily_news_off": ("读报推送关",
+                                       "关闭功能 读报推送,关闭读报推送"),
+            }
+            _cur = {}
+            for _k, (_old, _new) in _mig.items():
+                _v = to_str(merged.get(_k, "")).strip()
+                if _v == _old:
+                    merged[_k] = _new
+                    _cur[_k] = _new
+            if _cur:
+                # 写回磁盘，避免每次启动都再迁一遍
+                try:
+                    _disk = self._read_disk_config() or {}
+                    if isinstance(_disk, dict):
+                        _disk.update(_cur)
+                        self._write_disk_config(_disk)
+                except Exception:
+                    logger.debug("[apix-meme] 读报指令名迁移写盘失败",
+                                 exc_info=True)
+                logger.info(f"[apix-meme] 读报指令名已迁移 {len(_cur)} 项："
+                            f"{list(_cur)}")
+        except Exception:
+            logger.debug("[apix-meme] 读报指令名迁移失败", exc_info=True)
+
+        # ★★ 1.2：手动读报开关默认值
+        self.cmd_daily_news_manual_on_name = to_str(merged.get(
+            "cmd_daily_news_manual_on",
+            "开启功能 读报功能,开启读报功能"
+        )).strip() or "开启功能 读报功能,开启读报功能"
+        self.cmd_daily_news_manual_off_name = to_str(merged.get(
+            "cmd_daily_news_manual_off",
+            "关闭功能 读报功能,关闭读报功能"
+        )).strip() or "关闭功能 读报功能,关闭读报功能"
+        self.cmd_daily_news_name = to_str(merged.get("cmd_daily_news", "今日读报,每日读报")).strip() or "每日读报"
+        self.cmd_daily_news_on_name = to_str(merged.get("cmd_daily_news_on", "开启功能 读报推送,开启读报推送")).strip() or "读报推送开"
+        self.cmd_daily_news_off_name = to_str(merged.get("cmd_daily_news_off", "关闭功能 读报推送,关闭读报推送")).strip() or "读报推送关"
         self.cmd_daily_news_time_name = to_str(merged.get("cmd_daily_news_time", "读报推送时间")).strip() or "读报推送时间"
         self.cmd_daily_news_list_name = to_str(merged.get("cmd_daily_news_list", "读报推送列表")).strip() or "读报推送列表"
 
@@ -4476,6 +4600,10 @@ class ApixIqfkSimpleMeme(Star):
             existing["cmd_daily_push_list"] = self.cmd_daily_push_list_name
             existing["cmd_blacklist_list"] = self.cmd_blacklist_list_name
             existing["member_blacklist"] = self._blacklist_raw
+            existing["cmd_daily_news_manual_on"] = \
+                self.cmd_daily_news_manual_on_name
+            existing["cmd_daily_news_manual_off"] = \
+                self.cmd_daily_news_manual_off_name
             existing["cmd_daily_news"] = self.cmd_daily_news_name
             existing["cmd_daily_news_on"] = self.cmd_daily_news_on_name
             existing["cmd_daily_news_off"] = self.cmd_daily_news_off_name
@@ -5660,6 +5788,41 @@ class ApixIqfkSimpleMeme(Star):
         return text in (n, f"/{n}")
 
     # ---------- 每日读报指令识别 ----------
+    def _name_list(self, attr: str) -> list:
+        """
+        ★★ 1.7：把一个「指令名属性」展开成**全部候选名**。
+
+        配置里可以写多个别名（英文逗号分隔），例如
+            cmd_chime_on = "开启功能 报时功能,开启报时功能"
+        这里统一拆好，匹配函数只要把返回的列表丢给 `cmd_arg()` 即可。
+
+        返回按**长度倒序**：长名优先匹配，避免「开启功能 报时功能」
+        被更短的别名截断。
+        """
+        raw = getattr(self, attr, "") or ""
+        names = self._split_names(raw)
+        out = []
+        for x in names:
+            x = str(x).strip()
+            if not x:
+                continue
+            out.append(x)
+            if not x.startswith("/"):
+                out.append("/" + x)
+        return sorted(set(out), key=len, reverse=True)
+
+    def _name_list_hit(self, text: str, attr: str) -> bool:
+        """`text` 是否**精确**等于该属性的任一候选名（含 / 前缀）"""
+        return str(text or "").strip() in self._name_list(attr)
+
+    def _is_daily_news_manual_on_cmd(self, text: str):
+        """手动读报开关：`开启功能 读报功能`（★ 1.2）"""
+        return self._name_list_hit(text, "cmd_daily_news_manual_on_name")
+
+    def _is_daily_news_manual_off_cmd(self, text: str):
+        """手动读报开关：`关闭功能 读报功能`（★ 1.2）"""
+        return self._name_list_hit(text, "cmd_daily_news_manual_off_name")
+
     def _is_daily_news_cmd(self, text: str) -> bool:
         """手动读报指令，支持逗号分隔多个。"""
         for n in self._split_names(self.cmd_daily_news_name):
@@ -9602,7 +9765,14 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
             try:
-                text = getattr(self.checkin_module, _rk_fn)(group_id)
+                # ★★ 1.2：拉群名单 -> 退群的人不上榜
+                #   （拉不到就传 None，排行榜照常显示，不会变空）
+                try:
+                    _mids = await self._group_member_ids(event, group_id)
+                except Exception:
+                    _mids = None
+                text = getattr(self.checkin_module, _rk_fn)(
+                    group_id, member_ids=_mids)
                 if text:
                     async for _r in self._send_content(event, text):
                         yield _r
@@ -10738,6 +10908,50 @@ class ApixIqfkSimpleMeme(Star):
             lines.append("")
             lines.append("💡 ✅=推送通道已就绪，⚠️=该群还没有发过消息")
             async for _r in self._send_content(event, "\n".join(lines)):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+
+        # ============ 手动读报开关（★ 1.2）============
+        #   `开启功能 读报功能` / `关闭功能 读报功能`
+        #   改的是 daily_news_module 的 **manual_groups**（黑名单：
+        #   填了群号 = 该群不能手动读报；留空 = 所有群都能手动读）。
+        #   ★ 与「读报推送」（auto_groups 白名单）是两个独立名单。
+        for _mn_on, _mn_attr in ((True, "cmd_daily_news_manual_on_name"),
+                                 (False, "cmd_daily_news_manual_off_name")):
+            if not self._name_list_hit(msg_str, _mn_attr):
+                continue
+            if not await self._check_admin(event):
+                async for _r in self._send_content(
+                        event, "⚠️仅管理员/群主/群管可执行"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+                return
+            mod = self.daily_news_module
+            if mod is None:
+                logger.warning("[apix-meme] ❌ 每日读报模块未加载")
+                GLOBAL_STATS["send"] += 1
+                return
+            # 支持「开启功能 读报功能 群号」
+            _mn_tgt = ""
+            try:
+                _mn_tgt = self._extract_arg(
+                    msg_str, getattr(self, _mn_attr)) or ""
+            except Exception:
+                _mn_tgt = ""
+            _mn_gid = _mn_tgt or group_id
+            if not _mn_gid or not str(_mn_gid).isdigit():
+                async for _r in self._send_content(
+                        event, "⚠️请在群聊中使用该指令"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+                return
+            try:
+                mod.set_manual_group(str(_mn_gid), bool(_mn_on))
+            except Exception:
+                logger.exception("[apix-meme] 写手动读报名单失败")
+            async for _r in self._send_content(
+                    event, f"{'✅' if _mn_on else '❌'} 读报功能"):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return

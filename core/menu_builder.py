@@ -686,20 +686,48 @@ def build_luck_menu(plugin) -> str:
 
 
 def build_news_menu(plugin) -> str:
-    """读报功能子菜单"""
-    raw = _sv(getattr(plugin, "cmd_daily_news_name", "")) or "每日读报"
-    parts = [x.strip() for x in str(raw).replace("，", ",").split(",") if x.strip()]
-    names = " / ".join(parts) or "每日读报"
-    main = parts[0] if parts else "每日读报"
+    """
+    读报功能子菜单。
+
+    ★★ 1.7：所有指令名**实时读后台配置**，不再写死 ——
+      手动读报、开关、推送时间、推送列表，后台改完菜单立刻跟着变。
+    """
+    def _names(attr, dflt):
+        raw = _sv(getattr(plugin, attr, "")) or dflt
+        return [x.strip() for x in str(raw).replace("，", ",").split(",")
+                if x.strip()] or [dflt]
+
+    # 手动读报（默认「今日读报 / 每日读报」）
+    manual = _names("cmd_daily_news_name", "今日读报,每日读报")
+    m_names = " / ".join(manual)
+    m_main = manual[0]
+    # 定时推送开关（默认「开启功能 读报推送 / 关闭功能 读报推送」）
+    on_names = " / ".join(_names("cmd_daily_news_on_name", "开启功能 读报推送"))
+    off_names = " / ".join(_names("cmd_daily_news_off_name", "关闭功能 读报推送"))
+    # 手动读报开关（默认「开启功能 读报功能 / 关闭功能 读报功能」）
+    m_on = " / ".join(_names("cmd_daily_news_manual_on_name",
+                             "开启功能 读报功能"))
+    m_off = " / ".join(_names("cmd_daily_news_manual_off_name",
+                              "关闭功能 读报功能"))
+    # 推送时间 / 推送列表
+    t_name = _names("cmd_daily_news_time_name", "读报推送时间")[0]
+    l_name = _names("cmd_daily_news_list_name", "读报推送列表")[0]
     return "\n".join([
         _bar("读报功能"),
-        f"📰{names}",
-        f"　 手动读一次今日新闻（{main}，60 秒内同一群去重）",
+        f"📰{m_names}",
+        f"　 手动读一次今日新闻（{m_main}，60 秒内同一群去重）",
         "",
         "⏰定时推送由后台「推送时间 / 推送间隔」控制",
         "　 未到时间时可手动补一次（同样去重）",
         "",
-        "🔧管理指令：读报推送开 / 关 / 时间 / 列表",
+        f"🔛开启手动读报：{m_on}",
+        f"🔴关闭手动读报：{m_off}",
+        "",
+        f"🔛开启自动推送：{on_names}",
+        f"🔴关闭自动推送：{off_names}",
+        f"🕐推送时间：{t_name}",
+        f"📋推送列表：{l_name}",
+        "",
         "💡结果按「输出模式」渲染（文本 / 图片）",
         _bar_plain(),
     ])

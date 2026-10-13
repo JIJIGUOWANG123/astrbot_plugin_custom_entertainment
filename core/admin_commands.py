@@ -9,7 +9,50 @@ except Exception:  # pragma: no cover
     def _title_bar(t):
         return str(t)
 
+try:
+    from .path_utils import title_foot as _title_foot
+except Exception:  # pragma: no cover
+    def _title_foot():
+        return "─" * 20
+
 FEATURE_ALIAS = {
+    # ★★ 1.7：开关类指令统一成「开启功能 XX / 关闭功能 XX」后，
+    #   这些「XX」也要能在别名表里找到对应功能
+    # ★★ 1.7：功能状态清单里出现的**每一个**显示名都要能识别，
+    #   否则 `开启功能 报时推送` 会回「⚠️未知功能」。下表已逐一核对。
+    "报时功能": "chime",
+    "报时推送": "chime",
+    "MC系统": "minecraft",
+    "接口系统": "meme",
+    "签到系统": "checkin",
+    "打卡系统": "greeting",
+    "图鉴系统": "bird",
+    "管理系统": "admin",
+    "银行功能": "bank",
+    "打工功能": "job",
+    "赛车功能": "racing",
+    "坐骑功能": "mount",
+    "神偷功能": "steal",
+    "签到商店": "shop",
+    "运势功能": "fortune",
+    "老公功能": "husband",
+    "人品功能": "luck",
+    "天气查询": "weather",
+    "油价查询": "oil",
+    "互动功能": "poke",
+    "群员管理": "member",
+    "积分调整": "score_admin",
+    "猜数功能": "guess",
+    "整点报时": "chime",
+    "状态推送": "push",
+    "读报推送": "news_auto",
+    "电脑状态": "status",
+    "状态功能": "status",
+    "MC推送": "minecraft",
+    "词库系统": "word_reply",
+    "娱乐功能": "entertain",
+    "全局尾巴": "reply_tail",
+    "输出模式": "output_mode",
     "运势": "fortune",
     "今日运势": "fortune",
     "fortune": "fortune",
@@ -105,19 +148,34 @@ FEATURE_ALIAS = {
     "查询": "qqinfo",
     "查QQ": "qqinfo",
     "qqinfo": "qqinfo",
+    # ★★ 1.5 新增：B站功能（娱乐功能下级，黑名单）
+    "B站功能": "bili",
+    "B站": "bili",
+    "b站功能": "bili",
+    "b站": "bili",
+    "哔哩哔哩": "bili",
+    "bili": "bili",
     # 1.7.6 新增：抽奖功能（签到子功能，黑名单：填了群号 = 该群不触发）
     "抽奖功能": "lottery",
     "抽奖": "lottery",
     "lottery": "lottery",
     # 1.7.6 新增：抢银行（银行子功能，黑名单）
+    # ★ 显示名统一成「抢劫功能」，这几个写法都认（老写法保留，不破坏习惯）
+    "抢劫功能": "rob",
+    "抢劫": "rob",
     "抢银行": "rob",
     "抢劫银行": "rob",
     "打劫银行": "rob",
     "rob": "rob",
     # 1.7.6 新增：奖池（抽奖子功能，黑名单）
+    "奖池功能": "lottery_pool",
     "奖池": "lottery_pool",
     "参与抽奖": "lottery_pool",
     "lottery_pool": "lottery_pool",
+    # ★★ 1.1：群管系统
+    "群管系统": "group_admin",
+    "群管": "group_admin",
+    "group_admin": "group_admin",
 }
 
 FEATURE_LABEL = {
@@ -153,14 +211,62 @@ FEATURE_LABEL = {
     "qqinfo": "查询功能",
     # 1.7.6 新增
     "lottery": "抽奖功能",
-    "rob": "抢银行",
-    "lottery_pool": "奖池",
+    "rob": "抢劫功能",
+    "lottery_pool": "奖池功能",
+    # ★★ 1.1 新增：群管系统（撤回 / 禁词检测等）
+    "group_admin": "群管系统",
+    # ★★ 1.5 新增：B站功能（娱乐功能下级）
+    "bili": "B站功能",
+    # ★★ 1.7：父系统 / 新功能也要有显示名，
+    #   否则页脚提示会印出空括号「主系统（）关着时不生效」
+    "entertain": "娱乐功能",
+    "checkin": "签到系统",
+    "admin": "管理系统",
+    "shop": "签到商店",
+    "weather": "天气查询",
+    "oil": "油价查询",
+    "poke": "互动功能",
+    "member": "群员管理",
+    "output_mode": "输出模式",
+    "reply_tail": "全局尾巴",
+    "racing": "赛车功能",
 }
 
 # 这些是「每日签到」下的子功能：主签到开关关掉后，它们也会一并失效
 CHECKIN_SUB_FEATURES = ("steal", "bank", "mount", "job", "lottery", "rob",
-                        "lottery_pool")
+                        "lottery_pool", "pet", "guess", "shop",
+                        "score_admin")
 
+
+PARENT_FEATURE = {
+    # ---- 签到系统的子功能（分发处先判 checkin）----
+    "steal": "checkin",
+    "bank": "checkin",
+    "mount": "checkin",
+    "job": "checkin",
+    "lottery": "checkin",
+    "rob": "checkin",
+    "lottery_pool": "checkin",
+    "pet": "checkin",
+    "racing": "checkin",            # ★ 1.7：赛车也归签到
+    "rps": "checkin",               # ★ 1.7：猜拳也归签到
+    "guess": "checkin",             # ★ 1.7：猜数也归签到（用户指定）
+    "shop": "checkin",              # 签到商店
+    "score_admin": "checkin",       # ★ 1.7：积分调整也归签到（用户指定）
+    # ---- 娱乐功能的子功能 ----
+    "music": "entertain",
+    "card": "entertain",
+    "bili": "entertain",
+    "luck": "entertain",
+    "husband": "entertain",
+    "fortune": "entertain",
+    "qqinfo": "entertain",
+    "speak_rank": "entertain",
+}
+
+FEATURE_EXTRA_PARENT = {
+    "lottery_pool": "lottery",      # 奖池要先开抽奖
+}
 
 class AdminCommands:
     def __init__(self, plugin):
@@ -267,13 +373,34 @@ class AdminCommands:
         "rob":        "rob_groups",
         # 1.7.6：奖池（黑名单：填了群号 = 该群不触发）
         "lottery_pool": "lottery_pool_groups",
+        # ★★ 1.1：群管系统（**白名单**：填了群号才开启，见 WHITELIST_FEATURES）
+        "group_admin": "group_admin_groups",
+        # ★★ 1.5：B站功能（娱乐功能下级，黑名单：填了群号 = 该群不触发）
+        "bili":       "bili_groups",
+        # ★★ 1.5：整点报时 / 每日读报也支持「开启功能 / 关闭功能」
+        #   （这两个模块本来就按群号名单生效，接进来即可立即生效）
+        "chime":      "hourly_chime_groups",
+        "news_auto":  "daily_news_auto_groups",
+        # 1.7: 全局尾巴 / 输出模式也支持按群开关（黑名单键承载：
+        #      填了群号 = 该群关闭）。不登记的话 enable_feature 会回
+        #      「暂不支持按群开关」。
+        # ★★ 1.7：下面 8 个以前「不支持按群开关」，现已全部接通。
+        #   不登记的话 enable_feature 会直接回「暂不支持按群开关」。
+        "entertain":  "entertain_groups",     # 娱乐功能（独立名单，勿复用 disabled_groups）
+        "admin":      "admin_groups",        # 管理系统
+        "racing":     "racing_groups",       # 赛车功能
+        "shop":       "shop_groups",         # 签到商店
+        "weather":    "weather_groups",      # 天气查询
+        "oil":        "oil_groups",          # 油价查询
+        "poke":       "poke_groups",         # 互动功能（戳一戳）
+        "member":     "member_groups",       # 群员管理
     }
 
     # 这些功能的「名单」用的是白名单语义（填了才生效）；
     # 其余（运势/老公/人品/词库/打卡/签到/子功能/接口/电脑状态/读报功能）仍是黑名单。
     #   白名单：整点报时、每日读报（自动）、状态推送（自动）
     #   黑名单：电脑状态（手动查询）、读报功能（手动读报）—— 留空 = 所有群都能用
-    WHITELIST_FEATURES = {"chime", "push", "news_auto"}
+    WHITELIST_FEATURES = {"chime", "push", "news_auto", "group_admin"}
 
     @staticmethod
     def _parse_gids(raw) -> list:
@@ -396,7 +523,7 @@ class AdminCommands:
         note = ("已把本群号从后台生效名单移除，该功能所有指令都不再响应"
                 if key in self.WHITELIST_FEATURES
                 else "已把群号写入后台群号黑名单，该功能所有指令都不再响应")
-        return (f"✅已关闭{scope}：{label}\n"
+        return (f"❌已关闭{scope}：{label}\n"
                 f"💡 {note}")
 
     @staticmethod
@@ -595,273 +722,345 @@ class AdminCommands:
         return (f"✅已开启{scope}：{label}\n"
                 f"💡 {note}")
 
-    def feature_status_text(self, group_id: str = None, target_group: str = None) -> str:
+    def _sub_on(self, mod_attr: str, gid: str,
+                list_attr: str = "enabled_groups") -> bool:
+        """群号订阅类功能的「本群是否已开」"""
+        m = getattr(self.plugin, mod_attr, None)
+        if m is None:
+            return False
+        try:
+            return bool(m.is_group_on(gid))
+        except Exception:
+            pass
+        try:
+            return gid in [str(x) for x in (getattr(m, list_attr, None) or [])]
+        except Exception:
+            return False
+
+    def feature_status_text(self, group_id: str = None,
+                            target_group: str = None,
+                            page: int = 1) -> str:
         """
-        显示本群的功能状态。
-        与后台配置保持一致：既显示「全局总开关 / 允许群号」，
-        也显示「本群功能开关」，这样一眼能看出功能到底为什么开/关。
+        ★★ 1.7：本群功能状态（**简约版**）。
+
+        版式（用户指定）：
+            📋 功能状态
+            ━━━━━━━━━━━━━━━━━━━━
+            状态推送[开启] 读报推送[开启] 报时推送[开启]
+            ...
+            （每行三个，一屏看完，**不分页**）
+
+            💡 开启功能 XX  开启本群指定功能
+            💡 关闭功能 XX  关闭本群指定功能
+
+        · `page` 参数仅为兼容旧调用保留，现在不再分页。
+        · 状态判定综合：**父系统门禁** + 后台功能开关 + 本群开关 + 群号名单。
+          ★ 父系统（如签到）关掉时，它的子功能（银行 / 打工 / 坐骑 /
+            赛车 / 宠物 / 抽奖 / 抢劫 / 奖池…）即使自己开着也**不生效**，
+            所以这里一律显示「关闭」—— 与分发代码同口径，避免
+            「显示开启却用不了」的错觉。归属见 `PARENT_FEATURE`。
         """
         p = self.plugin
-
-        show_gid = None
+        gid = ""
         if target_group:
-            show_gid = str(target_group).strip()
+            gid = str(target_group).strip()
         elif group_id:
-            show_gid = str(group_id).strip()
-
-        if not show_gid:
+            gid = str(group_id).strip()
+        if not gid:
             return "⚠️ 请在群聊中使用该指令，或指定群号：功能状态 群号"
 
-        gid = show_gid
-        lines = [_title_bar(f"群 {gid} 功能开关状态")]
-
-        # ---------- ① 全局群白名单 ----------
-        def _glist(name):
-            return [str(x) for x in (getattr(p, name, None) or [])]
-
-        def _wl_state(name):
-            """黑名单语义：留空 = 所有群都生效；命中 = 本群被排除"""
-            gids = _glist(name)
-            if not gids:
-                return "未排除任何群", False
-            return (f"已排除 {len(gids)} 个群", gid in gids)
-
-        # 白名单语义（填了才生效）的功能，单独标注
-        def _wl_state_white(name):
-            gids = _glist(name)
-            if not gids:
-                return "未填写（不生效）", False
-            return (f"已填 {len(gids)} 个群", gid in gids)
-
-        wl_rows = []
-        for label, name in (("全局", "allowed_groups"),
-                            ("电脑状态·手动查询", "status_groups"),
-                            ("读报功能·手动读报", "daily_news_groups"),
-                            ("接口系统", "meme_groups")):
-            desc, hit = _wl_state(name)
-            # 读报手动名单存在模块里，从模块读更准确
-            if name == "daily_news_groups":
-                mod = getattr(p, "daily_news_module", None)
-                gids = [str(x) for x in (getattr(mod, "manual_groups", None) or [])] if mod else []
-                desc = "未排除任何群" if not gids else f"已排除 {len(gids)} 个群"
-                hit = gid in gids
-            wl_rows.append((label, desc, hit))
-        if any(desc != "未排除任何群" for _l, desc, _o in wl_rows):
-            lines.append("")
-            lines.append("【群号黑名单】（填了的群不生效）")
-            for label, desc, hit in wl_rows:
-                if desc == "未排除任何群":
-                    lines.append(f"· {label}：{desc}")
-                else:
-                    lines.append(f"· {label}：{desc} {'❌ 本群被排除' if hit else '✅ 本群正常'}")
-
-        # ---------- ② 白名单式功能的群号（填了才生效） ----------
-        white_rows = []
-        for label, name, sub in (
-            ("整点报时", "hourly_chime_groups", ""),
-            ("状态推送", "daily_status_push_groups", "自动推送"),
-            ("每日读报", "daily_news_auto_groups", "自动推送"),
-        ):
-            # 这些名单存在各模块里，从模块读更准确
-            attr = {
-                "hourly_chime_groups": ("hourly_chime_module", "enabled_groups"),
-                "status_groups": (None, None),
-                "daily_status_push_groups": ("status_push_module", "blocked_groups"),
-                "daily_news_groups": ("daily_news_module", "manual_groups"),
-                "daily_news_auto_groups": ("daily_news_module", "auto_groups"),
-            }.get(name, (None, None))
-            if attr[0]:
-                mod = getattr(p, attr[0], None)
-                gids = [str(x) for x in (getattr(mod, attr[1], None) or [])] if mod else []
-            else:
-                gids = _glist(name)
-            if not gids:
-                white_rows.append((label, sub, "未填写（不生效）", False))
-            else:
-                white_rows.append((label, sub, f"已填 {len(gids)} 个群", gid in gids))
-        if white_rows:
-            lines.append("")
-            lines.append("【生效群号】（必须填写才生效）")
-            for label, sub, desc, ok in white_rows:
-                tag = f"{label}·{sub}" if sub else label
-                mark = "✅ 本群已填" if ok else "❌ 本群未填"
-                lines.append(f"· {tag}：{desc} {mark if desc != '未填写（不生效）' else ''}".rstrip())
-
-        # ---------- ③ 各功能的「群号」配置 ----------
-        #   与后台各功能页的群号黑名单一一对应，避免状态显示与实际配置脱节
-        def _wl_of(getter):
-            """getter() 返回群号列表；空列表视为不排除任何群"""
-            try:
-                gids = [str(x) for x in (getter() or [])]
-            except Exception:
-                return None
-            return gids
-
-        wl_specs = [
-            ("fortune",    "今日运势", "fortune_module"),
-            ("husband",    "今日老公", "husband_module"),
-            ("luck",       "今日人品", "luck_module"),
-            ("word_reply", "词库系统", "word_reply_module"),
-            ("greeting",   "打卡系统", "greeting_module"),
-            ("checkin",    "签到系统", "checkin_module"),
-        ]
-        wl_lines = []
-        for key, label, mod_attr in wl_specs:
-            mod = getattr(p, mod_attr, None)
-            gids = _wl_of(lambda m=mod: getattr(m, "allowed_groups", None))
-            if gids is None or not gids:
-                continue          # 模块未加载或未排除任何群，无需显示
-            mark = "❌ 本群被排除" if gid in gids else "✅ 本群正常"
-            wl_lines.append(f"· {label}：{'、'.join(gids)} {mark}")
-        if wl_lines:
-            lines.append("")
-            lines.append("【功能群号黑名单】（填了的群不生效）")
-            lines.extend(wl_lines)
-
-        # ---------- ③ 本群功能开关 ----------
-        #   名称用固定功能名（不显示用户自定义的触发词），
-        #   状态综合「后台功能开关 + 本群开关 + 群号白名单」三层判断
-        lines.append("")
-        lines.append("【本群功能开关】")
-        group_cfg = p.group_feature_switches.get(gid, {})
-        sub_feats = set(CHECKIN_SUB_FEATURES)
-
-        # 各功能的「后台启用开关」（True/False）
+        # ---------- 三层判定 ----------
+        group_cfg = p.group_feature_switches.get(gid, {}) or {}
         ck_mod = getattr(p, "checkin_module", None)
 
-        def _ck_flag(attr):
+        def _ck(attr):
             if ck_mod is None:
                 return True
             return bool(getattr(ck_mod, attr, True))
 
-        def _mod_flag(mod_attr):
+        def _mod(mod_attr):
             m = getattr(p, mod_attr, None)
             if m is None:
                 return True
             return bool(getattr(m, "enable", True))
 
-        feature_switches = {
-            "fortune":    _mod_flag("fortune_module"),
-            "husband":    _mod_flag("husband_module"),
-            "luck":       _mod_flag("luck_module"),
-            "word_reply": _mod_flag("word_reply_module"),
-            "meme":       bool(getattr(p, "meme_enable", True)),
-            "status":     bool(getattr(p, "status_enable", True)),
-            "greeting":   _mod_flag("greeting_module"),
-            "minecraft":  _mod_flag("minecraft_module"),
-            "checkin":    _mod_flag("checkin_module"),
-            "steal":      _ck_flag("steal_enable"),
-            "bank":       _ck_flag("bank_enable"),
-            "mount":      _ck_flag("mount_enable"),
-            "job":        _ck_flag("job_enable"),
+        # 后台「全局功能开关」
+        glob = {
+            "fortune": _mod("fortune_module"),
+            "husband": _mod("husband_module"),
+            "luck": _mod("luck_module"),
+            "word_reply": _mod("word_reply_module"),
+            "meme": bool(getattr(p, "meme_enable", True)),
+            "status": bool(getattr(p, "status_enable", True)),
+            "greeting": _mod("greeting_module"),
+            "minecraft": _mod("minecraft_module"),
+            "checkin": _mod("checkin_module"),
+            "steal": _ck("steal_enable"),
+            "bank": _ck("bank_enable"),
+            "mount": _ck("mount_enable"),
+            "job": _ck("job_enable"),
+            "lottery": _ck("lottery_enable"),
+            "rob": _ck("rob_enable"),
+            "lottery_pool": _ck("lottery_pool_enable"),
             "speak_rank": bool(getattr(
                 getattr(p, "speak_stats_module", None), "enable", True)),
-            "pet":        bool(getattr(
+            "pet": bool(getattr(
                 getattr(p, "pet_module", None), "enable", True)),
             "score_admin": bool(getattr(p, "score_admin_enable", True)),
-            "music":      bool(getattr(
+            "music": bool(getattr(
                 getattr(p, "music_module", None), "enable", True)),
-            # ★ 小鸟图鉴：只看总开关，不受群黑名单影响
-            "bird":       bool(getattr(p, "bird_enable", True)),
-            # ★ 1.7.6：抽奖功能（签到子功能）
-            "lottery":    _ck_flag("lottery_enable"),
-            # ★ 1.7.6：抢银行（银行子功能）
-            "rob":        _ck_flag("rob_enable"),
-            # ★ 1.7.6：奖池（抽奖子功能）
-            "lottery_pool": _ck_flag("lottery_pool_enable"),
+            "bird": bool(getattr(p, "bird_enable", True)),
+            "bili": bool(getattr(p, "bili_enable", True)),
+            "guess": bool(getattr(p, "guess_enable", True)),
+            "group_admin": True,          # 群管没有独立全局开关
+            "card": True,
+            "qqinfo": bool(getattr(p, "qqinfo_enable", True)),
+            # ★★ 1.7：新增/补齐的开关来源
+            #   娱乐功能 = 娱乐模块总开关（沿用主菜单的「娱乐功能」）
+            #   娱乐功能：本群开关（名单在 blk 里查）
+            "entertain": bool(group_cfg.get("entertain", True)),
+            #   天气查询挂在「接口系统」下（分发处查的是 meme_groups）
+            #   天气查询：本群开关（名单在 blk 里查）
+            "weather": bool(group_cfg.get("weather", True)),
+            #   油价查询有自己的 oil_enable
+            #   油价查询：本群开关（名单在 blk 里查）
+            "oil": bool(group_cfg.get("oil", True)),
+            #   互动功能（戳一戳）
+            #   互动功能：本群开关（名单在 blk 里查）
+            "poke": bool(group_cfg.get("poke", True)),
+            #   群员管理（无独立开关 -> 跟随群管系统总开关）
+            #   群员管理：本群开关（名单在 blk 里查）
+            "member": bool(group_cfg.get("member", True)),
+            #   全局尾巴：本群开关开着 **且** 本群不在黑名单里。
+            #   ★ 不再 and 模块的 enable —— 模块总开关是运行前提，
+            #     由后台单独配置；这里只回答「本群开没开」。
+            #     否则后台一关（reply_tail_enable 默认 False），
+            #     本群开关怎么点都显示关闭（用户反馈过）。
+            #   输出模式：同上
         }
-        # 各功能的群号名单判定：黑名单命中 / 白名单未填
-        wl_blocks = {}
-        white_ok = {}
-        for key, _label, mod_attr in wl_specs:
-            mod = getattr(p, mod_attr, None)
-            gids = _wl_of(lambda m=mod: getattr(m, "allowed_groups", None))
-            if gids:
-                wl_blocks[key] = gid in gids
-        wl_blocks["meme"] = self._group_in_list(getattr(p, "meme_groups", None), gid)
 
-        # 白名单式功能：本群是否在名单里
-        def _in_list(mod_attr, list_attr):
-            mod = getattr(p, mod_attr, None)
-            if mod is None:
-                return False
-            return gid in [str(x) for x in (getattr(mod, list_attr, None) or [])]
+        def _in(lst):
+            return self._group_in_list(lst, gid)
 
-        white_ok["chime"] = _in_list("hourly_chime_module", "enabled_groups")
-        white_ok["news_auto"] = _in_list("daily_news_module", "auto_groups")
-        white_ok["push"] = _in_list("status_push_module", "blocked_groups")
-        # 黑名单式：命中名单 = 本群不能用
-        wl_blocks["status"] = self._group_in_list(getattr(p, "status_groups", None), gid)
-        wl_blocks["news"] = self._group_in_list(
-            getattr(getattr(p, "daily_news_module", None), "manual_groups", None), gid)
-        wl_blocks["speak_rank"] = self._group_in_list(
-            getattr(getattr(p, "speak_stats_module", None), "allowed_groups", None), gid)
-        wl_blocks["pet"] = self._group_in_list(
-            getattr(getattr(p, "pet_module", None), "allowed_groups", None), gid)
-        wl_blocks["score_admin"] = self._group_in_list(
-            getattr(p, "score_admin_groups", None), gid)
-        wl_blocks["music"] = self._group_in_list(
-            getattr(getattr(p, "music_module", None), "allowed_groups", None), gid)
-        # ★ 小鸟图鉴：黑名单直接存在插件上（bird_groups）
-        wl_blocks["bird"] = self._group_in_list(
-            getattr(p, "bird_groups", None), gid)
-
-        for key, label in FEATURE_LABEL.items():
-            g_on = bool(group_cfg.get(key, True))
-            f_on = feature_switches.get(key, True)
-            blk = wl_blocks.get(key, False)   # True = 本群在群号黑名单里
-            if key in self.WHITELIST_FEATURES:
-                # 白名单功能：名单里没填本群 = 不生效
-                if not white_ok.get(key, False):
-                    mark = "❌ 本群未在名单"
-                elif not g_on:
-                    mark = "❌ 本群已关闭"
-                else:
-                    mark = "✅ 开启"
-            elif not f_on:
-                mark = "❌ 后台已停用"
-            elif blk:
-                mark = "❌ 本群已被排除"
-            elif not g_on:
-                mark = "❌ 本群已关闭"
-            else:
-                mark = "✅ 开启"
-            # 子功能额外标注父开关，避免误解为完全独立
-            suffix = ""
-            if key in sub_feats:
-                if not bool(group_cfg.get("checkin", True)):
-                    suffix = "（签到主开关已关，随之失效）"
-                else:
-                    suffix = "（签到子功能）"
-            lines.append(f"· {label}：{mark}{suffix}")
-
-        # ---------- ⑤ 用「群号订阅」控制的功能 ----------
-        #   整点报时 / 每日读报 / 定时状态推送 的每群开关存在各自的状态文件里，
-        #   不在 group_feature_switches 中，这里单独列出，避免状态显示与后台脱节
-        sub_specs = [
-            ("整点报时", "hourly_chime_module"),
-            ("每日读报", "daily_news_module"),
-            ("定时状态推送", "status_push_module"),
-        ]
-        sub_lines = []
-        for label, attr in sub_specs:
-            m = getattr(p, attr, None)
-            if m is None:
-                continue
+        # 群号名单命中情况
+        blk = {
+            "status": _in(getattr(p, "status_groups", None)),
+            "news": _in(getattr(getattr(p, "daily_news_module", None),
+                                "manual_groups", None)),
+            "speak_rank": _in(getattr(getattr(p, "speak_stats_module", None),
+                                      "allowed_groups", None)),
+            "pet": _in(getattr(getattr(p, "pet_module", None),
+                               "allowed_groups", None)),
+            "score_admin": _in(getattr(p, "score_admin_groups", None)),
+            "music": _in(getattr(getattr(p, "music_module", None),
+                                 "allowed_groups", None)),
+            "bird": _in(getattr(p, "bird_groups", None)),
+            "meme": _in(getattr(p, "meme_groups", None)),
+            # ★★ 1.7：读报功能 = **手动读报**，走 daily_news 的
+            #   `manual_groups`（黑名单：填了群号 = 该群不能手动读报）。
+            #   注意别和「读报推送」（auto_groups 白名单）混了。
+            "news": not bool(getattr(
+                getattr(p, "daily_news_module", None),
+                "is_manual_allowed", lambda _g: True)(gid)),
+            # 1.7: 全局尾巴 / 输出模式也支持按群关闭
+            #      （「关闭功能 X」把本群写进 *_groups 黑名单）
+            # 1.7: 新接通的按群开关
+            "entertain": _in(getattr(p, "entertain_groups", None)),
+            "racing": _in(getattr(p, "racing_groups", None)),
+            "shop": _in(getattr(p, "shop_groups", None)),
+            "weather": _in(getattr(p, "weather_groups", None)),
+            "oil": _in(getattr(p, "oil_groups", None)),
+            "poke": _in(getattr(p, "poke_groups", None)),
+            "member": _in(getattr(p, "member_groups", None)),
+        }
+        # 白名单式：名单里没填本群 = 不生效
+        white = {
+            "group_admin": _in(getattr(p, "group_admin_groups", None)),
+            "chime": self._sub_on("hourly_chime_module", gid),
+            "push": self._sub_on("status_push_module", gid),
+            "news_auto": self._sub_on("daily_news_module", gid, "auto_groups"),
+        }
+        # MC 自动检测：按群订阅
+        _mc = getattr(p, "minecraft_module", None)
+        mc_auto = False
+        if _mc is not None:
             try:
-                on = bool(m.is_group_on(gid))
+                mc_auto = bool(_mc.is_group_auto(gid))
             except Exception:
-                continue
-            sub_lines.append(f"· {label}：{'✅ 本群已开启' if on else '❌ 本群未开启'}")
-        if sub_lines:
-            lines.append("")
-            lines.append("【群号订阅类功能】")
-            lines.extend(sub_lines)
+                mc_auto = False
 
+        def _on(key, kind="normal"):
+            """
+            综合判定：**父系统** + 全局停用 + 名单排除 + 本群关掉。
+
+            ★★ 1.7：先判父系统 —— 父系统（如签到）关掉时，子功能
+              （银行 / 打工 / 坐骑 / 宠物…）即使自己开着也不生效，
+              分发代码就是先判父再判子。这里必须同口径，否则
+              状态显示会误导用户。
+            """
+            if kind == "always":
+                return True
+            # ---- 父系统门禁 ----
+            _p = PARENT_FEATURE.get(key)
+            if _p and not _on(_p, "normal"):
+                return False
+            _ep = FEATURE_EXTRA_PARENT.get(key)
+            if _ep and not _on(_ep, "normal"):
+                return False
+            # ---- 自身门禁 ----
+            if not glob.get(key, True):
+                return False
+            if kind == "white":
+                if not white.get(key, False):
+                    return False
+                return bool(group_cfg.get(key, True))
+            if kind == "subscribe":
+                return bool(white.get(key, False))
+            if blk.get(key, False):
+                return False
+            return bool(group_cfg.get(key, True))
+
+        # ---------- 版式 ----------
+        #   (显示名, key, 判定类别)
+        ITEMS = [
+            # ── 第 1 行 ──
+            ("状态推送", "push", "subscribe"),
+            ("读报推送", "news_auto", "subscribe"),
+            ("报时推送", "chime", "subscribe"),
+            # ── 第 2 行 ──
+            ("MC推送", "minecraft", "mc"),
+            ("状态功能", "status", "normal"),
+            ("读报功能", "news", "normal"),
+            # ── 第 3 行 ──
+            #   ★ 1.7：原「报时功能」与第 1 行的「报时推送」是同一个
+            #     chime 开关，重复 -> 去掉；补上用户要的「全局尾巴」。
+            ("娱乐功能", "entertain", "normal"),
+            ("音乐功能", "music", "normal"),
+            # ── 第 4 行 ──
+            ("MC系统", "minecraft", "normal"),
+            ("接口系统", "meme", "normal"),
+            ("签到系统", "checkin", "normal"),
+            # ── 第 5 行 ──
+            ("打卡系统", "greeting", "normal"),
+            ("图鉴系统", "bird", "normal"),
+            ("群管系统", "group_admin", "white"),
+            # ── 第 6 行 ──
+            #   ★ 1.7：原第 6 行有两个「词库系统」重复，
+            #     第二个改成「输出模式」总开关（image/text 渲染总开关）。
+            ("管理系统", "admin", "normal"),
+            ("词库系统", "word_reply", "normal"),
+            # ── 第 7 行 ──
+            ("宠物功能", "pet", "normal"),
+            ("银行功能", "bank", "normal"),
+            ("打工功能", "job", "normal"),
+            # ── 第 8 行 ──
+            ("赛车功能", "racing", "normal"),
+            ("坐骑功能", "mount", "normal"),
+            ("神偷功能", "steal", "normal"),
+            # ── 第 9 行 ──
+            #   ★ 1.7：第三格改成「签到商店」（签到系统的子功能，
+            #     可单独开关；但签到系统一关就全无效）。
+            ("抽奖功能", "lottery", "normal"),
+            ("抢劫功能", "rob", "normal"),
+            ("签到商店", "shop", "normal"),
+            # ── 第 10 行 ──
+            ("运势功能", "fortune", "normal"),
+            ("老公功能", "husband", "normal"),
+            ("人品功能", "luck", "normal"),
+            # ── 第 11 行 ──
+            ("查询功能", "qqinfo", "normal"),
+            ("名片功能", "card", "normal"),
+            ("B站功能", "bili", "normal"),
+            # ── 第 12 行 ──
+            ("小鸟图鉴", "bird", "normal"),
+            ("猜数功能", "guess", "normal"),
+            ("奖池功能", "lottery_pool", "normal"),
+            # ── 第 13 行 ──
+            ("天气查询", "weather", "normal"),
+            ("油价查询", "oil", "normal"),
+            ("互动功能", "poke", "normal"),
+            # ── 第 14 行 ──
+            ("发言功能", "speak_rank", "normal"),
+            ("积分调整", "score_admin", "normal"),
+            ("群员管理", "member", "normal"),
+        ]
+
+        cells = []
+        for label, key, kind in ITEMS:
+            if kind == "always":
+                on, blocked = True, False
+            elif kind == "mc":
+                on = bool(glob.get("minecraft", True)) and mc_auto
+                blocked = False
+            else:
+                on = _on(key, kind)
+                # ★★ 1.7：自己是开的、但被**父系统**卡住 -> 打 ⛔ 区分
+                #   （父系统没开时子功能不生效，打 ❌ 会让人以为
+                #     是这个功能本身关了，⛔ 更能说明「不是它的锅」）
+                blocked = bool(
+                    not on
+                    and (PARENT_FEATURE.get(key)
+                         or FEATURE_EXTRA_PARENT.get(key))
+                    and glob.get(key, True)
+                    and bool(group_cfg.get(key, True))
+                    and not blk.get(key, False))
+            # ★★ 1.7：只用 ✅（开）/ ❌（关）两个图标（用户要求：
+            #   「打勾（开启）或者叉叉（关闭）就行了」）。
+            #   父系统卡住的子功能也是 ❌（确实不生效），
+            #   但会在页脚加一句提示说明原因，不再用 ⛔ 混淆。
+            #   ★ 用**全角方框** ［ ］：ASCII [ ] 是半角，和 emoji 混排
+            #     会让三格总宽飘掉，第三格被折到下一行。
+            cells.append(f"{label}［{'✅' if on else '❌'}］")
+
+        # 每行三个：单元格定宽 + 全角空格补齐，保证三列严格对齐
+        PER = 3
+        SEP = "　"          # 全角空格当列分隔
+
+        # 每格按「名字(4 汉字) + 2 全角方框」定宽。
+        #   ★ 图标版每格 5 个全角单元（「开启」文字版要 6），
+        #     因此三格一行只有约 35 全角格，760px 绰绰有余。
+        CELL = 5
+        lines = [f"{_title_bar('功能状态')}", ""]
+        for i in range(0, len(cells), PER):
+            row = cells[i:i + PER]
+            parts = []
+            for j, c in enumerate(row):
+                if j == len(row) - 1:
+                    parts.append(c)
+                    continue
+                # 该格已占的全角单元数
+                used = 0
+                for ch in c:
+                    used += 0 if ord(ch) == 0xFE0F else (
+                        1 if ord(ch) > 0x2000 else 0.5)
+                pad = max(1, int(round(CELL - used)))
+                parts.append(c + SEP * pad)
+            lines.append("".join(parts).rstrip())
         lines.append("")
-        lines.append("💡 默认全部开启；用「开启功能 xxx」「关闭功能 xxx」调整本群状态")
-        lines.append("💡 功能开关与群号白名单在后台配置中设置；单个群可用指令开关")
-        lines.append("💡 群号订阅类功能在各自菜单里用指令开关（或在后台填群号）")
+        lines.append("💡 开启功能 XX  开启本群指定功能")
+        lines.append("💡 关闭功能 XX  关闭本群指定功能")
+        lines.append(_title_foot())
+
+        # ★ 兼容旧调用：LAST_WIDTH 供调用方自适应卡片宽度。
+        #   ★★ 1.7：实测这一版（每行约 36~40 全角格）在 760px 才
+        #     **不折行**；窄了第三格的 [开启] 会被挤到下一行。
+        #     所以设 760 下限，行更长时再按 16.5px/全角格往上加。
+        try:
+            _w = 0
+            for l in lines:
+                # 半角记 0.5、全角记 1，最后折算成「全角格数」
+                _c = 0.0
+                for ch in l:
+                    if ord(ch) == 0xFE0F:
+                        continue
+                    _c += 1.0 if ord(ch) > 0x2000 else 0.5
+                _w = max(_w, _c)
+            # ★★ 1.7：实测 —— 三格一行（46 全角格）在 760px 才**不折行**
+            #   （700 会把第三格的 ［✅］ 挤到下一行）。所以这里给 760 下限，
+            #   行更长时再按 16.5px/全角格往上加。
+            self.LAST_WIDTH = max(760, int(_w * 16.5) + 40)
+        except Exception:
+            self.LAST_WIDTH = 760
         return "\n".join(lines)
 
     def set_group_must_at_bot(self, group_id: str, enabled: bool) -> str:

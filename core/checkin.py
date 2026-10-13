@@ -1201,6 +1201,75 @@ class CheckinModule:
         return [(uid, u) for uid, u in self._gusers(group_id).items()
                 if isinstance(u, dict)]
 
+    def purge_departed(self, group_id, member_ids) -> list:
+        """
+        ★★ 1.7：**清空已退群成员的本群数据**（用户要求）。
+
+        只在能拿到群名单时调用；`member_ids` 是本群当前真实成员 QQ 集合。
+        删掉本群 users 里不在名单中的人，并把各按群子表里对应的数据一并清掉。
+
+        返回被清掉的 QQ 列表（调用方可记日志/提示）。
+
+        ★ 安全约束（任一不满足就**什么都不删**）：
+          · member_ids 必须非空（名单拉失败时不能当「全群都退群了」）
+          · 名单人数不能少于现有记录的 1/3 ——
+            防止协议端返回残缺名单时把大家数据全清了
+        """
+        try:
+            _keep = {str(x).strip() for x in (member_ids or [])
+                     if str(x).strip()}
+        except Exception:
+            return []
+        if not _keep:
+            return []
+        gid = self._gid(group_id)
+        users = self.users.get(gid)
+        if not isinstance(users, dict) or not users:
+            return []
+        # 安全阀：名单太短就放弃（可能是残缺名单）
+        if len(_keep) * 3 < len(users):
+            logger.warning(
+                "[checkin] 群 %s 名单只有 %d 人、记录却有 %d 条，"
+                "疑似残缺名单 -> 跳过清理", gid, len(_keep), len(users))
+            return []
+        gone = [u for u in list(users) if str(u) not in _keep]
+        if not gone:
+            return []
+        _gone_s = {str(u) for u in gone}
+        for u in gone:
+            try:
+                users.pop(u, None)
+            except Exception:
+                pass
+        # 子表一并清（都是 {群: {日期/键: {用户: ...}}} 同构）
+        for _name in ("daily", "speaks", "robs", "lotteries", "mount_greet"):
+            _tbl = getattr(self, _name, None)
+            if not isinstance(_tbl, dict):
+                continue
+            _bucket = _tbl.get(gid)
+            if not isinstance(_bucket, dict):
+                continue
+            for _k, _v in list(_bucket.items()):
+                if isinstance(_v, dict):
+                    for _u in _gone_s:
+                        _v.pop(_u, None)
+        # pools（奖池）结构可能不同，单独小心处理
+        try:
+            _pool = self.pools.get(gid) if isinstance(self.pools, dict) else None
+            if isinstance(_pool, dict):
+                for _u in _gone_s:
+                    _pool.pop(_u, None)
+        except Exception:
+            pass
+        try:
+            self._need_save = True
+            self._save()
+        except Exception:
+            logger.exception("[checkin] 清理退群数据后保存失败")
+        logger.info("[checkin] 群 %s 已清理退群成员 %d 人：%s",
+                    gid, len(gone), ",".join(str(x) for x in gone[:10]))
+        return [str(x) for x in gone]
+
     def _grob(self, group_id) -> dict:
         """某群的抢银行记录：{日期起点: {用户号: {...}}}"""
         gid = self._gid(group_id)
