@@ -3,7 +3,7 @@ import json
 
 from astrbot.api import logger
 
-from .path_utils import nickname_data_path
+from .path_utils import nickname_data_path, clean_display as _clean_display
 
 
 class NicknameCache:
@@ -24,8 +24,24 @@ class NicknameCache:
             return
         try:
             with open(path, "r", encoding="utf-8-sig") as f:
-                self._data = json.load(f) or {}
+                raw = json.load(f) or {}
+            # ★★ 1.7.8：**加载时清洗**。
+            #   适配器偶尔会把群成员 protobuf 原始字节当昵称，
+            #   脏值一旦落地就会到处显示成 `%ÃÃØ`（用户反馈「昵称上一堆乱码」）。
+            #   这里就地洗干净并回写，之后所有读取都干净。
+            self._data = {}
+            _fixed = 0
+            for k, v in (raw.items() if isinstance(raw, dict) else []):
+                _c = _clean_display(v)
+                if _c:
+                    self._data[str(k)] = _c
+                if _c != v:
+                    _fixed += 1
             logger.info(f"[apix-meme] 已加载 {len(self._data)} 条昵称缓存")
+            if _fixed:
+                logger.info(f"[apix-meme] 昵称缓存已清洗 {_fixed} 条脏值")
+                self._dirty = True
+                self._save()
         except Exception:
             logger.exception("[apix-meme] 读取昵称缓存失败")
             self._data = {}
@@ -50,7 +66,8 @@ class NicknameCache:
         if not user_id or not user_name:
             return
         uid = str(user_id)
-        name = str(user_name).strip()
+        # ★★ 1.7.8：写之前先清洗 —— 脏值（protobuf 残留）**不入库**
+        name = _clean_display(user_name)
         if not name or name.startswith("QQ"):
             return
         if self._data.get(uid) != name:
@@ -59,7 +76,8 @@ class NicknameCache:
             self._save()
 
     def get(self, user_id: str) -> str:
-        return self._data.get(str(user_id), "")
+        # ★★ 1.7.8：出口再清洗一次 —— 内存里可能残留加载前的脏值
+        return _clean_display(self._data.get(str(user_id), ""))
 
     def as_dict(self) -> dict:
         """返回内部字典的引用（给 checkin / greeting 模块共享）"""

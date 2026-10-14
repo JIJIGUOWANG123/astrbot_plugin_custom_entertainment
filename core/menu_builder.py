@@ -18,7 +18,15 @@ def source_label(code):
 BAR_N = 8              # 标题两侧横线段数
 BAR_CH = "─"           # 标题横线（细）
 FOOT_CH = "━"          # 收尾横线（粗）
-FOOT_W = 36            # 收尾横线半角宽度
+# ★★ 1.3.0：收尾横线宽度 —— 从 36 缩到 22。
+#   为什么：`━` 是**全角**字符，36 个 = **72 半角宽**，
+#   而手机上 QQ 聊天窗一行通常只放得下约 38~44 半角，
+#   于是这条横线**必然折成 2 行**，看起来很难看。
+#   （旧值 36 是按图片模式的卡片宽度定的，文本模式不适用。）
+#   22 个 = 44 半角宽，和「正文中位数 46」基本齐平，手机一行放得下。
+FOOT_W = 22            # 收尾横线半角宽度
+# ★ 标题下面那条分隔线：12 个 = 24 半角，比收尾线短，作层次区分
+TITLE_BAR_W = 12       # 标题分隔线半角宽度
 
 
 # ============================================================
@@ -188,7 +196,8 @@ def _bar(title: str) -> str:
     #   以前分隔线由 _grid/_finish 另外加，导致直接用
     #   `"\n".join([_bar(...), 内容, _bar_plain()])` 的菜单漏了这条线。
     #   放进 _bar 里，所有菜单一次统一。
-    return t + "\n" + FOOT_CH * 20
+    # ★★ 1.3.0：长度从写死的 20 改成 TITLE_BAR_W（12），手机不折行。
+    return t + "\n" + FOOT_CH * TITLE_BAR_W
 
 
 def _seg_bar(ch: str, n: int, seg: int = 4) -> str:
@@ -926,9 +935,65 @@ def build_admin_menu(plugin) -> str:
         ("📣艾特设置", "👑超管设置"),
         ("📰读报管理", "🚫成员管理"),
         ("🎨输出模式", "🔔提示功能"),
+        # ★★ 1.3.0：授权功能
+        ("🔑授权功能", ""),
     ]
     return _grid(rows, title="管理系统")
 
+
+def build_auth_menu(plugin, group_id: str = "") -> str:
+    """
+    授权功能 —— 管理系统下级。
+
+    按群授权，**到期自动关闭整个插件**（连开关都轮不到）。
+
+    ★★ 只输出**指令用法**（用户要求：不要「本群授权」「各群授权状态」）。
+       查状态走 `授权状态` 指令，看全部群走 `授权列表` 指令。
+    """
+    am = getattr(plugin, "auth_module", None)
+    lines = [
+        _bar("授权功能"),
+    ]
+    if am is None:
+        lines.append("⚠️ 授权模块未加载")
+        lines.append("")
+        lines.append("　 插件会在启动时重建它；若一直这样请检查 core/auth.py")
+        lines.append(_foot_bar(lines))
+        return "\n".join(lines)
+
+    cmds = getattr(am, "cmd_names", None) or ["授权"]
+    cmd = cmds[0]
+    st_cmd = (getattr(am, "status_names", None) or ["授权状态"])[0]
+    ls_cmd = (getattr(am, "list_names", None) or ["授权列表"])[0]
+
+    # ============================================================
+    # ① 授权指令（三条主指令各自列出）
+    # ============================================================
+    lines += [
+        f"📝 {cmd}指令（群里发，需管理员）",
+        "──────────",
+        f"　 {cmd} 永久　　　　 给**本群**永久授权",
+        f"　 {cmd} 30d　　　　　给本群 30 天（也认 `12h` / `90分`）",
+        f"　 {cmd} 停用　　　　 停用本群（立刻静默）",
+        f"　 {cmd} 删除　　　　 删本群记录",
+        f"　 {cmd} 群号 30d　　 指定群（群号放前面）",
+        "",
+        f"🔍 {st_cmd}指令",
+        "──────────",
+        f"　 {st_cmd}　　　　　查**本群**状态",
+        f"　 {st_cmd} 群号　　 查指定群",
+        "",
+        f"📋 {ls_cmd}指令",
+        "──────────",
+        f"　 {ls_cmd}　　　　　列出**每个群**的状态",
+        "",
+    ]
+    lines.append("💡 未授权的群**所有指令都会提示需要授权**")
+    lines.append(f"💡 三条指令分工：`{cmd}` 改授权　"
+                 f"`{st_cmd}` 查本群　`{ls_cmd}` 看全部")
+    lines.append("💡 后台可改：总开关 / 默认天数 / 提醒天数 / 指令白名单")
+    lines.append(_foot_bar(lines))
+    return "\n".join(lines)
 
 def build_notice_menu(plugin) -> str:
     """
@@ -2611,6 +2676,8 @@ MENU_REGISTRY = {
     "super_admin":     ("超管设置",       "build_super_admin_menu"),
     # ★ 1.7.6：提示功能（管理系统子菜单）
     "notice":          ("提示功能",       "build_notice_menu"),
+    # ★★ 1.3.0：授权功能（管理系统子菜单）
+    "auth":            ("授权功能",       "build_auth_menu"),
 }
 
 

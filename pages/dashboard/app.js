@@ -20,6 +20,9 @@ let MOUNT_CUSTOM_DIR = "";    // 手动指定的坐骑素材目录
 // ★★ 1.7.7：银行冻结账号（后台查看 / 提前解冻）
 let BANK_FROZEN = null;       // null=未加载；[]=没有冻结；[{...}]=冻结中
 let BANK_FROZEN_ERR = "";
+// ★★ 1.3.0：授权状态列表（授权功能后台展示）
+let AUTH_STATUS = null;       // null=未加载；{rows:[...], stats:{...}}
+let AUTH_STATUS_ERR = "";
 let CONFIG = {};
 let currentView = "menu";
 let bridgeReady = false;
@@ -173,6 +176,183 @@ async function loadBankFrozen() {
   return BANK_FROZEN;
 }
 
+/**
+ * ★★ 1.3.0：拉取授权状态（授权功能后台展示）。
+ *
+ * 走插件的 `/auth` 路由，拿到每个群的授权状态 / 到期时间。
+ */
+async function loadAuthStatus() {
+  const qs = "";
+
+  // ★★ 1.8.0：桥接返回**空对象**说明后端 handler 没走
+  //   `astrbot.api.web.json_response`（面板会把 aiohttp 的 Response
+  //   序列化成 `{}`）。这种情况必须报错，别静默显示「0 条」骗人。
+  const isEmptyObj = (r) =>
+    r && typeof r === "object" && !Array.isArray(r)
+    && Object.keys(r).length === 0;
+  const apply = (r) => {
+    AUTH_STATUS = r;
+    AUTH_STATUS_ERR = "";
+    return AUTH_STATUS;
+  };
+
+  let lastErr = "";
+  // ① 优先桥接（带超时）
+  if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
+    try {
+      const r = await Promise.race([
+        bridge.apiGet("auth"),
+        new Promise((_, rej) =>
+          setTimeout(() => rej(new Error("桥接超时")), 4000)),
+      ]);
+      if (isEmptyObj(r)) {
+        lastErr = "后端返回空对象（handler 未用 astrbot json_response）";
+      } else if (r && r.ok !== false) {
+        return apply(r);
+      } else {
+        lastErr = (r && (r.error || r.msg)) || "桥接返回失败";
+      }
+    } catch (e) {
+      lastErr = `${e.name || "错误"}: ${e.message || e}`;
+    }
+  }
+  // ② 兜底：同源 fetch
+  for (const route of buildRouteUrls("auth")) {
+    try {
+      const u = qs ? `${route}${route.includes("?") ? "&" : "?"}${qs}` : route;
+      const r = await tryFetchJSON(u);
+      if (isEmptyObj(r)) {
+        lastErr = "后端返回空对象（handler 未用 astrbot json_response）";
+      } else if (r && r.ok !== false) {
+        return apply(r);
+      } else {
+        lastErr = (r && (r.error || r.msg)) || "返回失败";
+      }
+    } catch (e) {
+      lastErr = `${e.name || "错误"}: ${e.message || e}`;
+    }
+  }
+  AUTH_STATUS = null;
+  AUTH_STATUS_ERR = lastErr || "无法连接插件";
+  console.warn("[auth] 读取授权状态失败:", AUTH_STATUS_ERR);
+  return null;
+}
+
+/**
+ * 授权状态列表 —— **和数据管理列表同款 UI**（用户要求）。
+ *
+ * 结构照 `renderCollectionEditor`：
+ *   section → section-header（标题 + 计数）
+ *           → data-toolbar（刷新按钮 + 提示）
+ *           → data-item[]（每条：head 标题 + body 字段）
+ */
+function buildAuthStatusHtml() {
+  const META = {
+    never:    { icon: "♾️", text: "永久",     cls: "" },
+    active:   { icon: "✅", text: "有效",     cls: "" },
+    soon:     { icon: "⏰", text: "即将到期", cls: "warn" },
+    expired:  { icon: "⛔", text: "已过期",   cls: "err" },
+    disabled: { icon: "🚫", text: "已停用",   cls: "err" },
+  };
+  const st = (AUTH_STATUS && AUTH_STATUS.stats) || {};
+  const rows = (AUTH_STATUS && Array.isArray(AUTH_STATUS.rows))
+    ? AUTH_STATUS.rows : [];
+  // ★★ 1.8.0 修 bug：`parseInt(-1) || 0` 会把 -1 变成 0（-1 是有效值！）
+  //   直接用后端给的三态文案，别在前端再算一遍。
+  const dtxt = AUTH_STATUS
+    ? String(AUTH_STATUS.default_text
+             || ((Number(AUTH_STATUS.default_days) === 0)
+                 ? "永久" : "不授权"))
+    : "—";
+  const cmd = String((AUTH_STATUS && AUTH_STATUS.cmd) || "授权");
+  const stc = String((AUTH_STATUS && AUTH_STATUS.status_cmd) || "授权状态");
+  const lsc = String((AUTH_STATUS && AUTH_STATUS.list_cmd) || "授权列表");
+
+  let html = `<div class="section">`;
+  html += `<div class="section-header">
+    <div class="section-title">🔑 授权状态列表</div>
+    <div class="muted">${AUTH_STATUS ? `${rows.length} 条` : "—"}；到期自动失效（过期超 30 天记录自动清理）</div>
+  </div>`;
+
+  // ---- 工具栏（同数据管理）----
+  html += `<div class="data-toolbar">
+    <button class="btn btn-primary btn-sm" data-action="auth-refresh">↻ 刷新</button>
+    <span class="muted" data-role="auth-hint">${
+      AUTH_STATUS
+        ? `总开关 ${AUTH_STATUS.enable ? "✅ 已启用" : "❌ 已停用"}　`
+          + `未设置的群：${dtxt}　`
+          + `提醒：提前 ${AUTH_STATUS.warn_days} 天`
+        : (AUTH_STATUS_ERR ? "读取失败" : "加载中…")
+    }</span>
+  </div>`;
+
+  // ---- 错误 / 加载中 ----
+  if (AUTH_STATUS_ERR) {
+    html += `<div class="data-empty">⚠️ 读取失败：${
+      esc(AUTH_STATUS_ERR).replace(/\n/g, "<br>")}</div>`;
+    html += `</div>`;
+    return html;
+  }
+  if (AUTH_STATUS === null) {
+    html += `<div class="data-empty">加载中…</div>`;
+    html += `</div>`;
+    return html;
+  }
+
+  // ---- 汇总（同数据管理的计数行）----
+  html += `<div class="muted small" style="margin:6px 0 10px">
+    单独设置 <b>${st.total || 0}</b> 群　
+    ♾️永久 <b>${st.never || 0}</b>　
+    ✅有效 <b>${st.active || 0}</b>　
+    ⛔过期 <b>${st.expired || 0}</b>　
+    🚫停用 <b>${st.disabled || 0}</b>
+  </div>`;
+
+  // ---- 列表 ----
+  if (!rows.length) {
+    html += `<div class="data-empty">（暂无单独设置的群，全部按「未设置的群」规则）</div>`;
+  } else {
+    rows.forEach((r, i) => {
+      const m = META[r.state] || META.active;
+      const left = Number(r.left_days || 0);
+      const leftText = (r.state === "never" || r.state === "disabled")
+        ? "—" : (left > 0 ? left.toFixed(1) + " 天" : "已过期");
+      const tone = m.cls === "err" ? "color:#e57373"
+        : (m.cls === "warn" ? "color:#e5a873" : "");
+      html += `<div class="data-item">
+        <div class="data-item-head">
+          <span class="data-item-title">${m.icon} ${esc(r.gid)}
+            <span class="muted" style="${tone}">· ${esc(m.text)}</span></span>
+          <span class="data-item-btns">
+            <button class="btn btn-sm" data-action="auth-copy"
+                    data-gid="${esc(r.gid)}">复制指令</button>
+          </span>
+        </div>
+        <div class="data-item-body">
+          <div class="form-group"><label>到期时间</label>
+            <input type="text" class="input" readonly
+                   value="${esc(r.expire_text || "—")}" /></div>
+          <div class="form-group"><label>剩余</label>
+            <input type="text" class="input" readonly
+                   value="${esc(leftText)}" /></div>
+          <div class="form-group"><label>备注</label>
+            <input type="text" class="input" readonly
+                   value="${esc(r.note || "—")}" /></div>
+        </div>
+      </div>`;
+    });
+  }
+
+  // ---- 指令提示 ----
+  html += `<div class="muted small" style="margin-top:10px">
+    群内指令：<code>${esc(cmd)} 群号 30d</code> 改授权　
+    <code>${esc(stc)}</code> 查本群　
+    <code>${esc(lsc)}</code> 看全部
+  </div>`;
+  html += `</div>`;
+  return html;
+}
+
 /** 冻结账号面板 */
 function buildBankFrozenHtml() {
   let inner = "";
@@ -219,6 +399,42 @@ function buildBankFrozenHtml() {
 }
 
 /** 绑定冻结面板里的按钮 */
+/** 绑定授权状态列表里的按钮（数据管理同款 UI） */
+function bindAuthStatusActions() {
+  document.querySelectorAll(
+    "#content [data-action='auth-refresh'],"
+    + "#content [data-action='auth-copy']"
+  ).forEach((btn) => {
+    if (btn.dataset.authBound) return;
+    btn.dataset.authBound = "1";
+    btn.addEventListener("click", async () => {
+      const act = btn.dataset.action;
+      btn.disabled = true;
+      try {
+        if (act === "auth-copy") {
+          const gid = String(btn.dataset.gid || "");
+          const cmd = String((AUTH_STATUS && AUTH_STATUS.cmd) || "授权");
+          const txt = `${cmd} ${gid} 30d`;
+          try {
+            await navigator.clipboard.writeText(txt);
+            toast(`已复制：${txt}`);
+          } catch (_) {
+            toast(`指令：${txt}`, "info");
+          }
+          return;
+        }
+        await loadAuthStatus();
+        toast("已刷新授权状态");
+        render();
+      } catch (e) {
+        toast("刷新失败：" + (e.message || e), "error");
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
 function bindBankFrozenActions() {
   document.querySelectorAll(
     "#content [data-action='bank-unfreeze'],"
@@ -1811,6 +2027,19 @@ function attachDataEvents() {
     }
   }
 
+  // ★★ 1.3.0：授权状态列表（首次进来时懒加载一次，加载完重绘）
+  const _asp = document.querySelector("#content [data-action='auth-refresh']");
+  if (_asp) {
+    bindAuthStatusActions();
+    if (AUTH_STATUS === null && !AUTH_STATUS_ERR) {
+      loadAuthStatus().then(() => {
+        if (document.querySelector("#content [data-action='auth-refresh']")) {
+          render();
+        }
+      });
+    }
+  }
+
   document.querySelectorAll("#content [data-dfield]").forEach(el => {
     el.addEventListener("input", () => { DATA_DIRTY = true; markDirtyHint(); });
     el.addEventListener("change", () => { DATA_DIRTY = true; markDirtyHint(); });
@@ -2897,6 +3126,42 @@ const VIEWS = {
         keys: ["api_list"] },
     ],
   },
+  // ★★ 1.3.0：**授权功能**独立视图（左侧独立按钮）
+  auth: {
+    title: "授权功能",
+    groups: [
+      { title: "🔑 授权功能", type: "hint", tone: "warn", text:
+        "按群授权，**未授权的群所有指令都会提示需要授权**。\n" +
+        "\n★ **默认全部关闭** —— 没单独设置过的群一律不授权，要先授权才能用。\n" +
+        "\n★ 三条指令（群里发，需管理员）：\n" +
+        "```\n" +
+        "授权 永久           给**本群**永久授权\n" +
+        "授权 30d            给本群 30 天（也认 12h / 90分 / 30天）\n" +
+        "授权 停用           停用本群\n" +
+        "授权 删除           删本群记录\n" +
+        "授权 619915692 30d  指定群（群号放前面）\n" +
+        "\n" +
+        "授权状态            查**本群**是否已授权（不带群号 = 当前群）\n" +
+        "授权状态 619915692  查指定群\n" +
+        "授权列表            列出**每个群**的授权状态\n" +
+        "```\n" +
+        "\n★ 到期后插件对该群不可用；到期前 `auth_warn_days` 天会每天提醒一次续期\n" +
+        "★ 数据文件：`..._auth.json`（可手动编辑）" },
+      { title: "授权：总开关与默认时长", keys: [
+          "auth_enable", "auth_default_days", "auth_warn_days"] },
+      { title: "授权状态列表（每个群的状态与到期时间）", type: "authstatus" },
+      { title: "授权：远程指令与白名单", keys: [
+          "auth_remote_commands", "auth_status_commands",
+          "auth_list_commands", "auth_admin_groups"] },
+      { title: "授权功能排障", type: "hint", tone: "info", text:
+        "· **本来一直能用，升级后突然不能用了？**\n" +
+        "　 → 先看「总开关」是不是被关了；再看本群有没有被单独设成过期/停用\n" +
+        "　 → 发 `授权 查 本群号` 可以直接看状态\n" +
+        "· **想临时全部放开**：把「总开关」关掉（授权机制完全停用）\n" +
+        "· **不想用授权**：总开关关掉 + 默认天数保持 0 即可，不影响任何功能\n" +
+        "· 白名单留空 = **任何群**都能发授权指令（不推荐），建议填管理群" },
+    ],
+  },
   admin: {
     title: "管理系统",
     groups: [
@@ -3506,6 +3771,9 @@ function renderView(viewKey) {
       html += buildMountStatusHtml();
     } else if (group.type === "bankfreeze") {
       html += buildBankFrozenHtml();
+    } else if (group.type === "authstatus") {
+      // ★★ 1.3.0：授权状态列表
+      html += buildAuthStatusHtml();
     } else if (group.type === "paragraph") {
       html += renderParagraph(group.text || "");
     } else if (group.type === "open-page") {

@@ -367,6 +367,15 @@ except Exception as e:
     LuckModule = None
     logger.warning(f"[apix-meme] luck 模块加载失败: {e}")
 
+# ★★ 1.3.0：授权功能（按群到期时间，到期关闭整个插件）
+try:
+    from .core.auth import AuthModule
+    _HAS_AUTH = True
+except Exception as e:
+    _HAS_AUTH = False
+    AuthModule = None
+    logger.warning(f"[apix-meme] auth 模块加载失败: {e}")
+
 try:
     from .core.meme_api import (
         parse_params,
@@ -665,6 +674,8 @@ try:
         build_news_admin_menu,
         build_member_admin_menu,
         build_notice_menu,
+        # ★★ 1.3.0：授权功能（管理系统下级）
+        build_auth_menu,
         build_must_at_admin_menu,
         build_super_admin_menu,
         build_entertain_menu,
@@ -722,6 +733,8 @@ except Exception as e:
     def build_news_admin_menu(p): return ""
     def build_member_admin_menu(p): return ""
     def build_notice_menu(p): return ""
+    # ★★ 1.3.0：授权功能
+    def build_auth_menu(p): return ""
     def build_must_at_admin_menu(p): return ""
     def build_super_admin_menu(p): return ""
 
@@ -757,6 +770,8 @@ from .core.path_utils import (
     fortune_data_path as _fortune_data_path,
     husband_data_path as _husband_data_path,
     luck_data_path as _luck_data_path,
+    # ★★ 1.3.0：授权功能数据路径
+    auth_data_path as _auth_data_path,
     greeting_data_path as _greeting_data_path,
     minecraft_data_path as _minecraft_data_path,
     checkin_data_path as _checkin_data_path,
@@ -1033,6 +1048,23 @@ class ApixIqfkSimpleMeme(Star):
                 logger.info("[apix-meme] 人品模块初始化成功")
             except Exception:
                 logger.exception("[apix-meme] 初始化人品模块失败")
+
+        # ★★ 1.3.0：授权功能模块（按群到期时间，到期关闭整个插件）
+        self.auth_module = None
+        if _HAS_AUTH:
+            try:
+                self.auth_module = AuthModule(
+                    plugin_dir=_plugin_dir(),
+                    data_path=_auth_data_path(),
+                )
+                _st = self.auth_module.stats()
+                logger.info(
+                    f"[apix-meme] 授权模块初始化成功"
+                    f"（单独授权 {_st['total']} 群："
+                    f"永久 {_st['never']} / 有效 {_st['active']} / "
+                    f"过期 {_st['expired']} / 停用 {_st['disabled']}）")
+            except Exception:
+                logger.exception("[apix-meme] 初始化授权模块失败")
 
         self.word_reply_module = None
         if _HAS_WORD_REPLY:
@@ -2525,6 +2557,97 @@ class ApixIqfkSimpleMeme(Star):
             return False
 
         # ★ 给 config 路由加上 OPTIONS 方法
+        # ★★ 1.8.0：授权状态列表（后台页面用）
+        async def _auth_status_handler(request=None, **kwargs):
+            """
+            GET /auth —— 授权状态列表（后台页面用）。
+
+            返回结构：
+                {ok, enable, default_days, default_text, warn_days, cmd,
+                 status_cmd, list_cmd, stats,
+                 rows: [{gid, state, expire_ts, expire_text, left_days, note}]}
+
+            ★★ 两个必须遵守的约定（都实测踩过）：
+
+              ① 必须用 **astrbot.api.web.json_response**（返回 Starlette
+                 JSONResponse，面板能自动解包）。
+                 用 aiohttp 的 `web.json_response` 会被面板序列化成**空对象
+                 `{}`** —— 页面拿到的就是 `{}`，于是显示成
+                 「0 条 / ❌ 已停用 / 提前 undefined 天」。
+
+              ② request 参数在**路由没有 `<...>` 占位符**时永远是 None
+                 （框架只传 path_params），所以要用 `_bound_request()`
+                 拿框架绑定的那个请求对象。
+            """
+            if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
+                return _options_response(request)
+            denied = _reject_cross_origin(request)
+            if denied is not None:
+                return denied
+            try:
+                am = getattr(self, "auth_module", None)
+                if am is None:
+                    return _with_cors(json_response({
+                        "ok": False, "msg": "授权模块未加载"}), request)
+
+                now = int(time.time())
+                rows = []
+                for gid, r in am.groups.items():
+                    ts = int(r.get("expire_ts", 0))
+                    if ts == 0:
+                        state, left = "never", 0
+                    elif ts < 0:
+                        state, left = "disabled", -1
+                    elif ts <= now:
+                        state, left = "expired", (ts - now) / 86400.0
+                    else:
+                        left = (ts - now) / 86400.0
+                        state = ("soon"
+                                 if left <= float(getattr(am, "warn_days", 3))
+                                 else "active")
+                    try:
+                        exp = ("" if ts <= 0
+                               else time.strftime("%Y-%m-%d %H:%M",
+                                                  time.localtime(ts)))
+                    except Exception:
+                        exp = str(ts)
+                    rows.append({
+                        "gid": str(gid),
+                        "state": state,
+                        "expire_ts": ts,
+                        "expire_text": exp,
+                        "left_days": round(left, 2),
+                        "note": str(r.get("note", "") or ""),
+                    })
+                # 排序：永久 -> 即将到期 -> 有效 -> 过期 -> 停用
+                _ord = {"never": 0, "soon": 1, "active": 2, "expired": 3,
+                        "disabled": 4}
+                rows.sort(key=lambda x: (_ord.get(x["state"], 9),
+                                         x["expire_ts"] or 0))
+                # 未设置的群规则文案（-1 不授权 / 0 永久 / N 试用 N 天）
+                try:
+                    _dtxt = am.default_rule_text(markdown=False)
+                except Exception:
+                    _dtxt = ""
+                return _with_cors(json_response({
+                    "ok": True,
+                    "enable": bool(am.enable),
+                    "default_days": int(am.default_days),
+                    "default_text": _dtxt,
+                    "warn_days": float(am.warn_days),
+                    "cmd": (getattr(am, "cmd_names", None) or ["授权"])[0],
+                    "status_cmd": (getattr(am, "status_names", None)
+                                   or ["授权状态"])[0],
+                    "list_cmd": (getattr(am, "list_names", None)
+                                 or ["授权列表"])[0],
+                    "stats": am.stats(),
+                    "rows": rows,
+                    "now": now,
+                }), request)
+            except Exception as e:
+                logger.exception("[apix-meme] 读取授权状态失败")
+                return _with_cors(error_response(f"读取失败: {e}"),
+                                  request)
         routes = [
             (f"/{PLUGIN_ID}/config", _get_config_handler,  ["GET", "OPTIONS"],  "读取配置"),
             (f"/{PLUGIN_ID}/config", _save_config_handler, ["POST", "OPTIONS"], "保存配置"),
@@ -2545,6 +2668,8 @@ class ApixIqfkSimpleMeme(Star):
             (f"/{PLUGIN_ID}/dataOp",           _data_op_handler,           ["GET", "OPTIONS"],  "单条数据增删改（GET）"),
             (f"/{PLUGIN_ID}/dataOp",           _data_op_handler,           ["POST", "OPTIONS"], "单条数据增删改（POST）"),
             (f"/{PLUGIN_ID}/page",   _page_handler,        ["GET", "OPTIONS"],  "配置页面"),
+            # ★★ 1.3.0：授权状态列表（后台页面展示）
+            (f"/{PLUGIN_ID}/auth",   _auth_status_handler,  ["GET", "OPTIONS"],  "授权状态列表"),
             # ★★ 1.7.8：专属设置页（独立 HTML）—— 主面板按钮点开就是这里
             (f"/{PLUGIN_ID}/page/{{name}}", _page_extra_handler,
              ["GET", "OPTIONS"], "专属设置页（独立HTML）"),
@@ -4363,6 +4488,12 @@ class ApixIqfkSimpleMeme(Star):
                 self.luck_module.reload(merged)
             except Exception:
                 logger.exception("[apix-meme] 刷新人品模块失败")
+        # ★★ 1.3.0：授权模块
+        if getattr(self, "auth_module", None) is not None:
+            try:
+                self.auth_module.reload(merged)
+            except Exception:
+                logger.exception("[apix-meme] 刷新授权模块失败")
         if self.word_reply_module is not None:
             try:
                 self.word_reply_module.reload(merged)
@@ -8284,6 +8415,33 @@ class ApixIqfkSimpleMeme(Star):
     def _build_notice_menu(self):
         return self._menu("notice", lambda: build_notice_menu(self))
 
+    # ★★ 1.3.0：授权功能（管理系统子菜单）
+    def _is_auth_menu(self, text: str) -> bool:
+        """
+        授权功能菜单入口。
+
+        ★ 入口名可在后台 `menu_auth_names` 自定义（默认「授权功能」）。
+          为了不和**授权指令** `授权 xxx` 打架，这里只认
+          「菜单入口名」本身，不做前缀匹配。
+        """
+        t = str(text or "").strip()
+        if not t:
+            return False
+        names = ["授权功能"]
+        try:
+            got = self._menu_entry_names("auth")
+            if got:
+                names = [str(x).strip() for x in got if str(x).strip()] or names
+        except Exception:
+            pass
+        for n2 in names:
+            if n2 and (t == n2 or t == f"/{n2}"):
+                return True
+        return False
+
+    def _build_auth_menu(self, group_id: str = ""):
+        return self._menu("auth", lambda: build_auth_menu(self, group_id))
+
     def _build_member_admin_menu(self):
         return self._menu("member_admin", lambda: build_member_admin_menu(self))
     def _build_must_at_admin_menu(self):
@@ -8425,6 +8583,12 @@ class ApixIqfkSimpleMeme(Star):
             _sg = str(_get_group_id_from_event(event) or "")
             if _sg and isinstance(self._seen_groups, set):
                 self._seen_groups.add(_sg)
+            # ★★ 1.3.0：同步给授权模块 —— 「授权列表」要列出这些群的状态
+            if _sg and getattr(self, "auth_module", None) is not None:
+                try:
+                    self.auth_module.known_groups = self._seen_groups
+                except Exception:
+                    pass
         except Exception:
             pass
         # ★ 顺手记住机器人自身 ID，定时推送 / 预览时也能显示机器人QQ
@@ -8456,6 +8620,110 @@ class ApixIqfkSimpleMeme(Star):
         # ★ msg_str 要在所有用到它的判断之前取好（曾经因为顺序错导致
         #   UnboundLocalError，这里显式提前）
         msg_str = to_str(event.message_str).strip()
+
+        # ============================================================
+        # ★★ 1.3.0：授权功能 —— **插件总闸门**
+        #   放在所有功能之前：本群授权到期/停用 -> 整个插件对本群静默，
+        #   连「娱乐系统开关」都轮不到。
+        #   ★ 授权指令本身**不受此限制**（否则没法续期）。
+        # ============================================================
+        _auth_gid = str(_get_group_id_from_event(event) or "")
+        if _auth_gid and getattr(self, "auth_module", None) is not None:
+            try:
+                _auth_hit = self.auth_module.match_cmd(msg_str)
+            except Exception:
+                _auth_hit = None
+            # ★★ 1.3.0：「授权状态」是**独立指令**（不带群号 = 查当前群）
+            #   优先判定，免得被 `授权` 指令抢走。
+            try:
+                _auth_st = self.auth_module.match_status_cmd(msg_str)
+            except Exception:
+                _auth_st = ""
+            if _auth_st and not _auth_hit:
+                try:
+                    _sallowed = self.auth_module.cmd_allowed(_auth_gid)
+                except Exception:
+                    _sallowed = False
+                if not _sallowed:
+                    logger.info(
+                        f"[auth] 群 {_auth_gid} 不在授权指令白名单，"
+                        f"忽略 {msg_str[:40]!r}")
+                    return
+                _stxt = self.auth_module.handle_cmd(msg_str, _auth_gid)
+                if _stxt:
+                    async for _r in self._send_content(event, _stxt):
+                        yield _r
+                return
+            # ★★ 1.3.0：「授权列表」也是独立指令（不带空格）
+            try:
+                _auth_ls = self.auth_module.match_list_cmd(msg_str)
+            except Exception:
+                _auth_ls = ""
+            if _auth_ls and not _auth_hit:
+                try:
+                    _lallowed = self.auth_module.cmd_allowed(_auth_gid)
+                except Exception:
+                    _lallowed = False
+                if not _lallowed:
+                    logger.info(
+                        f"[auth] 群 {_auth_gid} 不在授权指令白名单，"
+                        f"忽略 {msg_str[:40]!r}")
+                    return
+                _ltxt = self.auth_module.handle_cmd(msg_str, _auth_gid)
+                if _ltxt:
+                    async for _r in self._send_content(event, _ltxt):
+                        yield _r
+                return
+            if _auth_hit:
+                # ---- 远程授权指令（自己处理，不走后面的功能）----
+                try:
+                    _allowed = self.auth_module.cmd_allowed(_auth_gid)
+                except Exception:
+                    _allowed = False
+                if not _allowed:
+                    logger.info(
+                        f"[auth] 群 {_auth_gid} 不在授权指令白名单，"
+                        f"忽略 {msg_str[:40]!r}")
+                    return
+                try:
+                    _is_adm = await self._check_admin(event)
+                except Exception:
+                    _is_adm = False
+                if not _is_adm:
+                    async for _r in self._send_content(
+                            event, "⛔ 只有管理员能用授权指令"):
+                        yield _r
+                    return
+                _txt = self.auth_module.handle_cmd(msg_str, _auth_gid)
+                if _txt:
+                    async for _r in self._send_content(event, _txt):
+                        yield _r
+                return
+            # ---- 授权闸门 ----
+            try:
+                if not self.auth_module.is_authorized(_auth_gid):
+                    logger.info(
+                        f"[auth] 群 {_auth_gid} 未授权，已提示用户")
+                    # ★★ 1.3.0：**不再静默** —— 明确告诉用户需要授权。
+                    try:
+                        _dtxt = self.auth_module.deny_text(_auth_gid)
+                    except Exception:
+                        _dtxt = ""
+                    if _dtxt:
+                        async for _r in self._send_content(event, _dtxt):
+                            yield _r
+                        GLOBAL_STATS["send"] += 1
+                    return
+                # ★★ 1.3.0：已授权但快到期 -> 续期提醒（每天最多一次）
+                try:
+                    _wtxt = self.auth_module.warn_text(_auth_gid)
+                except Exception:
+                    _wtxt = ""
+                if _wtxt:
+                    async for _r in self._send_content(event, _wtxt):
+                        yield _r
+            except Exception:
+                logger.exception("[apix-meme] 授权判定失败（放行）")
 
         # ============================================================
         # ★ 1.7.6：提示功能（白名单）
@@ -12064,6 +12332,15 @@ class ApixIqfkSimpleMeme(Star):
         # ★ 1.7.6：提示功能
         if self._is_notice_menu(msg_str):
             async for _r in self._send_content(event, self._build_notice_menu()):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+        # ★★ 1.3.0：授权功能（管理系统下级）
+        if self._is_auth_menu(msg_str):
+            async for _r in self._send_content(
+                    event,
+                    self._build_auth_menu(
+                        str(_get_group_id_from_event(event) or ""))):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return

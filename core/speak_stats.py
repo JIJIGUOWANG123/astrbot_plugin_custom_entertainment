@@ -36,6 +36,7 @@ from .path_utils import nick_display as _nick_display
 # ★★ 1.7.7：榜单行带「🥇 」前缀和「 — 90 条」后缀，
 #   可用宽度比整行少，所以用**窄档**预算。
 from .path_utils import nick_display_narrow as _nick_narrow
+from .path_utils import clean_display as _clean_display
 # ★★ 1.7.7：榜单名次前缀（前三名奖牌 + 两空格列分隔）
 from .path_utils import rank_tag as _rank_tag
 
@@ -190,6 +191,25 @@ class SpeakStatsModule:
                 data = json.load(f) or {}
             groups = data.get("groups", {})
             self.groups = groups if isinstance(groups, dict) else {}
+            # ★★ 1.3.0：顺手洗掉历史脏昵称（protobuf 残留）。
+            #   显示侧 `_nick()` 已经会清洗，这里再兜一层，
+            #   免得脏值一直躺在数据文件里。
+            _fixed = 0
+            for _g, _bucket in list(self.groups.items()):
+                if not isinstance(_bucket, dict):
+                    continue
+                for _u, _rec in list(_bucket.items()):
+                    if not isinstance(_rec, dict):
+                        continue
+                    _nm = _rec.get("name")
+                    if isinstance(_nm, str) and _nm:
+                        _c = _clean_display(_nm)
+                        if _c != _nm:
+                            _rec["name"] = _c
+                            _fixed += 1
+            if _fixed:
+                logger.info(f"[speak_stats] 已清洗 {_fixed} 条脏昵称")
+                self._save()
         except Exception:
             logger.exception("[speak_stats] 读取失败")
 
@@ -230,7 +250,10 @@ class SpeakStatsModule:
         if int(u.get("streak", 0)) > int(u.get("best_streak", 0)):
             u["best_streak"] = int(u["streak"])
         if name:
-            u["name"] = str(name)
+            # ★★ 1.3.0：写入前清洗 —— 脏值（protobuf 残留）不入库
+            _c = _clean_display(name)
+            if _c:
+                u["name"] = _c
         return u
 
     # ============================================================

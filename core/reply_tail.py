@@ -28,13 +28,20 @@
   需要的话自己调 `await rt.tail_text(plugin)` 拼上去。
 """
 
+import re
 import time
 
 from astrbot.api import logger
 
 # 本插件输出的「招牌」标记：标题行 + 分隔线
 #   只有含这些的回复才认为是本插件发的（避免影响别的插件/LLM）
-_BAR_MARK = "━━━━━━━━━━━━━━━━━━━━"
+#
+# ★★ 1.3.0：分隔线长度是**可变的**（标题线 12 连、收尾线 22 连，
+#   手机不折行才好看）。所以这里不能写死某个长度，否则横线一改短，
+#   尾巴兜底就**认不出自己的回复**了。改成「正则：任意长度 >= 5 的连横线」。
+_BAR_MARK_RE = re.compile(r"[━─]{5,}")
+# 兼容保留：旧版写死的长度（外部若有引用不致报错）
+_BAR_MARK = "━" * 20
 
 
 def _own_marks():
@@ -49,12 +56,17 @@ def _own_marks():
         pfx = getattr(_pu, "TITLE_PREFIX", "") or ""
     except Exception:
         pfx = ""
-    marks = [_BAR_MARK]
+    marks = list(_own_marks_static())
     if pfx:
         marks.insert(0, pfx)
     # ★ 常用前缀也留着，避免「改了前缀后旧回复认不出来」
     marks.extend(["铁剑娘系统：", "自定义娱乐：", "鸡鸡娱乐系统："])
     return tuple(dict.fromkeys(m for m in marks if m))
+
+
+def _own_marks_static():
+    """固定标记（不含可自定义前缀）。"""
+    return ("━━━━━━━━━━━━━━━━━━━━",)
 
 
 def _own_render_dir() -> str:
@@ -349,6 +361,9 @@ class ReplyTail:
                 if Plain is not None and isinstance(comp, Plain):
                     t = str(getattr(comp, "text", "") or "")
                     if any(m in t for m in _own_marks()):
+                        return True
+                    # ★★ 1.3.0：横线长度可变，用正则匹配任意长度 >= 5 的连横线
+                    if _BAR_MARK_RE.search(t):
                         return True
                     continue
                 # ② 本插件渲染缓存里的图

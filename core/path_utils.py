@@ -16,6 +16,8 @@ PLUGIN_STATUS_PUSH_DATA_FILENAME = f"{PLUGIN_ID}_status_push.json"
 PLUGIN_DAILY_NEWS_DATA_FILENAME = f"{PLUGIN_ID}_daily_news.json"
 PLUGIN_NICKNAME_DATA_FILENAME = f"{PLUGIN_ID}_nickname.json"
 PLUGIN_SPEAK_STATS_DATA_FILENAME = f"{PLUGIN_ID}_speak_stats.json"
+# ★★ 1.3.0：授权功能（按群到期时间）
+PLUGIN_AUTH_DATA_FILENAME = f"{PLUGIN_ID}_auth.json"
 PLUGIN_PET_DATA_FILENAME = f"{PLUGIN_ID}_pet.json"
 PLUGIN_BIRD_DATA_FILENAME = f"{PLUGIN_ID}_bird.json"
 PLUGIN_DATA_STORE_FILENAME = f"{PLUGIN_ID}_data.json"
@@ -463,6 +465,63 @@ def rank_tag(i: int, medals=None, gap: str = RANK_GAP) -> str:
     return f"{n}.{gap}"
 
 
+# ★★ 1.7.8：「昵称里混进 protobuf 原始字节」的检测与抢救。
+#   实测适配器会把**群成员 protobuf** 当字符串塞进 `sender.nickname`：
+#       {NL}{NL}{NL}\x08%\x01\x01\x07\xd8{NL}{NL}\x12\x08MZCanYan\x10\x00
+#   这些字节里 `%`(0x25)、`\x01`、`\xd8` 之类 isprintable() 都为真，
+#   老的 clean_display 拦不住，于是渲染成 `%ÃÃØ` 这种鬼画符，
+#   还被写进昵称缓存到处显示。
+#
+#   判据（故意保守，正常昵称绝不误伤）：
+#     · 出现控制字符（< U+0020，换行除外）或 C1 控制符（U+0080~U+009F）；或
+#     · 同时出现 `%` 与 `\u0100~\u024F`（Latin Extended-B）-> protobuf 残留特征；
+#     · 或有两个及以上拉丁变音符（U+00C0~U+00FF）且长度 >= 6。
+#   CJK / emoji / 数学字母（𝔻𝕒𝕐）/ 圈字（㊙）都不在判据里，不会误伤。
+_BIN_MARK_RE = re.compile(r"[\u00c0-\u024f\ufffd]")
+_C1_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def _looks_binary(t: str) -> bool:
+    """昵称里是不是混进了原始二进制字节（protobuf 残留等）"""
+    if not isinstance(t, str) or not t:
+        return False
+    if _C1_RE.search(t):
+        return True
+    if "%" in t and re.search(r"[\u0100-\u024f]", t):
+        return True
+    if len(t) >= 6 and len(_BIN_MARK_RE.findall(t)) >= 2:
+        return True
+    return False
+
+
+def _salvage_from_binary(t: str) -> str:
+    """
+    从二进制垃圾里**抢救出真正的人名**。
+
+    优先取「连续可读文本」里最长的一段
+    （protobuf 的 `\x12\x08MZCanYan\x10\x00` 正好把名字整段存着）；
+    没有可读段就返回空串（宁可不显示，也不显示鬼画符）。
+    控制字符 / C1 当**分隔符**，免得把两段粘在一起。
+    """
+    best = ""
+    cur = []
+    for ch in t:
+        o = ord(ch)
+        if o < 0x20 or 0x7F <= o <= 0x9F:
+            if len(cur) > len(best):
+                best = "".join(cur)
+            cur = []
+            continue
+        cur.append(ch)
+    if len(cur) > len(best):
+        best = "".join(cur)
+    best = best.strip()
+    if _BIN_MARK_RE.search(best):
+        best = _BIN_MARK_RE.sub("", best).strip()
+    # ★ 再剃掉首尾的垃圾符号（protobuf 残留常把 `%` 留在名字前面）
+    best = best.strip(" %{}<>|\\/[]()\"'.,;:-_=+*#@!?~^`")
+    return best if len(best) >= 2 else ""
+
 def clean_display(s) -> str:
     """
     清掉「渲染不出来的字符」，只保留能正常显示的。
@@ -488,6 +547,13 @@ def clean_display(s) -> str:
     t = str(s or "")
     if not t:
         return ""
+    # ★★ 1.3.0：先判「是不是二进制垃圾」—— 是就只抢救里面的人名，
+    #   别把 `%ÃÃØ` 这种鬼画符放出去（也不会写进昵称缓存）。
+    if _looks_binary(t):
+        _sv = _salvage_from_binary(t)
+        if not _sv:
+            return ""
+        t = _sv
     # ★ 先干掉「字体链肯定画不出」的字符（方框重灾区）
     try:
         t = _BAD_RE.sub("", t)
@@ -1060,6 +1126,11 @@ def nickname_data_path() -> str:
 
 def speak_stats_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_SPEAK_STATS_DATA_FILENAME)
+
+
+def auth_data_path() -> str:
+    """★★ 1.3.0：授权功能数据（按群到期时间）"""
+    return os.path.join(_cfg_dir(), PLUGIN_AUTH_DATA_FILENAME)
 
 
 def pet_data_path() -> str:

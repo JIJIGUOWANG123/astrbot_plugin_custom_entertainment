@@ -17,6 +17,8 @@ from .path_utils import title_bar, title_foot
 from .path_utils import cmd_arg, register_cmd_names as _register_cmd_names_impl
 from .path_utils import fmt_num
 from .path_utils import nick_display as _nick_display
+# ★★ 1.3.0：昵称统一清洗（识别 protobuf 二进制垃圾）
+from .path_utils import clean_display as _clean_display
 # ★★ 1.7.7：榜单行（带「 1. 」前缀 / 名次列）用**窄档**宽度预算
 from .path_utils import nick_display_narrow as _nick_narrow
 # ★★ 1.7.7：榜单名次前缀（前三名奖牌 + 两空格列分隔 -> 渲染端对齐）
@@ -72,11 +74,30 @@ def get_user_id(event) -> str:
 
 
 def get_user_name(event) -> str:
+    """
+    取发送者昵称（本群昵称优先）。
+
+    ★★ 1.3.0：**统一走 clean_display 清洗**。
+      以前每个分支直接 `return str(v)`，而适配器有时会返回
+      **群成员 protobuf 原始字节**（字节里 `%` / `\x01` / `\xd8` 的
+      isprintable() 都是真），于是渲染成 `%ÃÃØ` 这种鬼画符到处显示。
+      收口到 clean_display 后，银行/签到/榜单等**所有**用到这个函数的
+      地方一次性都干净了。
+    """
+    def _pick(v):
+        """转字符串 + 清洗（脏值返回空串，让调用方继续找下一个来源）"""
+        try:
+            return _clean_display(str(v))
+        except Exception:
+            return ""
+
     for attr in ("sender_name", "sender_nickname", "nickname", "nick"):
         try:
             v = getattr(event, attr, None)
             if v:
-                return str(v)
+                _s = _pick(v)
+                if _s:
+                    return _s
         except Exception:
             pass
     try:
@@ -85,13 +106,18 @@ def get_user_name(event) -> str:
             for attr in ("sender_name", "sender_nickname", "nickname"):
                 v = getattr(mo, attr, None)
                 if v:
-                    return str(v)
+                    _s = _pick(v)
+                    if _s:
+                        return _s
             sender = getattr(mo, "sender", None)
             if sender is not None:
-                for attr in ("nickname", "card", "name"):
+                # ★ 群名片（card）优先于个人昵称
+                for attr in ("card", "nickname", "name"):
                     v = getattr(sender, attr, None)
                     if v:
-                        return str(v)
+                        _s = _pick(v)
+                        if _s:
+                            return _s
     except Exception:
         pass
     return ""
