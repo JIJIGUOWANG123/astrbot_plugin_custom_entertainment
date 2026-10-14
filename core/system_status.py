@@ -4,6 +4,7 @@ import json
 import time
 import platform
 import datetime
+import logging
 import re
 import asyncio
 
@@ -36,15 +37,133 @@ class _StatsDict(dict):
     def __setitem__(self, key, value):
         dict.__setitem__(self, key, value)
         try:
-            if key in ("recv", "send"):
+            # ★★ 1.4.0：`send` 增加时联动 `cmds`（指令执行数）。
+            #   全插件 450+ 处写的是 `GLOBAL_STATS["send"] += 1`，
+            #   走的就是这里，所以在这一层联动最不容易漏。
+            if key == "send":
+                _old = _MSG_STATS_LAST_SAVE.get("send")
+                try:
+                    _new = int(value or 0)
+                except Exception:
+                    _new = 0
+                if _old is not None and _new > int(_old or 0):
+                    _d = _new - int(_old or 0)
+                    dict.__setitem__(self, "cmds",
+                                     int(dict.get(self, "cmds", 0) or 0) + _d)
+            if key in _PERSIST_KEYS:
                 save_msg_stats()
+        except Exception:
+            pass
+
+    def bump(self, key: str, n: int = 1):
+        """
+        ★★ 1.4.0：自增一个计数（自动落盘）。**计数绝不能影响主流程**，
+        所以这里把所有异常都吞掉。
+
+        ★ `send` 自增时**顺带把 `cmds`（指令执行数）也 +1** ——
+          指令真正执行完的标志就是「发出了回复」，而 on_msg 有 200+ 个
+          顶层分支、逐处插桩不现实，用这个联动最稳也最不容易漏。
+        """
+        try:
+            dict.__setitem__(self, key,
+                             int(dict.get(self, key, 0) or 0) + int(n))
+            if key == "send" and n > 0:
+                dict.__setitem__(self, "cmds",
+                                 int(dict.get(self, "cmds", 0) or 0) + int(n))
+            save_msg_stats()
         except Exception:
             pass
 
     def __delitem__(self, key):
         dict.__delitem__(self, key)
 
-GLOBAL_STATS = _StatsDict({"recv": 0, "send": 0})
+# ★★ 1.4.0：这几个键都跟着收发计数一起落盘。
+#   recv/send   收到 / 发出消息累计
+#   join/leave  机器人**加入群 / 退出群**的累计次数（on_msg 解析 notice 时 bump）
+#   calls       调用次数（每条进插件处理的消息 +1）
+#   cmds        指令执行数（真正执行并回复了的指令数）
+#   errs        错误次数（ERROR 级日志累计）
+#   用户数量不入库 —— 直接取昵称缓存的条数（见 _bot_stats 的 users）
+#
+# ★ 全部数据**只在本地计算与展示**，不上报、不外发。
+_PERSIST_KEYS = ("recv", "send", "join", "leave", "calls", "cmds", "errs")
+
+GLOBAL_STATS = _StatsDict({"recv": 0, "send": 0, "join": 0, "leave": 0,
+                           "calls": 0, "cmds": 0, "errs": 0})
+
+# ============================================================
+# ★★ 1.4.0：错误计数 —— 纯本地统计，统计 ERROR 级日志条数。
+#
+# 为什么不包 on_msg：
+#   `on_msg` 是几千行的大函数、里面有几百处 return，外面套 try 要整体
+#   重排缩进，风险远大于收益。而插件所有模块都用**同一个** logger，
+#   在 root logger 上挂一个 Handler 就能完整覆盖所有 logger.error/exception。
+#
+# ★ 为什么用 Handler 而不是 Filter：
+#   `logging.Logger.addFilter()` 挂到 root 上，**子 logger 冒泡上来的记录
+#   不会经过 root 的 filters**（实测 filter 调用次数为 0）。
+#   而 Handler 是 `callHandlers()` 里逐个 `handle()` 的，**必定执行**。
+#
+# ★ 防自增死循环：看到 "apix-meme" 字样的日志直接跳过不计数
+#   （统计自身出错时打的就是这个前缀）。
+# ============================================================
+_ERR_FILTER_INSTALLED = False
+_ERR_LOCK = None
+_ERR_LAST_SAVE = [0.0]
+_ERR_SAVE_GAP = 3.0
+
+
+def _bump_errs() -> None:
+    """错误 +1。节流落盘（3 秒最多一次），避免每条错误日志都写盘。"""
+    try:
+        dict.__setitem__(GLOBAL_STATS, "errs",
+                         int(dict.get(GLOBAL_STATS, "errs", 0) or 0) + 1)
+        now = time.time()
+        if now - _ERR_LAST_SAVE[0] >= _ERR_SAVE_GAP:
+            _ERR_LAST_SAVE[0] = now
+            save_msg_stats(force=True)
+    except Exception:
+        pass
+
+
+class _ErrCountHandler(logging.Handler):
+    """数 ERROR / CRITICAL 级日志的条数（纯本地，不外发）"""
+
+    def __init__(self):
+        super().__init__(level=logging.ERROR)
+
+    def emit(self, record):
+        try:
+            if record.levelno >= logging.ERROR:
+                if "apix-meme" not in str(record.getMessage() or ""):
+                    _bump_errs()
+        except Exception:
+            pass
+
+
+def install_error_counter(logger_obj=None) -> bool:
+    """
+    挂上错误计数器。**只挂一次**，重复调用是空操作。
+
+    ★ 挂到 root logger 的 Handler 上 —— 任何 logger 的记录都会冒泡到 root，
+      所以插件所有 `logger.exception/error` 全覆盖。
+    """
+    global _ERR_FILTER_INSTALLED, _ERR_LOCK
+    try:
+        if _ERR_FILTER_INSTALLED:
+            return True
+        if _ERR_LOCK is None:
+            import threading
+            _ERR_LOCK = threading.RLock()
+        with _ERR_LOCK:
+            if _ERR_FILTER_INSTALLED:
+                return True
+            logging.getLogger().addHandler(_ErrCountHandler())
+            _ERR_FILTER_INSTALLED = True
+        return True
+    except Exception:
+        return False
+
 
 _MSG_STATS_PATH = ""
 _MSG_STATS_TS = 0.0
@@ -67,15 +186,19 @@ def load_msg_stats() -> dict:
             return GLOBAL_STATS
         with open(_MSG_STATS_PATH, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
-        for k in ("recv", "send"):
+        for k in _PERSIST_KEYS:
             try:
                 GLOBAL_STATS[k] = max(0, int(d.get(k, 0) or 0))
             except Exception:
                 pass
         _MSG_STATS_LAST_SAVE.update(GLOBAL_STATS)
         logger.info(
-            f"[apix-meme] 恢复收发计数：收 {GLOBAL_STATS['recv']} / "
-            f"发 {GLOBAL_STATS['send']}")
+            f"[apix-meme] 恢复统计计数：收 {GLOBAL_STATS['recv']} / "
+            f"发 {GLOBAL_STATS['send']} / 入群 {GLOBAL_STATS.get('join', 0)} / "
+            f"退群 {GLOBAL_STATS.get('leave', 0)} / "
+            f"调用 {GLOBAL_STATS.get('calls', 0)} / "
+            f"指令 {GLOBAL_STATS.get('cmds', 0)} / "
+            f"错误 {GLOBAL_STATS.get('errs', 0)}")
     except Exception:
         logger.exception("[apix-meme] 恢复收发计数失败")
     return GLOBAL_STATS
@@ -93,19 +216,18 @@ def save_msg_stats(force: bool = False) -> bool:
         if not force:
             if now - _MSG_STATS_TS < _MSG_STATS_SAVE_GAP:
                 return False
-            if (_MSG_STATS_LAST_SAVE.get("recv") == GLOBAL_STATS.get("recv")
-                    and _MSG_STATS_LAST_SAVE.get("send")
-                    == GLOBAL_STATS.get("send")):
+            if all(_MSG_STATS_LAST_SAVE.get(k) == GLOBAL_STATS.get(k)
+                   for k in _PERSIST_KEYS):
                 _MSG_STATS_TS = now
                 return False
         d = os.path.dirname(_MSG_STATS_PATH)
         if d and not os.path.isdir(d):
             os.makedirs(d, exist_ok=True)
         tmp = _MSG_STATS_PATH + ".tmp"
+        _out = {k: int(GLOBAL_STATS.get(k, 0) or 0) for k in _PERSIST_KEYS}
+        _out["ts"] = int(now)
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"recv": int(GLOBAL_STATS.get("recv", 0) or 0),
-                       "send": int(GLOBAL_STATS.get("send", 0) or 0),
-                       "ts": int(now)}, f, ensure_ascii=False)
+            json.dump(_out, f, ensure_ascii=False)
         os.replace(tmp, _MSG_STATS_PATH)
         _MSG_STATS_TS = now
         _MSG_STATS_LAST_SAVE.update(GLOBAL_STATS)

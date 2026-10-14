@@ -20,11 +20,12 @@ let MOUNT_CUSTOM_DIR = "";    // 手动指定的坐骑素材目录
 // ★★ 1.7.7：银行冻结账号（后台查看 / 提前解冻）
 let BANK_FROZEN = null;       // null=未加载；[]=没有冻结；[{...}]=冻结中
 let BANK_FROZEN_ERR = "";
-// ★★ 1.3.0：授权状态列表（授权功能后台展示）
+// ★★ 1.4.0：授权状态列表（授权功能后台展示）
 let AUTH_STATUS = null;       // null=未加载；{rows:[...], stats:{...}}
 let AUTH_STATUS_ERR = "";
 let CONFIG = {};
-let currentView = "menu";
+// ★★ 市场版 1.4.0：默认打开「数据统计」页（左侧第一个按钮）
+let currentView = "botstats";
 let bridgeReady = false;
 
 const PLUGIN_ID = "astrbot_plugin_custom_entertainment";
@@ -177,7 +178,7 @@ async function loadBankFrozen() {
 }
 
 /**
- * ★★ 1.3.0：拉取授权状态（授权功能后台展示）。
+ * ★★ 1.4.0：拉取授权状态（授权功能后台展示）。
  *
  * 走插件的 `/auth` 路由，拿到每个群的授权状态 / 到期时间。
  */
@@ -1342,6 +1343,54 @@ function viewAvailable(view) {
                           : keys.includes(view);
 }
 
+// ★★ 市场版 1.4.0：数据统计（只读）。走插件 `/stats` 路由。
+//   全部数据在插件**本地**计算，不采集隐私、不上报。
+let STATS = null;
+let STATS_ERR = "";
+
+/**
+ * ★★ 市场版 1.4.0：拉取数据统计（**只读**）。
+ *
+ * 走插件的 `/stats` 路由。这个路由**只有 GET**，页面上也没有任何保存入口。
+ * 骨架与 `loadCollections` 一致：先桥接、再同源 fetch 兜底。
+ */
+async function loadStats() {
+  if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
+    try {
+      const res = await Promise.race([
+        bridge.apiGet("stats"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('bridge.apiGet("stats") 超时')), 4000)),
+      ]);
+      if (res && typeof res === "object" && res.ok !== false) {
+        STATS = res;
+        STATS_ERR = "";
+        return STATS;
+      }
+      STATS_ERR = (res && (res.error || res.msg)) || "桥接返回异常";
+      console.warn('[data] bridge.apiGet("stats") 返回异常:', res);
+    } catch (e) {
+      STATS_ERR = `${e.name || "错误"}: ${e.message || e}`;
+      console.warn('[data] bridge.apiGet("stats") 失败:', e);
+    }
+  }
+  for (const url of buildRouteUrls("stats")) {
+    try {
+      const j = await tryFetchJSON(url);
+      if (j && typeof j === "object" && j.ok !== false) {
+        STATS = j;
+        STATS_ERR = "";
+        return STATS;
+      }
+    } catch (e) {
+      STATS_ERR = `${e.name || "错误"}: ${e.message || e}`;
+      console.warn(`[data] fetch GET ${url} 失败:`, e);
+    }
+  }
+  if (!STATS_ERR) STATS_ERR = "无法连接插件";
+  return null;
+}
+
 async function loadCollections() {
   // 桥接优先（与其余配置读写走同一套通道）
   if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
@@ -2010,7 +2059,7 @@ function attachDataEvents() {
     }
   }
 
-  // ★★ 1.3.0：授权状态列表（首次进来时懒加载一次，加载完重绘）
+  // ★★ 1.4.0：授权状态列表（首次进来时懒加载一次，加载完重绘）
   const _asp = document.querySelector("#content [data-action='auth-refresh']");
   if (_asp) {
     bindAuthStatusActions();
@@ -2209,14 +2258,33 @@ function bindDataAction(btn) {
 const VIEWS = {
   // ★★ 市场版 1.1：机器人数据（左侧第一个按钮）
   botstats: {
-    title: "机器人数据",
+    title: "数据统计",
     groups: [
-      { title: "📊 机器人数据总览", type: "botstats" },
-      { title: "这一页怎么用", type: "hint", tone: "info", text:
-        "· 数字是**插件启动以来**的累计值，重载插件会清零\n" +
-        "· 「见过消息的群」「运行时长」在插件刚启动时是 0 / 很小，属正常\n" +
-        "· 数据集合、菜单、配置项、Web 路由是**当前实际加载**的数量\n" +
-        "· 想刷新：回到本页会自动重新读取，或点右上角「💾 保存全部」旁边的刷新" },
+      { title: "📊 运行数据（只读）", type: "botstats" },
+      { title: "说明", type: "hint", tone: "info", text:
+        "★ 本页**只读**，不提供任何修改入口。\n" +
+        "★ 所有数字都在插件**本地**计算，**不采集隐私、不上报、不外发**。\n" +
+        "\n📥 **收到信息累计数** / 📤 **发送信息累计数**\n" +
+        "　 进入插件的消息 / 插件发出去的回复，两者都**持久化落盘**，\n" +
+        "　 重载插件也不清零；要归零只能删 `*_msg_stats.json`。\n" +
+        "\n🔔 **调用次数** = 插件被调用的总次数（每条进插件处理的消息 +1）。\n" +
+        "🎯 **指令执行数** = **真正执行并回复**了的指令数。\n" +
+        "　 ★ 判定依据是「发出了回复」—— on_msg 有 200+ 个顶层分支，\n" +
+        "　 逐处插桩不现实，所以用这个口径（数值上会略小于调用次数）。\n" +
+        "\n👤 **用户数量** = 昵称缓存里**去重后**的用户条数。\n" +
+        "　 见过的用户都会记进来，所以是「累计见过多少人」而不是「当前在线」。\n" +
+        "\n⚠️ **错误次数** = 插件 **ERROR 级日志**的累计条数。\n" +
+        "　 它不是「崩溃次数」，而是「出过错的地方报了几次」。\n" +
+        "\n👥 **目前加入群数量**\n" +
+        "　 = 「见过消息的群」∪「已授权群」。AstrBot 没给纯群列表接口，\n" +
+        "　 所以是估算值（实际服务的群基本就是这些）。\n" +
+        "\n➕ **加入群次数** / 🚪 **退出群次数**\n" +
+        "　 靠群事件（`group_increase` / `group_decrease`）累计。\n" +
+        "　 ⚠️ 只有**机器人自己**被拉进群 / 被踢时才 +1，群员进出不算。\n" +
+        "　 ⚠️ 从本版本开始统计，**之前的历史不计入**（从 0 开始）。\n" +
+        "\n⏱️ **在线时长** = 本次插件启动至今（重载会重置）。\n" +
+        "\n✅ **未到期群数** = 永久授权 + 有效期内 + 未单独设置的群。\n" +
+        "⛔ **到期群数** = 授权已过期、需要续期的群。" },
     ],
   },
   menu: {
@@ -3109,7 +3177,7 @@ const VIEWS = {
         keys: ["api_list"] },
     ],
   },
-  // ★★ 1.3.0：**授权功能**独立视图（左侧独立按钮）
+  // ★★ 1.4.0：**授权功能**独立视图（左侧独立按钮）
   auth: {
     title: "授权功能",
     groups: [
@@ -3669,46 +3737,69 @@ function render() {
 }
 
 /**
- * ★★ 市场版 1.1：机器人数据总览。
+ * ★★ 市场版 1.4.0：数据统计总览（**只读**）。
  *
- * 数据来自后端 `/data` 的 `botStats` 字段（main.py 的 `_bot_stats()`），
- * 这里只负责画成卡片。
+ * 主数据来自后端 `/stats`（main.py 的 `_bot_stats()`），
+ * 版式按参考图：标签在上、大号蓝色数字在下，4 列 × 3 行。
+ *
+ * ★ 隐私：所有数字都在插件**本地**算出来，
+ *   不采集用户隐私、不上报、不发送到任何第三方。
  */
 function buildBotStatsHtml() {
-  const st = BOT_STATS;
+  const st = STATS || BOT_STATS;
   if (!st) {
-    return `<div class="muted">正在读取统计…（如果一直这样，点「↻ 刷新数据」）</div>`;
+    return `<div class="muted">正在读取统计…${
+      STATS_ERR ? `（上次失败：${esc(STATS_ERR)}）` : ""}</div>`;
   }
-  const card = (icon, label, value, sub) =>
-    `<div class="botstat">
-       <div class="bs-icon">${icon}</div>
-       <div class="bs-body">
-         <div class="bs-val">${esc(String(value))}</div>
-         <div class="bs-lbl">${esc(label)}</div>
-         ${sub ? `<div class="bs-sub">${esc(sub)}</div>` : ""}
-       </div>
+  // 数字加千分位（参考图那种 12,680 写法）
+  const num = (v) => {
+    const n = Number(v);
+    if (!isFinite(n)) return "—";
+    return n.toLocaleString("en-US");
+  };
+  const card = (label, value, sub) =>
+    `<div class="botstat ro">
+       <div class="bs-lbl">${esc(label)}</div>
+       <div class="bs-val">${esc(String(value))}</div>
+       ${sub ? `<div class="bs-sub">${esc(sub)}</div>` : ""}
      </div>`;
 
   let html = `<div class="muted" style="margin-bottom:12px">
-    统计从**插件启动**开始累计；「收到消息」= 进入插件处理的消息条数，
-    「发送消息」= 插件回复的条数。快照时间：<code>${esc(st.now || "—")}</code>
+    📖 **只读统计**，本页不能修改任何数据；所有数字均在插件**本地**计算，不外发。
+    快照：<code>${esc(st.now || "—")}</code>
+    <button class="btn btn-primary btn-sm" data-action="stats-refresh"
+            style="margin-left:8px">↻ 刷新</button>
   </div>`;
 
   html += `<div class="botstat-grid">`;
-  html += card("📥", "收到消息", st.recv || 0, "进入插件的消息");
-  html += card("📤", "发送消息", st.send || 0, "插件发出的回复");
-  html += card("👥", "见过消息的群", st.seen_count || 0, "有群员发过言");
-  html += card("✅", "启用功能的群", st.enabled_count || 0,
-               (st.enabled_groups || []).slice(0, 3).join("、") || "白名单为空=全部");
-  html += card("🧩", "功能开关", `${st.feature_on || 0} / ${st.feature_total || 0}`,
-               "已开启 / 总数");
-  html += card("🗂️", "数据集合", st.collections || 0, "可在「数据管理」改");
-  html += card("📋", "菜单数量", st.menus || 0, "含下级菜单");
-  html += card("⚙️", "配置项", st.schema_keys || 0, "后台可调项");
-  html += card("🔌", "Web 路由", st.routes || 0, "后台接口");
-  html += card("⏱️", "运行时长", st.uptime_text || "—", "自插件启动");
-  html += card("🏷️", "插件版本", st.version || "—", "");
+  html += card("收到信息累计数", num(st.recv || 0), "进入插件的消息");
+  html += card("发送信息累计数", num(st.send || 0), "插件发出的回复");
+  html += card("调用次数", num(st.calls || 0), "插件被调用的总次数");
+  html += card("指令执行数", num(st.cmds || 0), "真正执行并回复的指令");
+  html += card("用户数量", num(st.users || 0), "去重后的活跃用户");
+  html += card("错误次数", num(st.errs || 0), "ERROR 级日志累计");
+  html += card("目前加入群数量", num(st.live_count || 0), "见过消息 + 已授权");
+  html += card("加入群次数", num(st.join || 0), "累计入群事件");
+  html += card("退出群次数", num(st.leave || 0), "累计退群事件");
+  html += card("在线时长", st.uptime_text || "—", "自本次插件启动");
+  html += card("未到期群数", num(st.auth_valid || 0), "有效 + 永久 + 未设置");
+  html += card("到期群数", num(st.auth_expired || 0), "已过期，需续期");
   html += `</div>`;
+
+  // 授权明细
+  const as = st.auth_stats || {};
+  const akeys = Object.keys(as);
+  if (akeys.length) {
+    const albl = { total: "总记录", never: "永久", active: "有效",
+                   expired: "过期", disabled: "停用" };
+    html += `<div class="section-header" style="margin-top:18px">
+      <div class="section-title">授权明细</div></div>`;
+    html += `<div class="muted small" style="line-height:2">`;
+    akeys.forEach((k) => {
+      html += `<span class="badge">${esc(albl[k] || k)}：${esc(String(as[k]))}</span> `;
+    });
+    html += `</div>`;
+  }
 
   // 逐功能「开了几个群」
   const gf = st.group_feature_on || {};
@@ -3778,7 +3869,7 @@ function renderView(viewKey) {
     } else if (group.type === "bankfreeze") {
       html += buildBankFrozenHtml();
     } else if (group.type === "authstatus") {
-      // ★★ 1.3.0：授权状态列表
+      // ★★ 1.4.0：授权状态列表
       html += buildAuthStatusHtml();
     } else if (group.type === "paragraph") {
       html += renderParagraph(group.text || "");
@@ -4271,6 +4362,22 @@ function attachTemplateEvents() {
   });
 }
 
+// ★★ 市场版 1.4.0：数据统计页的「↻ 刷新」按钮（只读页唯一的交互）
+document.addEventListener("click", async (e) => {
+  const btn = e.target && e.target.closest
+    ? e.target.closest("#content [data-action='stats-refresh']") : null;
+  if (!btn) return;
+  e.preventDefault();
+  btn.disabled = true;
+  try {
+    await loadStats();
+  } finally {
+    btn.disabled = false;
+  }
+  render();
+  toast("已刷新数据统计");
+});
+
 // ============================================================
 // 导航
 // ============================================================
@@ -4375,6 +4482,13 @@ async function boot() {
     if (typeof loadMountStatus === "function") await loadMountStatus();
   } catch (e) {
     console.warn("[boot] 预加载坐骑素材失败:", e);
+  }
+
+  // ★★ 市场版 1.4.0：预加载数据统计（默认视图就是它，先拉好避免闪「正在读取」）
+  try {
+    await loadStats();
+  } catch (e) {
+    console.warn("[boot] 预加载数据统计失败:", e);
   }
 
   renderView(currentView);

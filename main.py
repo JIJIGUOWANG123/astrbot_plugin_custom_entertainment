@@ -888,6 +888,16 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 恢复收发计数失败")
 
+        # ★★ 1.4.0：给 logger 挂上错误计数器（后台「数据统计」的「错误次数」）。
+        #   纯本地统计，不上报、不外发。
+        try:
+            from .core.system_status import (
+                install_error_counter as _install_err_counter)
+            if _install_err_counter(logger):
+                logger.info("[apix-meme] 错误计数器已接入（本地统计）")
+        except Exception:
+            logger.debug("[apix-meme] 错误计数器接入失败", exc_info=True)
+
         self.fortune_module = None
         if _HAS_FORTUNE:
             try:
@@ -2373,6 +2383,72 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 读取授权状态失败")
                 return _with_cors(error_response(f"读取失败: {e}"),
                                   request)
+        async def _stats_handler(request=None, **kwargs):
+            """
+            ★★ 1.4.0：GET /stats —— 后台「数据统计」页（**只读**）。
+
+            只返回统计数据，**不提供任何写入入口** —— 页面上也没有保存按钮。
+
+            ★ 隐私说明：本接口的数据**全部在插件本地计算**
+              （消息计数 / 群计数 / 日志错误计数 / 授权状态），
+              **不采集用户隐私、不上报、不发送到任何第三方**。
+
+            返回：
+                recv, send,              累计收到 / 发送消息数
+                calls, cmds, errs,       调用次数 / 指令执行数 / 错误次数
+                users,                   去重用户数（本地昵称缓存条数）
+                join, leave, live_count, 入群 / 退群次数 / 目前加入群数量
+                uptime_sec, uptime_text, 在线时长
+                auth_valid, auth_expired, auth_total,  未到期 / 到期 / 总授权群数
+                now
+
+            ★ 与 /auth 同样的两个约定：
+              ① 用 astrbot.api.web.json_response（Starlette JSONResponse）
+              ② 无路径占位符时 request 为 None，要用 _bound_request()
+            """
+            if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
+                return _options_response(request)
+            denied = _reject_cross_origin(request)
+            if denied is not None:
+                return denied
+            try:
+                st = self._bot_stats()
+                return _with_cors(json_response({
+                    "ok": True,
+                    "ro": True,
+                    "recv": int(st.get("recv", 0) or 0),
+                    "send": int(st.get("send", 0) or 0),
+                    "join": int(st.get("join", 0) or 0),
+                    "leave": int(st.get("leave", 0) or 0),
+                    "calls": int(st.get("calls", 0) or 0),
+                    "cmds": int(st.get("cmds", 0) or 0),
+                    "errs": int(st.get("errs", 0) or 0),
+                    "users": int(st.get("users", 0) or 0),
+                    "live_count": int(st.get("live_count",
+                                              st.get("seen_count", 0)) or 0),
+                    "uptime_sec": int(st.get("uptime_sec", 0) or 0),
+                    "uptime_text": str(st.get("uptime_text") or "—"),
+                    "auth_valid": int(st.get("auth_valid", 0) or 0),
+                    "auth_expired": int(st.get("auth_expired", 0) or 0),
+                    "auth_total": int(st.get("auth_total", 0) or 0),
+                    "auth_stats": st.get("auth_stats") or {},
+                    "now": str(st.get("now") or ""),
+                    "version": str(st.get("version") or ""),
+                    # 兼容旧「机器人数据」字段
+                    "seen_count": int(st.get("seen_count", 0) or 0),
+                    "enabled_count": int(st.get("enabled_count", 0) or 0),
+                    "menus": int(st.get("menus", 0) or 0),
+                    "schema_keys": int(st.get("schema_keys", 0) or 0),
+                    "routes": int(st.get("routes", 0) or 0),
+                    "collections": int(st.get("collections", 0) or 0),
+                    "feature_on": int(st.get("feature_on", 0) or 0),
+                    "feature_total": int(st.get("feature_total", 0) or 0),
+                }), request)
+            except Exception as e:
+                logger.exception("[apix-meme] 读取数据统计失败")
+                return _with_cors(error_response(f"读取失败: {e}",
+                                                 status_code=500), request)
+
         routes = [
             (f"/{PLUGIN_ID}/config", _get_config_handler,  ["GET", "OPTIONS"],  "读取配置"),
             (f"/{PLUGIN_ID}/config", _save_config_handler, ["POST", "OPTIONS"], "保存配置"),
@@ -2391,6 +2467,7 @@ class ApixIqfkSimpleMeme(Star):
             (f"/{PLUGIN_ID}/dataOp",           _data_op_handler,           ["POST", "OPTIONS"], "单条数据增删改（POST）"),
             (f"/{PLUGIN_ID}/page",   _page_handler,        ["GET", "OPTIONS"],  "配置页面"),
             (f"/{PLUGIN_ID}/auth",   _auth_status_handler,  ["GET", "OPTIONS"],  "授权状态列表"),
+            (f"/{PLUGIN_ID}/stats",  _stats_handler,        ["GET", "OPTIONS"],  "数据统计（只读，本地）"),
             (f"/{PLUGIN_ID}/page/{{name}}", _page_extra_handler,
              ["GET", "OPTIONS"], "专属设置页（独立HTML）"),
         ]
@@ -2426,6 +2503,38 @@ class ApixIqfkSimpleMeme(Star):
             out["send"] = max(0, int(GLOBAL_STATS.get("send", 0) or 0))
         except Exception:
             out["recv"] = out["send"] = 0
+        # ★★ 1.4.0：「数据统计」页要的几项（全部**只读**展示，纯本地统计）
+        try:
+            out["join"] = max(0, int(GLOBAL_STATS.get("join", 0) or 0))
+            out["leave"] = max(0, int(GLOBAL_STATS.get("leave", 0) or 0))
+            out["calls"] = max(0, int(GLOBAL_STATS.get("calls", 0) or 0))
+            out["cmds"] = max(0, int(GLOBAL_STATS.get("cmds", 0) or 0))
+            out["errs"] = max(0, int(GLOBAL_STATS.get("errs", 0) or 0))
+        except Exception:
+            out["join"] = out["leave"] = 0
+            out["calls"] = out["cmds"] = out["errs"] = 0
+        # 用户数量 = 昵称缓存里去重后的用户条数
+        try:
+            _nc = getattr(self, "_nickname_cache", None)
+            _nd = _nc.as_dict() if _nc is not None else {}
+            out["users"] = len([k for k in (_nd or {}) if str(k).strip()])
+        except Exception:
+            out["users"] = 0
+        # 授权分布：未到期群数 / 到期群数
+        try:
+            _am = getattr(self, "auth_module", None)
+            if _am is not None:
+                _as = _am.stats()
+                _exp = int(_as.get("expired", 0) or 0)
+                _tot = int(_as.get("total", 0) or 0)
+                out["auth_stats"] = _as
+                out["auth_total"] = _tot
+                out["auth_expired"] = _exp
+                out["auth_valid"] = max(0, _tot - _exp)
+            else:
+                out["auth_total"] = out["auth_expired"] = out["auth_valid"] = 0
+        except Exception:
+            out["auth_total"] = out["auth_expired"] = out["auth_valid"] = 0
         try:
             _seen = sorted({str(g) for g in (self._seen_groups or set())
                             if str(g).strip()})
@@ -2438,6 +2547,17 @@ class ApixIqfkSimpleMeme(Star):
             _enabled = []
         out["seen_groups"] = _seen
         out["seen_count"] = len(_seen)
+        # ★★ 1.4.0：「目前加入群数量」= 见过消息的群 + 当前已授权群 的并集
+        #   （机器人实际在服务的群；纯拉群列表拿不到，只能这样估）
+        try:
+            _live = set(_seen)
+            for _g in (getattr(self.auth_module, "groups", None) or {}):
+                if str(_g).strip():
+                    _live.add(str(_g))
+            out["live_groups"] = sorted(_live)
+            out["live_count"] = len(_live)
+        except Exception:
+            out["live_count"] = len(_seen)
         out["enabled_groups"] = _enabled
         out["enabled_count"] = len(_enabled)
         _feat = {}
@@ -7883,6 +8003,8 @@ class ApixIqfkSimpleMeme(Star):
     @filter.event_message_type(EventMessageType.ALL)
     async def on_msg(self, event: AstrMessageEvent):
         GLOBAL_STATS["recv"] += 1
+        # ★★ 1.4.0：调用次数 —— 每条进来处理的消息 +1（后台「数据统计」用）
+        GLOBAL_STATS.bump("calls")
         try:
             _sg = str(_get_group_id_from_event(event) or "")
             if _sg and isinstance(self._seen_groups, set):
@@ -8175,8 +8297,12 @@ class ApixIqfkSimpleMeme(Star):
                     try:
                         if _kind == "_count":
                             self.notice_module.bump_count(_gid, +1)
+                            GLOBAL_STATS["join"] = int(
+                                GLOBAL_STATS.get("join", 0) or 0) + 1
                         elif _kind == "leave":
                             self.notice_module.bump_count(_gid, -1)
+                            GLOBAL_STATS["leave"] = int(
+                                GLOBAL_STATS.get("leave", 0) or 0) + 1
                     except Exception:
                         pass
                     if _kind and _kind != "_count" and \
