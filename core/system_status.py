@@ -5,13 +5,8 @@ import time
 import platform
 import datetime
 import re
-# ★★ 审核整改：`collect_runtime_status()` 里用 `asyncio.to_thread()`
-#   把「含同步阻塞 IO 的取数函数」丢到线程池，避免卡住事件循环。
 import asyncio
 
-# ★★ 1.7.7：本模块以前**没有导入 logger**，但下面有 10 处 `logger.xxx` 调用 ——
-#   那些分支一旦执行就会 `NameError`（例如 外部监控服务 请求失败、
-#   版本探测失败时会再抛一次异常，把真正的错误盖掉）。
 from astrbot.api import logger
 try:
     from .path_utils import read_disk_config as _read_disk_config_util
@@ -24,7 +19,6 @@ try:
     _HAS_PSUTIL = True
 except Exception:
     _HAS_PSUTIL = False
-
 
 class _StatsDict(dict):
     """
@@ -50,25 +44,17 @@ class _StatsDict(dict):
     def __delitem__(self, key):
         dict.__delitem__(self, key)
 
-
 GLOBAL_STATS = _StatsDict({"recv": 0, "send": 0})
 
-# ★★ 1.7.7：收发消息计数**落盘**，重载插件不再归零。
-#   以前这两个数只活在内存里，插件一重载就回到 0，用户每次都看到
-#   「收到消息数量：0 条」。
-#   做法：内存里照旧是这两个 key；每次自增后**节流落盘**（默认 5 秒一次），
-#   插件加载时调 `load_msg_stats()` 把上次的值读回来。
 _MSG_STATS_PATH = ""
 _MSG_STATS_TS = 0.0
-_MSG_STATS_SAVE_GAP = 5.0     # 落盘节流（秒）
+_MSG_STATS_SAVE_GAP = 5.0
 _MSG_STATS_LAST_SAVE = {"recv": -1, "send": -1}
-
 
 def set_msg_stats_path(path: str) -> None:
     """由 main.py 注入计数文件的路径（插件数据目录下）"""
     global _MSG_STATS_PATH
     _MSG_STATS_PATH = str(path or "")
-
 
 def load_msg_stats() -> dict:
     """
@@ -94,7 +80,6 @@ def load_msg_stats() -> dict:
         logger.exception("[apix-meme] 恢复收发计数失败")
     return GLOBAL_STATS
 
-
 def save_msg_stats(force: bool = False) -> bool:
     """
     把收发计数写盘。**节流**：默认 5 秒最多写一次，
@@ -108,7 +93,6 @@ def save_msg_stats(force: bool = False) -> bool:
         if not force:
             if now - _MSG_STATS_TS < _MSG_STATS_SAVE_GAP:
                 return False
-            # 值没变就不用写
             if (_MSG_STATS_LAST_SAVE.get("recv") == GLOBAL_STATS.get("recv")
                     and _MSG_STATS_LAST_SAVE.get("send")
                     == GLOBAL_STATS.get("send")):
@@ -130,7 +114,6 @@ def save_msg_stats(force: bool = False) -> bool:
         logger.exception("[apix-meme] 保存收发计数失败")
         return False
 
-
 def bump_stat(key: str, n: int = 1, save: bool = True) -> int:
     """
     ★★ 1.7.7：给计数加 n 并（按需）落盘。返回加完后的值。
@@ -147,12 +130,8 @@ def bump_stat(key: str, n: int = 1, save: bool = True) -> int:
         save_msg_stats()
     return GLOBAL_STATS[key]
 
-# 机器人自身 ID（QQ）缓存：
-#   定时推送 / 页面预览这类「无事件」场景拿不到事件，只能靠缓存。
-#   首次从消息事件取到后同时写进插件配置（bot_self_id），重启也能读到。
 _BOT_ID = ""
 _BOT_ID_SAVED = False
-
 
 def is_valid_bot_id(value) -> bool:
     """判断是不是可用的机器人 ID（排除空值、非数字、UUID 这类占位符）"""
@@ -160,11 +139,9 @@ def is_valid_bot_id(value) -> bool:
     if not v:
         return False
     if not v.isdigit():
-        # 非数字平台（如部分适配器返回字母 ID）也允许，但要长一点、不像 UUID
         if len(v) < 5 or "-" in v:
             return False
     return 5 <= len(v) <= 15
-
 
 def set_bot_id(value, save: bool = True) -> bool:
     """记录机器人 ID；save=True 时写入插件配置，供重启后使用"""
@@ -186,7 +163,6 @@ def set_bot_id(value, save: bool = True) -> bool:
             pass
     return changed
 
-
 def get_cached_bot_id() -> str:
     """取缓存的机器人 ID；内存没有就读一次插件配置"""
     global _BOT_ID, _BOT_ID_SAVED
@@ -204,22 +180,14 @@ def get_cached_bot_id() -> str:
         pass
     return ""
 
-
-# 由 main.py 注入的插件版本
 PLUGIN_VERSION = ""
-
 
 def set_plugin_version(version: str):
     global PLUGIN_VERSION
     PLUGIN_VERSION = str(version or "").strip()
 
-
-# ============================================================
-# 路径工具
-# ============================================================
 _PLUGIN_ID = "astrbot_plugin_custom_entertainment"
 _CONFIG_FILENAME = f"{_PLUGIN_ID}_config.json"
-
 
 def _find_astrbot_root() -> str:
     try:
@@ -241,13 +209,11 @@ def _find_astrbot_root() -> str:
         cur = os.path.dirname(cur)
     return os.getcwd()
 
-
 def _config_path() -> str:
     root = _find_astrbot_root()
     cfg_dir = os.path.join(root, "data", "config")
     os.makedirs(cfg_dir, exist_ok=True)
     return os.path.join(cfg_dir, _CONFIG_FILENAME)
-
 
 def _read_plugin_cfg() -> dict:
     if _HAS_PATH_UTILS:
@@ -265,17 +231,12 @@ def _read_plugin_cfg() -> dict:
     except Exception:
         return {}
 
-
 def _cfg_str(cfg: dict, key: str, default: str = "") -> str:
     v = cfg.get(key, default)
     if v is None:
         return default
     return str(v)
 
-
-# ============================================================
-# 格式化工具
-# ============================================================
 def _cfg_bool(cfg: dict, key: str, default: bool = True) -> bool:
     v = cfg.get(key, default)
     if isinstance(v, bool):
@@ -284,13 +245,11 @@ def _cfg_bool(cfg: dict, key: str, default: bool = True) -> bool:
         return default
     return str(v).strip().lower() in ("1", "true", "yes", "on", "是", "开启")
 
-
 def _cfg_text(cfg: dict, key: str, default: str = "") -> str:
     v = cfg.get(key, default)
     if v is None:
         return default
     return str(v)
-
 
 def human_bytes(n: float) -> str:
     try:
@@ -302,7 +261,6 @@ def human_bytes(n: float) -> str:
             return f"{n:.2f}{unit}"
         n /= 1024.0
     return f"{n:.2f}PB"
-
 
 def human_seconds(sec: float) -> str:
     try:
@@ -322,7 +280,6 @@ def human_seconds(sec: float) -> str:
     parts.append(f"{s}秒")
     return "".join(parts)
 
-
 def get_astrbot_version() -> str:
     try:
         import astrbot
@@ -338,7 +295,6 @@ def get_astrbot_version() -> str:
     except Exception:
         pass
     return "未知"
-
 
 def get_os_version() -> str:
     """
@@ -372,7 +328,6 @@ def get_os_version() -> str:
     except Exception:
         return "未知"
 
-
 def get_group_id(event) -> str:
     try:
         mo = getattr(event, "message_obj", None)
@@ -390,14 +345,12 @@ def get_group_id(event) -> str:
         pass
     return ""
 
-
 def get_bot_id(event=None) -> str:
     """
     取机器人自身 ID（QQ）。
     顺序：事件里的 self_id -> 之前缓存 / 配置里存的 -> 未知。
     定时推送与页面预览没有事件，靠缓存兜底。
     """
-    # 1) 事件里的 self_id
     if event is not None:
         for getter in ("get_self_id", "get_bot_id"):
             try:
@@ -409,7 +362,6 @@ def get_bot_id(event=None) -> str:
                         return str(v).strip()
             except Exception:
                 pass
-        # 2) 事件对象上的常见属性
         try:
             mo = getattr(event, "message_obj", None)
             for src in (mo, event):
@@ -421,12 +373,10 @@ def get_bot_id(event=None) -> str:
                     return str(v).strip()
         except Exception:
             pass
-    # 3) 缓存 / 配置
     cached = get_cached_bot_id()
     if cached:
         return cached
     return "未知"
-
 
 def get_sender_name(event) -> str:
     for attr in ("sender_name", "sender_nickname", "nickname", "nick"):
@@ -453,7 +403,6 @@ def get_sender_name(event) -> str:
         pass
     return ""
 
-
 def get_pc_uptime_seconds() -> float:
     if _HAS_PSUTIL:
         try:
@@ -461,34 +410,6 @@ def get_pc_uptime_seconds() -> float:
         except Exception:
             return 0.0
     return 0.0
-
-
-# ============================================================
-# ★★ 1.1：硬件数据源 = **psutil**（AstrBot 运行时可识别，无外部依赖）
-# ------------------------------------------------------------
-# 原版把 CPU/内存/网络/流量 等硬件数据交给一个外部的 外部监控服务
-# WebServer 提供（本机或局域网另一台机器），带来三个问题：
-#   · 要多跑一个服务才能用（不是开箱即用）
-#   · 服务不可达时会 `同步取数` 阻塞事件循环（社区审核标记）
-#   · 局域网地址、超时、缓存一堆额外配置
-#
-# 现在**全部改用 psutil**（AstrBot 环境本身就有）：
-#   CPU 占用 / 频率 / 分核  -> psutil
-#   内存占用                -> psutil.virtual_memory()
-#   网络实时速率            -> psutil.net_io_counters() 差分
-#   硬盘占用 / 开机时长     -> psutil
-#
-# ★ Windows 上 psutil 拿不到 **CPU 温度 / 功耗 / 电压 / 风扇**
-#   （`sensors_temperatures()` 在 Windows 返回空），
-#   这几项在本版本固定返回空 —— 后台对应开关打开时该项不显示，
-#   不会输出 "获取失败" 之类的噪音。
-# ============================================================
-
-
-
-
-
-
 
 def get_memory_usage_str() -> str:
     """
@@ -506,10 +427,7 @@ def get_memory_usage_str() -> str:
     except Exception:
         return "获取失败"
 
-
-
 _NET_LAST = {"ts": 0.0, "up": 0, "down": 0}
-
 
 def get_net_speed_str() -> str:
     """
@@ -534,7 +452,7 @@ def get_net_speed_str() -> str:
         last_down = int(_NET_LAST.get("down") or 0)
         _NET_LAST["ts"], _NET_LAST["up"], _NET_LAST["down"] = now, up, down
         if last_ts <= 0 or now <= last_ts:
-            return ""                      # 首次：没基线，不给数
+            return ""
         dt = now - last_ts
         if dt <= 0:
             return ""
@@ -544,17 +462,12 @@ def get_net_speed_str() -> str:
     except Exception:
         return ""
 
-
-
-
 def _cpu_core_count() -> int:
     """逻辑核心数（拿不到返回 0）"""
     try:
         return int(psutil.cpu_count(logical=True) or 0)
     except Exception:
         return 0
-
-
 
 def get_cpu_usage_str() -> str:
     """
@@ -575,13 +488,11 @@ def get_cpu_usage_str() -> str:
         percent = float(percent)
         if percent < 0:
             return "获取失败"
-        # 部分平台会给出 >100（多核累加），归一化到 0-100
         if percent > 100.0:
             percent = min(100.0, percent / max(1, cores or 1))
         return f"{percent:.1f}%"
     except Exception:
         return "获取失败"
-
 
 def get_cpu_cores_str() -> str:
     """CPU **核心数**（物理核 / 逻辑核）"""
@@ -599,7 +510,6 @@ def get_cpu_cores_str() -> str:
         return f"{physical} 物理核 / {logical} 逻辑核"
     return f"{logical} 核心"
 
-
 def get_cpu_clock_str() -> str:
     """
     CPU **频率**（纯 psutil）。
@@ -615,7 +525,6 @@ def get_cpu_clock_str() -> str:
     except Exception:
         pass
     return ""
-
 
 def get_cpu_cores_load_str() -> str:
     """
@@ -637,7 +546,6 @@ def get_cpu_cores_load_str() -> str:
     try:
         now = time.monotonic()
         last_ts = float(_CPU_LOAD_LAST.get("ts") or 0.0)
-        # 两次采样间隔太短 -> 数据不准，这次先不给（下次就有了）
         if last_ts and (now - last_ts) < 0.15:
             vals = _CPU_LOAD_LAST.get("vals") or []
             if vals:
@@ -652,9 +560,7 @@ def get_cpu_cores_load_str() -> str:
     except Exception:
         return ""
 
-
 _CPU_LOAD_LAST = {"ts": 0.0, "vals": []}
-
 
 def _fmt_cores(vals) -> str:
     """把每核百分比排成「一行 4 个」的文本"""
@@ -663,7 +569,6 @@ def _fmt_cores(vals) -> str:
     for i in range(0, len(out), 4):
         lines.append("  ".join(out[i:i + 4]))
     return "\n".join(lines)
-
 
 def get_cpu_load_str() -> str:
     """
@@ -680,8 +585,6 @@ def get_cpu_load_str() -> str:
     except Exception:
         return ""
 
-
-
 def get_cpu_temp_str() -> str:
     """
     CPU 温度。
@@ -693,8 +596,6 @@ def get_cpu_temp_str() -> str:
       该项不显示，不会污染输出。
     """
     return ""
-
-
 
 def get_cpu_power_str() -> str:
     """
@@ -708,8 +609,6 @@ def get_cpu_power_str() -> str:
     """
     return ""
 
-
-
 def get_cpu_voltage_str() -> str:
     """
     CPU 电压。
@@ -722,8 +621,6 @@ def get_cpu_voltage_str() -> str:
     """
     return ""
 
-
-
 def get_cpu_fan_str() -> str:
     """
     CPU 风扇。
@@ -735,7 +632,6 @@ def get_cpu_fan_str() -> str:
       该项不显示，不会污染输出。
     """
     return ""
-
 
 def get_disk_usage_str() -> str:
     """
@@ -769,20 +665,12 @@ def get_disk_usage_str() -> str:
         shown += 1
     return "\n".join(lines) if lines else "获取失败"
 
-
-# ============================================================
-# 主入口：按配置输出指定项目
-# ============================================================
-# ============================================================
-# 协议端版本（NapCat / PCQQ） 与 北京时间
-# ============================================================
 import time as _time
 from .path_utils import title_bar, title_foot
 from . import path_utils as _path_utils
 
 _AGENT_CACHE = {"ts": 0.0, "napcat": "", "pcqq": "", "name": ""}
-_AGENT_TTL = 3600          # 1 小时刷新一次
-
+_AGENT_TTL = 3600
 
 def _qq_ver_from_registry() -> str:
     """
@@ -824,7 +712,6 @@ def _qq_ver_from_registry() -> str:
                 return m.group(1)
     return ""
 
-
 def _qq_ver_from_exe() -> str:
     """
     读 `QQ.exe` 的文件版本（Win32 版本 API，不依赖 PowerShell）。
@@ -839,7 +726,6 @@ def _qq_ver_from_exe() -> str:
                      "Tencent", "QQNT", "QQ.exe"),
         os.path.join(os.environ.get("ProgramData", ""), "Tencent",
                      "QQNT", "QQ.exe"),
-        # ★ 非默认盘（D/E/F…）也扫一遍 —— 用户常把 QQ 装在这里
         r"D:\QQ\NT\QQ.exe", r"E:\QQ\NT\QQ.exe", r"F:\QQ\NT\QQ.exe",
         r"D:\Tencent\QQNT\QQ.exe", r"E:\Tencent\QQNT\QQ.exe",
         r"D:\*\NT\QQ.exe", r"E:\*\NT\QQ.exe",
@@ -853,7 +739,6 @@ def _qq_ver_from_exe() -> str:
             if v:
                 return v
     return ""
-
 
 def _file_version(path: str) -> str:
     """用 Win32 版本 API 读文件版本；失败返回空串"""
@@ -891,14 +776,12 @@ def _file_version(path: str) -> str:
         sub = "\\StringFileInfo\\%04x%04x\\FileVersion" % (tr[0], tr[1])
         if not _query(buf, sub, ctypes.byref(pv), ctypes.byref(ln)):
             return ""
-        # ★ wstring_at 会把结尾的 \x00 也带出来，必须 strip
         s = ctypes.wstring_at(pv, ln.value).replace("\x00", "").strip()
         m = re.match(r"(\d+(?:\.\d+){1,3})", s)
         return m.group(1) if m else ""
     except Exception as e:
         logger.debug(f"[apix-meme] 读文件版本失败（{path}）: {e}")
         return ""
-
 
 def _read_installed_qq_version() -> str:
     """
@@ -911,15 +794,12 @@ def _read_installed_qq_version() -> str:
     ★★ 1.7.6：原来只做 ③ 且**写死 C 盘路径**，用户把 QQ 装在
       `D:\\QQ\\NT` 时永远读不到 -> 电脑状态显示「未知」（用户反馈）。
     """
-    # ① 注册表
     v = _qq_ver_from_registry()
     if v:
         return v
-    # ② QQ.exe 文件版本
     v = _qq_ver_from_exe()
     if v:
         return v
-    # ③ versions 目录（含非默认盘）
     import glob as _glob
     pats = [
         r"C:\Program Files\Tencent\QQNT\versions\*",
@@ -946,27 +826,10 @@ def _read_installed_qq_version() -> str:
             logger.debug(f"[apix-meme] 读 QQ 安装版本失败（{pat}）: {e}")
     return best
 
-
 def get_napcat_version() -> str:
     """NapCat 版本（来自 OneBot get_version_info 的缓存）"""
     return _AGENT_CACHE.get("napcat", "") or "未知"
 
-
-# ============================================================
-# ★★ 1.7.6：本地「机器人框架」版本
-# ------------------------------------------------------------
-# 用户要求：把框架版本插在「NapCat版本」**上一行**，并算在版本显示里，
-#   后台可单独开关。
-#
-# ★ 它是**本地已安装的框架**版本（读 exe 的文件版本），
-#   和「NapCat版本」（协议端接口自报的内核版本）是两回事 ——
-#   所以单独一行，不去改名 NapCat 那行。
-#
-# 按顺序探测，命中第一个就返回：
-#   萌QNT      D:\萌Q\MQNT.exe                  （ProductName「萌QNT框架」）
-#   NapCatQQ   D:\NapCatQQ Desktop\NapCatQQ-Desktop.exe
-#   通用兜底    后台可自己填 exe 路径（cfg: framework_version_exe）
-# ============================================================
 FRAMEWORK_CANDIDATES = [
     ("萌QNT", [r"D:\萌Q\MQNT.exe", r"E:\萌Q\MQNT.exe", r"C:\萌Q\MQNT.exe",
                r"D:\*\MQNT.exe", r"E:\*\MQNT.exe"]),
@@ -978,8 +841,7 @@ FRAMEWORK_CANDIDATES = [
         r"D:\*\NapCatQQ Desktop\NapCatQQ-Desktop.exe"]),
 ]
 _FW_CACHE = {"ts": 0.0, "name": "", "ver": ""}
-_FW_TTL = 600           # 10 分钟（框架版本不会变，不用频繁读盘）
-
+_FW_TTL = 600
 
 def get_framework_info(force: bool = False) -> tuple:
     """
@@ -992,7 +854,6 @@ def get_framework_info(force: bool = False) -> tuple:
             (now - _FW_CACHE["ts"]) < _FW_TTL:
         return _FW_CACHE["name"], _FW_CACHE["ver"]
     name, ver = "", ""
-    # ① 后台指定的 exe 优先
     try:
         _p = str(_read_plugin_cfg().get("framework_version_exe", "")
                  or "").strip()
@@ -1028,7 +889,6 @@ def get_framework_info(force: bool = False) -> tuple:
     _FW_CACHE["ver"] = ver
     return name, ver
 
-
 def _framework_name_of(path: str) -> str:
     """按 exe 路径猜框架名（找不到就用文件夹名）"""
     up = str(path or "").upper()
@@ -1040,7 +900,6 @@ def _framework_name_of(path: str) -> str:
         return os.path.basename(os.path.dirname(path)) or ""
     except Exception:
         return ""
-
 
 def get_framework_version_str() -> str:
     """
@@ -1054,7 +913,6 @@ def get_framework_version_str() -> str:
     name, ver = get_framework_info()
     if not ver:
         return ""
-    # 只保留前两段：7.6.0.0 -> 7.6 ；9.9.33.52230 -> 9.9
     try:
         _parts = [x for x in str(ver).split(".") if x != ""]
         if len(_parts) >= 2:
@@ -1065,17 +923,14 @@ def get_framework_version_str() -> str:
         pass
     return f"{name} {ver}" if name else ver
 
-
 def get_pcqq_version() -> str:
     """PCQQ（QQ 客户端）版本：先用 OneBot 缓存，再退回读安装目录"""
     v = _AGENT_CACHE.get("pcqq", "")
     return v or _read_installed_qq_version() or "未知"
 
-
 def get_agent_name() -> str:
     """协议端名称（NapCat / LLOneBot / Lagrange …）"""
     return _AGENT_CACHE.get("name", "") or "未知"
-
 
 def _client_from_plugin(plugin):
     """从插件 context 里挖出 aiocqhttp 的 CQHttp 客户端（拿不到返回 None）"""
@@ -1104,7 +959,6 @@ def _client_from_plugin(plugin):
         except Exception:
             continue
     return None
-
 
 async def refresh_agent_versions(event=None, force: bool = False,
                                  plugin=None) -> dict:
@@ -1182,7 +1036,6 @@ async def refresh_agent_versions(event=None, force: bool = False,
         pass
     return dict(_AGENT_CACHE)
 
-
 def get_beijing_time() -> str:
     """北京时间（YYYY-MM-DD HH:MM:SS 周X）"""
     try:
@@ -1196,7 +1049,6 @@ def get_beijing_time() -> str:
         return now.strftime("%Y-%m-%d %H:%M:%S") + f" 周{wd}"
     except Exception:
         return "未知"
-
 
 async def collect_runtime_status(event=None, group_id: str = None,
                                  cfg: dict = None,
@@ -1226,19 +1078,13 @@ async def collect_runtime_status(event=None, group_id: str = None,
     """
     cfg = cfg if isinstance(cfg, dict) else _read_plugin_cfg()
 
-    # ★ 先问一次协议端版本（有 1 小时缓存，不会每次都问）
     try:
         await refresh_agent_versions(event, plugin=plugin)
     except Exception:
         logger.debug("[apix-meme] 刷新协议端版本失败", exc_info=True)
 
-    # ★★ 1.7.6：电脑状态标题**不再单独配置**。
-    #   前缀由「菜单指令 → 全局标题前缀」统一控制，
-    #   这里只给标题正文（不写前缀），避免出现两处配置打架。
-    #   （老的 cmd_status_title 若还填着，也照样归一，兼容老配置。）
     _raw_title = str(_cfg_text(cfg, "cmd_status_title", "") or "").strip()
     _t = _raw_title.strip("=＝·・-—─━ \t")
-    # ★ 去掉可能残留的老前缀（用户以前在标题里写死的前缀）
     _pfx = getattr(_path_utils, "TITLE_PREFIX", "") or ""
     _OLDS = ("铁剑娘系统：", "自定义娱乐：", "鸡鸡娱乐系统：",
              "铁剑娘系统:", "自定义娱乐:", "鸡鸡娱乐系统:")
@@ -1252,7 +1098,6 @@ async def collect_runtime_status(event=None, group_id: str = None,
     show_basic = _cfg_bool(cfg, "cmd_status_show_basic", True)
     show_gid = show_basic and _cfg_bool(cfg, "cmd_status_show_gid", True)
     show_qq = show_basic and _cfg_bool(cfg, "cmd_status_show_bot_qq", True)
-    # 版本：总开关 + 每一项各自开关
     show_ver = show_basic and _cfg_bool(cfg, "cmd_status_show_version", True)
     show_ver_plugin = show_ver and _cfg_bool(
         cfg, "cmd_status_show_ver_plugin", True)
@@ -1260,8 +1105,6 @@ async def collect_runtime_status(event=None, group_id: str = None,
         cfg, "cmd_status_show_ver_astrbot", True)
     show_ver_napcat = show_ver and _cfg_bool(
         cfg, "cmd_status_show_ver_napcat", True)
-    # ★★ 1.7.6：本地框架版本（萌QNT / NapCatQQ Desktop），单独开关，
-    #   算在「版本」这一组里（总开关关掉它也不显示）。
     show_ver_framework = show_ver and _cfg_bool(
         cfg, "cmd_status_show_ver_framework", True)
     show_ver_pcqq = show_ver and _cfg_bool(
@@ -1272,12 +1115,10 @@ async def collect_runtime_status(event=None, group_id: str = None,
     show_uptime = _cfg_bool(cfg, "cmd_status_show_uptime", True)
     show_mem = _cfg_bool(cfg, "cmd_status_show_mem", True)
     show_disk = _cfg_bool(cfg, "cmd_status_show_disk", True)
-    # ★★ 1.7.6 新增（都来自 外部监控服务，可后台单独开关）
     show_net = _cfg_bool(cfg, "cmd_status_show_net", True)
     show_traffic = _cfg_bool(cfg, "cmd_status_show_traffic", True)
     show_gpu = _cfg_bool(cfg, "cmd_status_show_gpu", False)
 
-    # ---- ① 群号 ----
     if show_gid:
         if group_id:
             gid = str(group_id).strip()
@@ -1285,17 +1126,13 @@ async def collect_runtime_status(event=None, group_id: str = None,
             gid = get_group_id(event) if event is not None else ""
         lines.append(f"当前群群号：{gid or '未知'}")
 
-    # ---- ② 机器人 QQ ----
     if show_qq:
         lines.append(f"机器人QQ：{get_bot_id(event)}")
 
-    # ---- ③ 版本（每一项可单独开关）----
     if show_ver_plugin:
         lines.append(f"插件版本：{PLUGIN_VERSION or '未知'}")
     if show_ver_astrbot:
         lines.append(f"AstrBot版本：{get_astrbot_version()}")
-    # ★★ 1.7.6：框架版本插在「NapCat版本」**上一行**
-    #   （本地已安装框架，如 萌QNT 7.6.0.0；读不到就整行不显示）
     if show_ver_framework:
         _fw = get_framework_version_str()
         if _fw:
@@ -1307,12 +1144,10 @@ async def collect_runtime_status(event=None, group_id: str = None,
     if show_ver_os:
         lines.append(f"系统版本：{get_os_version()}")
 
-    # ---- ④ 消息统计 ----
     if show_msg:
         lines.append(f"收到消息数量：{GLOBAL_STATS['recv']} 条")
         lines.append(f"发出消息数量：{GLOBAL_STATS['send']} 条")
 
-    # ---- 开机时长 ----
     if show_uptime:
         uptime = get_pc_uptime_seconds()
         if uptime > 0:
@@ -1320,8 +1155,6 @@ async def collect_runtime_status(event=None, group_id: str = None,
         else:
             lines.append("电脑开机时间：⚠️ 未安装 psutil，无法获取")
 
-    # ---- CPU（★ 1.7.6：**每一项各自独立开关**）----
-    #   cpu 总开关关掉 -> 下面所有 CPU 细分项都不显示
     show_cpu = _cfg_bool(cfg, "cmd_status_show_cpu", True)
     _cpu_items = [
         ("cmd_status_show_cpu_load_rate", "CPU占用",
@@ -1348,16 +1181,12 @@ async def collect_runtime_status(event=None, group_id: str = None,
             if not _cfg_bool(cfg, _key, True):
                 continue
             try:
-                # ★★ 审核整改：这些取数函数里有**同步阻塞 IO**
-                #   （外部监控服务 的 同步网络取数、CPU 分核采样的
-                #     睡眠等待），直接在事件循环里调会卡住整个机器人。
-                #   统一丢到线程池执行。
                 _val = str(await asyncio.to_thread(_fn) or "").strip()
             except Exception:
                 logger.debug(f"[apix-meme] 取 {_label} 失败", exc_info=True)
                 continue
             if not _val:
-                continue          # 没数据就不显示（如 Windows 无负载）
+                continue
             if _multi:
                 lines.append(f"{_label}：")
                 for _l in _val.splitlines():
@@ -1365,40 +1194,26 @@ async def collect_runtime_status(event=None, group_id: str = None,
             else:
                 lines.append(f"{_label}：{_val}")
 
-    # ---- 运行内存占用 ----
-    # ★★ 1.7.6：和「硬盘占用」一套排版 —— 标签独占一行，
-    #   明细缩进换行。以前 `运行内存占用：38.0% 已用 11.89GB / 共 31.30GB`
-    #   挤在一行会被卡片自动折行，折在数字中间看着很乱（用户反馈）。
     if show_mem:
         lines.append("运行内存占用：")
-        # ★ 审核整改：内含 外部监控服务 同步请求，丢线程池
         _mem = await asyncio.to_thread(get_memory_usage_str)
         for line in str(_mem or "").splitlines():
             lines.append(f"  {line}")
 
-    # ---- 硬盘占用 ----
-    # ★★ 1.7.6：明细里「盘符」在顶格、「占用」带 2 空格缩进；
-    #   这里给每行统一再加 2 空格，得到「盘符缩进一层、明细再深一层」。
     if show_disk:
         lines.append("硬盘占用：")
         for line in get_disk_usage_str().splitlines():
             lines.append(f"  {line}" if line.strip() else line)
 
-    # ---- 网络速率（★ 1.7.6 新增，在硬盘下面，同一套排版）----
     if show_net:
-        # ★ 走线程池（psutil 取网卡计数是阻塞调用）
         _net = await asyncio.to_thread(get_net_speed_str)
         if _net:
             lines.append("网络速率：")
             for line in str(_net).splitlines():
                 lines.append(f"  {line}")
 
-    # ---- 流量统计 ----
-    # ★★ 1.1：**已移除**（原来取 外部监控服务 的 DATA.DayUp/DayDown，
-    #   本机 psutil 拿不到「今日流量」，所以这一项不再提供）
     _ = show_traffic
 
-    # ---- ⑤ 北京时间（★ 固定放在最下面）----
     if show_time:
         lines.append(f"北京时间：{get_beijing_time()}")
 

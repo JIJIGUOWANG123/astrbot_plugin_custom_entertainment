@@ -2,13 +2,11 @@ from .group_filter import (parse_gid_whitelist, group_allowed, is_group_allowed,
 import os
 import json
 
-
 def _parse_names(raw: str) -> list:
     if not raw:
         return []
     text = str(raw)
     return [x.strip() for x in text.split(",") if x.strip()]
-
 
 def _parse_lines(raw) -> list:
     if not raw:
@@ -21,7 +19,6 @@ def _parse_lines(raw) -> list:
     else:
         out = str(raw).splitlines()
     return [x.strip() for x in out if x.strip() and not x.strip().startswith("#")]
-
 
 def get_group_id(event) -> str:
     try:
@@ -39,7 +36,6 @@ def get_group_id(event) -> str:
     except Exception:
         pass
     return ""
-
 
 class WordReplyModule:
     """
@@ -60,9 +56,7 @@ class WordReplyModule:
     def reload(self, cfg: dict):
         self.enable = bool(cfg.get("word_reply_enable", True))
 
-        # ★ 群号黑名单：留空 = 所有群都生效；填了群号则这些群不生效
         self.allowed_groups = parse_gid_whitelist(cfg.get("word_reply_groups", ""))
-        # 兼容旧的黑/白名单配置
         self.group_mode = str(cfg.get("word_reply_group_mode", "off") or "off").strip().lower()
         if self.group_mode not in ("off", "whitelist", "blacklist"):
             self.group_mode = "off"
@@ -89,7 +83,6 @@ class WordReplyModule:
         """群号黑名单：留空 = 所有群都生效；填了群号则这些群不生效"""
         if self.allowed_groups:
             return group_allowed(group_id, self.allowed_groups)
-        # 未填新白名单：回退到旧的黑/白名单逻辑
         return is_group_allowed(
             group_id, self.group_mode, self.group_whitelist, self.group_blacklist
         )

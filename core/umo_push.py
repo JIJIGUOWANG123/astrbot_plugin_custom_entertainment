@@ -1,7 +1,6 @@
 import time
 from astrbot.api import logger
 
-
 def get_event_umo(event) -> str:
     """尽最大努力从事件里取出 unified_msg_origin"""
     try:
@@ -25,7 +24,6 @@ def get_event_umo(event) -> str:
     except Exception:
         pass
     return ""
-
 
 def get_platform_id(context) -> str:
     """扫描 AstrBot context，返回首个 aiocqhttp 平台实例 ID，兜底 default"""
@@ -79,7 +77,6 @@ def get_platform_id(context) -> str:
         return candidates[0][0]
     return "default"
 
-
 def is_umo_valid(context, umo: str) -> bool:
     """尝试判断 UMO 是否能被 AstrBot 识别到 platform；识别不到也默认放行"""
     if not umo:
@@ -104,7 +101,6 @@ def is_umo_valid(context, umo: str) -> bool:
         return True
     except Exception:
         return True
-
 
 def build_result(text: str, images=None):
     """
@@ -135,7 +131,6 @@ def build_result(text: str, images=None):
         r = _R()
         r.chain = chain
         return r
-
 
 async def push_message(context, group_id: str, text: str, umo: str = "",
                        hourly_chime_module=None, minecraft_module=None,

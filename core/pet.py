@@ -37,10 +37,8 @@ from astrbot.api import logger
 _LOCK = threading.RLock()
 
 ELEMENTS = ["金", "木", "水", "火", "土"]
-# 五行相克：key 克 value
 COUNTER = {"金": "木", "木": "土", "土": "水", "水": "火", "火": "金"}
 MAX_LEVEL = 100
-
 
 def _parse_names(raw) -> list:
     if not raw:
@@ -53,10 +51,8 @@ def _parse_names(raw) -> list:
     import re as _re
     return [x.strip() for x in _re.split(r"[,，]", str(raw)) if x.strip()]
 
-
 def _now() -> float:
     return time.time()
-
 
 def _fmt_cd(seconds: float) -> str:
     seconds = max(0, int(seconds))
@@ -68,12 +64,7 @@ def _fmt_cd(seconds: float) -> str:
         return f"{m} 分 {s} 秒"
     return f"{s} 秒"
 
-
-# ============================================================
-# 默认宠物图鉴（约 60 种，五行分配好）
-# ============================================================
 DEFAULT_CATALOG = [
-    # ---- 金 ----
     ("小铁鼠", "爱啃铁的机灵小鼠", 100, "金"),
     ("铜铃猫", "脖子上挂着铜铃", 180, "金"),
     ("银翼鸽", "翅膀泛着银光", 260, "金"),
@@ -86,7 +77,6 @@ DEFAULT_CATALOG = [
     ("黄金龙", "传说中的金龙", 1500, "金"),
     ("钛合金狼", "改造过的机械狼", 1200, "金"),
     ("星尘隼", "羽毛里藏着星尘", 1800, "金"),
-    # ---- 木 ----
     ("嫩芽兔", "耳朵像两片叶子", 100, "木"),
     ("藤蔓蛇", "会缠绕猎物的绿蛇", 180, "木"),
     ("蘑菇精", "顶着大蘑菇的小妖精", 260, "木"),
@@ -99,7 +89,6 @@ DEFAULT_CATALOG = [
     ("世界树苗", "会长成参天大树", 1500, "木"),
     ("食人花妖", "笑得很甜但要吃人", 1200, "木"),
     ("翠羽孔雀", "开屏时满室生春", 1800, "木"),
-    # ---- 水 ----
     ("水泡鱼", "一戳就破的小鱼", 100, "水"),
     ("蟹老板", "横行霸道的小螃蟹", 180, "水"),
     ("海螺姑娘", "能把声音装进壳里", 260, "水"),
@@ -112,7 +101,6 @@ DEFAULT_CATALOG = [
     ("沧海鲲", "一尾可化鹏", 1500, "水"),
     ("珍珠贝妖", "壳里养着夜明珠", 1200, "水"),
     ("极地冰狐", "呼气成冰", 1800, "水"),
-    # ---- 火 ----
     ("火苗蜥", "尾巴上顶着火苗", 100, "火"),
     ("炭烤猪", "全身暖烘烘", 180, "火"),
     ("熔岩犬", "皮肤像流动的岩浆", 260, "火"),
@@ -125,7 +113,6 @@ DEFAULT_CATALOG = [
     ("涅槃凤", "浴火重生的神鸟", 1500, "火"),
     ("炉心猫", "肚子里有个小火炉", 1200, "火"),
     ("焚云麒麟", "脚踏火云", 1800, "火"),
-    # ---- 土 ----
     ("泥巴猪", "喜欢在泥里打滚", 100, "土"),
     ("石子鼠", "会扔小石子", 180, "土"),
     ("沙丘蜥", "能在沙里游泳", 260, "土"),
@@ -140,7 +127,6 @@ DEFAULT_CATALOG = [
     ("厚土麒麟", "背上驮着一片土地", 1800, "土"),
 ]
 
-# 默认事件（宠物上班）—— 元组格式：(事件, 经验下限, 经验上限, 积分下限, 积分上限)
 DEFAULT_WORK_EVENTS = [
     ("在街角发传单", 5, 30, 310, 1200),
     ("帮邻居看店", 10, 50, 310, 1200),
@@ -152,7 +138,6 @@ DEFAULT_WORK_EVENTS = [
     ("做直播当网红", 40, 160, 360, 1400),
     ("帮侦探找线索", 35, 140, 370, 1450),
     ("上山采药", 45, 180, 380, 1500),
-    # ---- 服务业（稳定、低风险）----
     ("在奶茶店摇奶茶", 12, 55, 480, 1500),
     ("给火锅店端盘子", 16, 68, 500, 1550),
     ("在早餐铺包包子", 14, 60, 510, 1600),
@@ -169,7 +154,6 @@ DEFAULT_WORK_EVENTS = [
     ("在电影院验票", 23, 95, 550, 2150),
     ("帮健身房看前台", 21, 88, 560, 2200),
     ("给蛋糕店裱花", 27, 110, 570, 2250),
-    # ---- 技术活（中等）----
     ("修电脑装系统", 48, 185, 590, 2300),
     ("给网站写代码", 70, 260, 1440, 4500),
     ("当游戏主播带队上分", 60, 235, 600, 2350),
@@ -183,7 +167,6 @@ DEFAULT_WORK_EVENTS = [
     ("做手办模型上色", 66, 250, 1470, 4600),
     ("给餐厅设计菜单", 40, 158, 930, 2900),
     ("写一篇公众号推文", 38, 150, 940, 2950),
-    # ---- 体力活（累但赚）----
     ("给搬家公司扛冰箱", 55, 210, 980, 3050),
     ("在建筑工地扎钢筋", 75, 270, 1500, 4700),
     ("去果园摘一整天果子", 44, 170, 990, 3100),
@@ -194,7 +177,6 @@ DEFAULT_WORK_EVENTS = [
     ("帮渔民拉一网鱼", 56, 215, 930, 3650),
     ("在养殖场喂猪", 43, 168, 940, 3700),
     ("去伐木场搬木头", 61, 232, 970, 3800),
-    # ---- 特殊 / 高回报（有脾气）----
     ("给大熊猫当一天铲屎官", 80, 290, 1600, 5000),
     ("当剧组群众演员", 36, 145, 980, 3850),
     ("给演唱会当安保", 54, 208, 1010, 3950),
@@ -203,11 +185,6 @@ DEFAULT_WORK_EVENTS = [
     ("给五星酒店做试睡员", 76, 275, 1660, 5200),
     ("当气象站观测员", 33, 138, 1050, 4100),
     ("给马戏团当替补演员", 86, 300, 1570, 6150),
-    # ============================================================
-    # 1.7.6 扩充：又加了 60 个上班事件，并把整体收益提上来
-    #   （原来太抠：58 条里积分上限最高才 300、大多只有几十）
-    # ============================================================
-    # ---- 日常打工（低门槛，但比以前给得多）----
     ("去菜市场帮人看摊", 8, 40, 1060, 4150),
     ("给早餐车卖豆浆油条", 9, 42, 1080, 4250),
     ("在写字楼送桶装水", 16, 70, 1590, 6250),
@@ -223,7 +200,6 @@ DEFAULT_WORK_EVENTS = [
     ("给剧本杀店当NPC", 26, 105, 2320, 7250),
     ("在溜冰场租鞋处值班", 18, 76, 1750, 6850),
     ("给娃娃机补货", 14, 62, 1780, 7000),
-    # ---- 手艺活（收入明显更高）----
     ("给老房子刷墙", 45, 180, 2500, 7800),
     ("上门通下水道", 42, 170, 2450, 7650),
     ("给木门换锁芯", 40, 165, 2400, 7500),
@@ -238,7 +214,6 @@ DEFAULT_WORK_EVENTS = [
     ("打一副银饰手镯", 66, 260, 2680, 10500),
     ("给民宿做布草更换", 38, 155, 2370, 7400),
     ("给老照片做修复", 62, 245, 2590, 10150),
-    # ---- 技术活（高薪）----
     ("给小店做收银系统", 95, 370, 4000, 12500),
     ("帮公司做数据报表", 88, 345, 3660, 11450),
     ("给应用做界面设计", 100, 390, 4140, 12950),
@@ -251,7 +226,6 @@ DEFAULT_WORK_EVENTS = [
     ("帮人做电商详情页", 86, 338, 3600, 11250),
     ("给无人机做航拍测绘", 118, 460, 3940, 15450),
     ("调一台三坐标测量仪", 125, 490, 4000, 15700),
-    # ---- 体力活（累但赚得多）----
     ("给高层擦外窗", 130, 510, 4070, 15950),
     ("在物流园开叉车", 96, 375, 4080, 12750),
     ("给冷库做卸货", 84, 330, 2820, 11050),
@@ -262,7 +236,6 @@ DEFAULT_WORK_EVENTS = [
     ("给演出搭一整天台子", 100, 392, 4220, 13200),
     ("去田里收一季稻子", 92, 360, 3940, 12300),
     ("给矿山做安全巡查", 150, 590, 4280, 16800),
-    # ---- 特殊 / 高回报（看运气也看胆量）----
     ("给顶流明星当一天替身", 160, 620, 4360, 17100),
     ("去无人区拍纪录片", 175, 680, 5790, 18100),
     ("当一回深海潜水员", 190, 740, 6020, 18800),
@@ -277,10 +250,7 @@ DEFAULT_WORK_EVENTS = [
     ("给金库做一天安保", 240, 940, 6720, 21000),
 ]
 
-# 默认事件（宠物冒险）—— (事件, 经验下限, 经验上限, 积分下限, 积分上限, 额外掉血)
-#   额外掉血是「在全局 pet_adventure_hp_cost 之外」多扣的血，让危险事件更有代价
 DEFAULT_ADVENTURE_EVENTS = [
-    # ---- 探索类（安全，稳收益）----
     ("钻进雾气弥漫的森林深处", 5, 40, 1, 6, 0),
     ("爬上一座陡峭的小山看日落", 6, 45, 1, 6, 1),
     ("在河边发现一个隐蔽的洞穴", 8, 55, 1, 8, 2),
@@ -296,7 +266,6 @@ DEFAULT_ADVENTURE_EVENTS = [
     ("在黄昏时分的海边散步", 6, 42, 1, 6, 0),
     ("探访山谷里的回声壁", 14, 80, 2, 11, 2),
     ("在天坑边往下张望", 15, 85, 3, 12, 3),
-    # ---- 寻宝类（收益高，风险中）----
     ("挖开一块松动的石板", 20, 105, 4, 15, 2),
     ("潜进水下的沉船残骸", 28, 130, 5, 18, 5),
     ("撬开一只生锈的旧木箱", 18, 98, 3, 14, 1),
@@ -309,7 +278,6 @@ DEFAULT_ADVENTURE_EVENTS = [
     ("在荒废的灯塔顶找到航海图", 29, 134, 5, 19, 5),
     ("钻进蚁丘下的地窖", 22, 112, 4, 15, 4),
     ("挖开雪堆下的旧雪橇", 19, 100, 3, 14, 2),
-    # ---- 奇遇类（看运气）----
     ("遇到一只会说话的老猫头鹰", 40, 165, 7, 24, 2),
     ("被一阵怪风卷到半空", 36, 155, 6, 22, 5),
     ("误入一片时间流速不同的林子", 45, 180, 8, 26, 4),
@@ -320,7 +288,6 @@ DEFAULT_ADVENTURE_EVENTS = [
     ("遇到一只受伤的小兽并救下它", 37, 158, 7, 23, 3),
     ("在沙暴里撞见一座幻影城", 48, 190, 8, 28, 6),
     ("跟着一只白鹿走进雾里", 46, 182, 8, 27, 4),
-    # ---- 危险类（掉血多，回报大）----
     ("和一头野猪正面撞上", 50, 195, 8, 29, 10),
     ("被一群野狼围住", 55, 210, 9, 31, 12),
     ("从崩塌的山道上滚下来", 52, 200, 8, 30, 14),
@@ -333,7 +300,6 @@ DEFAULT_ADVENTURE_EVENTS = [
     ("和一只守宝的岩熊打了一架", 68, 250, 12, 40, 18),
     ("踩空掉进地下暗河", 58, 220, 10, 33, 15),
     ("被山火逼到崖边", 60, 228, 10, 34, 16),
-    # ---- 传说类（稀有高收益）----
     ("在彩虹尽头的树下挖到一只小箱子", 75, 270, 13, 44, 5),
     ("撞见一场只持续三秒的流星雨", 80, 285, 14, 46, 3),
     ("在古战场捡到一柄断剑", 78, 278, 13, 45, 8),
@@ -343,14 +309,12 @@ DEFAULT_ADVENTURE_EVENTS = [
     ("在极光下捡到一颗星屑", 100, 340, 19, 60, 6),
 ]
 
-# 默认物品
 DEFAULT_ITEMS = [
     ("体力恢复药剂", 50, "mp", 50, "恢复 50 点体力"),
     ("血量恢复药剂", 50, "hp", 50, "恢复 50 点血量"),
     ("高级体力药剂", 150, "mp", 120, "恢复 120 点体力"),
     ("高级血量药剂", 150, "hp", 120, "恢复 120 点血量"),
 ]
-
 
 class PetModule:
     """宠物系统（每群独立）"""
@@ -366,10 +330,8 @@ class PetModule:
         self.data_path = data_path
 
         self.enable = True
-        # ★ 积分显示名称（由 main.py 注入，后台可改，如「金币」）
         self.score_name = "积分"
 
-        # 指令名（都可在后台自定义多个）
         self.cmd_buy = ["购买宠物", "买宠物"]
         self.cmd_mine = ["我的宠物"]
         self.cmd_sell = ["出售宠物"]
@@ -387,22 +349,19 @@ class PetModule:
         self.cmd_item_buy = ["购买物品", "买物品"]
         self.cmd_item_use = ["使用物品", "喂药"]
 
-        # 冷却（小时）
         self.cd_adventure = 2.0
         self.cd_rest = 1.0
         self.cd_work = 4.0
         self.cd_duel = 1.0
 
-        # 数值
-        self.exp_per_level = 100          # 每级基础经验（实际 = base * lv）
+        self.exp_per_level = 100
         self.adventure_exp_min = 1
         self.adventure_exp_max = 200
         self.adventure_mp_cost = 5
         self.adventure_hp_cost = 5
-        self.levelup_card_rate = 5        # 直接升一级的概率 %
-        self.counter_bonus = 30           # 五行克制伤害加成 %
+        self.levelup_card_rate = 5
+        self.counter_bonus = 30
 
-        # 群号黑名单
         self.allowed_groups = []
         self.group_mode = "off"
         self.group_whitelist = []
@@ -416,9 +375,6 @@ class PetModule:
         self.groups = {}
         self._load()
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         cfg = cfg if isinstance(cfg, dict) else {}
         self.enable = bool(cfg.get("pet_enable", True))
@@ -451,7 +407,6 @@ class PetModule:
                 v = float(default)
             return max(lo, v)
 
-        # ★ 五行是否在购买时随机分配（默认开启）
         self.elem_random_on_buy = bool(cfg.get("pet_elem_random_on_buy", True))
 
         self.cd_adventure = _f("pet_cd_adventure_hours", 2.0)
@@ -497,7 +452,6 @@ class PetModule:
         self.group_whitelist = self._lines(cfg.get("pet_group_whitelist", ""))
         self.group_blacklist = self._lines(cfg.get("pet_group_blacklist", ""))
 
-        # 宠物图鉴（后台 template_list）
         raw = cfg.get("pet_list", [])
         cat = []
         if isinstance(raw, list):
@@ -525,7 +479,6 @@ class PetModule:
             for (n, d, p, e) in DEFAULT_CATALOG
         ]
 
-        # 上班事件
         raw_ev = cfg.get("pet_work_events", [])
         evs = []
         if isinstance(raw_ev, list):
@@ -553,7 +506,6 @@ class PetModule:
             for (e, a, b, c, d) in DEFAULT_WORK_EVENTS
         ]
 
-        # 冒险事件（可后台增删改；空则用内置默认）
         raw_adv = cfg.get("pet_adventure_events", [])
         advs = []
         if isinstance(raw_adv, list):
@@ -583,7 +535,6 @@ class PetModule:
             for (e, a, b, c, d, h) in DEFAULT_ADVENTURE_EVENTS
         ]
 
-        # 物品
         raw_item = cfg.get("pet_item_list", [])
         its = []
         if isinstance(raw_item, list):
@@ -636,9 +587,6 @@ class PetModule:
             group_id, self.group_mode, self.group_whitelist, self.group_blacklist
         )
 
-    # ============================================================
-    # 指令匹配
-    # ============================================================
     @staticmethod
     def _hit(text: str, names):
         for n in (names or []):
@@ -659,9 +607,6 @@ class PetModule:
                     return _carg
         return None
 
-    # ============================================================
-    # 数据层
-    # ============================================================
     @staticmethod
     def _gid(group_id) -> str:
         g = str(group_id or "").strip()
@@ -718,9 +663,6 @@ class PetModule:
             m[uid] = d
         return d
 
-    # ============================================================
-    # 宠物基础计算
-    # ============================================================
     def _need_exp(self, lv: int) -> int:
         """升到下一级所需经验（随等级递增，100 级封顶）"""
         lv = max(1, int(lv))
@@ -760,7 +702,6 @@ class PetModule:
     def _new_pet(self, entry: dict, owner_id: str = "") -> dict:
         name = str(entry.get("name", ""))
         owner = str(owner_id or "")
-        # 五行也是购买时才定的（商店/图鉴都不展示）
         elem = self.pick_elem(name, owner, str(entry.get("elem", "金") or "金"))
         st = self._base_stats(int(entry.get("price", 100)), elem, name, owner)
         return {
@@ -798,7 +739,6 @@ class PetModule:
             p["exp"] = int(p.get("exp", 0)) - need
             p["lv"] = int(p.get("lv", 1)) + 1
             ups += 1
-            # 随机增加 2~3 项属性
             gains = random.sample(
                 ["hp_max", "mp_max", "atk", "df"], k=random.randint(2, 3)
             )
@@ -811,7 +751,6 @@ class PetModule:
                     p[g] = int(p.get(g, 0)) + random.randint(1, 3)
                 else:
                     p[g] = int(p.get(g, 0)) + random.randint(1, 3)
-            # 升级回满
             p["hp"] = int(p.get("hp_max", 100))
             p["mp"] = int(p.get("mp_max", 50))
         return ups
@@ -826,9 +765,6 @@ class PetModule:
     def _set_cd(self, p: dict, key: str, hours: float):
         p[key] = _now() + float(hours) * 3600.0
 
-    # ============================================================
-    # 指令参数解析
-    # ============================================================
     def parse_buy(self, text):
         return self._arg(text, self.cmd_buy)
 
@@ -888,9 +824,6 @@ class PetModule:
     def parse_item_use(self, text):
         return self._arg(text, self.cmd_item_use)
 
-    # ============================================================
-    # 图鉴
-    # ============================================================
     def _find_entry(self, name: str):
         name = str(name or "").strip()
         if not name:
@@ -913,12 +846,7 @@ class PetModule:
                 return str(uid)
         return ""
 
-    # ============================================================
-    # 宠物商店 / 购买 / 我的宠物 / 出售 / 放生
-    # ============================================================
     PAGE_SIZE = 20
-    # 「全部宠物一起出勤」时（冒险 / 上班），最多显示几只的详细记录。
-    # 其余用省略号带过 —— 但**所有宠物都会真正结算并保存**。
     BATCH_SHOW = 10
 
     def shop_text(self, group_id, page: int = 1, viewer_id: str = "") -> str:
@@ -932,12 +860,9 @@ class PetModule:
 
         lines = [f"{title_bar(f'宠物商店（第 {page}/{max_page} 页）')}", ""]
         mine = self._upets(group_id, viewer_id) if viewer_id else {}
-        # ★ 每只宠物谁都能买一只，所以不再标注「已被购买」，
-        #   只看「你自己是否已有」（集合提到循环外，避免重复构造）
         mine_names = set(mine.keys())
         for i, e in enumerate(self.catalog[start:end], start=start + 1):
             tag = "（你已拥有）" if e["name"] in mine_names else ""
-            # 不展示五行：属性（含五行）都在购买后才生成，商店里一律不露出
             lines.append(
                 f"{i}. {e['name']} — {e['price']} {self._sn()}{tag}"
             )
@@ -956,8 +881,6 @@ class PetModule:
             return (f"⚠️ 没有叫「{name}」的宠物\n"
                     f"💡 用「{self.cmd_shop[0]}」查看可购买列表")
         pets = self._upets(group_id, user_id)
-        # ★ 每只宠物「谁都能买一只」：只拦「自己已经有了」，
-        #   不再限制别的群友是否已购买。
         if name in pets:
             return (f"⚠️ 你已经拥有「{name}」了\n"
                     f"💡 每人每种宠物限一只，其它宠物可继续购买")
@@ -966,7 +889,6 @@ class PetModule:
         if balance_getter is not None:
             bal = int(balance_getter() or 0)
             if bal < price:
-                # ★ main.py 注入的 short_hint 会显示「钱包 + 银行 = 可用，还差 N」
                 _fn = getattr(self, "short_hint", None)
                 if callable(_fn):
                     try:
@@ -1065,7 +987,7 @@ class PetModule:
             return f"⚠️ 你没有叫「{name}」的宠物"
         p = pets[name]
         price = int(p.get("price", 0))
-        refund = int(price * 0.75)      # 扣除市场价 25%
+        refund = int(price * 0.75)
         del pets[name]
         if balance_setter is not None and balance_getter is not None:
             balance_setter(int(balance_getter() or 0) + refund)
@@ -1090,9 +1012,6 @@ class PetModule:
             f"💡 放生不返还{self._sn()}",
         ])
 
-    # ============================================================
-    # 管理员：添加 / 删除宠物
-    # ============================================================
     def add_pet(self, arg: str) -> str:
         if not arg:
             return ("用法：添加宠物 名字|介绍|价格|属性\n"
@@ -1150,9 +1069,6 @@ class PetModule:
         except Exception:
             logger.exception("[pet] 写回宠物图鉴失败")
 
-    # ============================================================
-    # 宠物查看
-    # ============================================================
     def view_text(self, group_id, user_id, name: str, owner_name: str = "") -> str:
         pets = self._upets(group_id, user_id)
         if not pets:
@@ -1164,9 +1080,6 @@ class PetModule:
             return (f"⚠️ 你没有叫「{name}」的宠物\n"
                     f"💡 已拥有：{'、'.join(pets.keys())}")
         need = self._need_exp(int(p.get("lv", 1)))
-        # ★ 1.7.6：标题**不带名字**（用户要求），名字只放在属性行。
-        #   以前写成 title_bar('宠物查看：{name}') —— 占位符在**单引号**里，
-        #   f-string 不替换，用户看到字面量 `{name}`（bug，已修）。
         lines = [
             f"{title_bar('宠物查看')}",
             "",
@@ -1190,9 +1103,6 @@ class PetModule:
             lines.append(f"⏳ {label}冷却：{'就绪' if left <= 0 else _fmt_cd(left)}")
         return "\n".join(lines)
 
-    # ============================================================
-    # 宠物冒险
-    # ============================================================
     def _adventure_one(self, name: str, p: dict, score_getter=None,
                        score_setter=None):
         """
@@ -1210,12 +1120,10 @@ class PetModule:
         if left > 0:
             return (f"·「{name}」还在休息（剩 {_fmt_cd(left)}）", "cd")
 
-        # ★ 先挑一个冒险事件（后台可增删改）
         if not self.adventure_events:
             return ("⚠️ 后台还没有配置冒险事件", "noevent")
         adv = random.choice(self.adventure_events)
         mp_cost = self.adventure_mp_cost
-        # 事件自带的额外掉血叠加在全局掉血之上
         hp_cost = self.adventure_hp_cost + max(0, int(adv.get("hp_cost", 0) or 0))
         if int(p.get("mp", 0)) < mp_cost:
             return (f"·「{name}」体力不足（需 {mp_cost}，现有 "
@@ -1243,7 +1151,6 @@ class PetModule:
             if ups > 1:
                 lines.append(f"   （连升 {ups} 级）")
 
-        # 一定概率掉落直升一级卡
         if random.randint(1, 100) <= self.levelup_card_rate:
             before = int(p.get("lv", 1))
             if before < MAX_LEVEL:
@@ -1274,7 +1181,6 @@ class PetModule:
         if not pets:
             return f"⚠️ 你还没有宠物，先去「{self.cmd_shop[0]}」买一只"
 
-        # 指定了名字：只跑那一只（保持原有输出格式）
         if name:
             p = pets.get(name)
             if not isinstance(p, dict):
@@ -1288,10 +1194,6 @@ class PetModule:
             return (f"{title_bar(f'宠物冒险：{name}')}\n\n{text}\n"
                     f"⏳ 下次冒险需等：{_fmt_cd(self.cd_adventure * 3600)}")
 
-        # 没给名字：全部一起冒险
-        #   ★ 所有宠物都会真正跑一遍（冷却/体力/经验/积分都照常结算并保存），
-        #     只是**输出只显示前 BATCH_SHOW 只**，其余用省略号带过，
-        #     避免宠物多时刷屏。
         blocks, went, skipped = [], 0, 0
         for nm in list(pets.keys()):
             p = pets.get(nm)
@@ -1301,7 +1203,7 @@ class PetModule:
                 nm, p, score_getter, score_setter
             )
             if state == "noevent":
-                return text                      # 后台没配事件，整条中止
+                return text
             blocks.append(text)
             if state == "ok":
                 went += 1
@@ -1324,9 +1226,6 @@ class PetModule:
             lines.append(f"⏳ 下次冒险需等：{_fmt_cd(self.cd_adventure * 3600)}")
         return "\n".join(lines)
 
-    # ============================================================
-    # 宠物休息
-    # ============================================================
     def rest(self, group_id, user_id, name: str = "") -> str:
         pets = self._upets(group_id, user_id)
         if not pets:
@@ -1347,7 +1246,6 @@ class PetModule:
             if left > 0:
                 lines.append(f"· {nm}：还在恢复中（剩 {_fmt_cd(left)}）")
                 continue
-            # 恢复 40% 血量与体力
             hp_add = max(1, int(int(p.get("hp_max", 100)) * 0.4))
             mp_add = max(1, int(int(p.get("mp_max", 50)) * 0.4))
             p["hp"] = min(int(p.get("hp_max", 100)), int(p.get("hp", 0)) + hp_add)
@@ -1362,9 +1260,6 @@ class PetModule:
         lines.append(f"💡 休息冷却：{self.cd_rest} 小时")
         return "\n".join(lines)
 
-    # ============================================================
-    # 宠物决斗
-    # ============================================================
     def _pick_random(self, pets: dict, exclude: str = ""):
         """从宠物里**随机**挑一只（可排除某个名字）。返回 (名字, 数据)"""
         names = [k for k in pets.keys() if k != exclude]
@@ -1395,7 +1290,6 @@ class PetModule:
         if not pets:
             return f"⚠️ {who} 还没有宠物"
 
-        # 按战力从高到低排
         items = sorted(pets.items(), key=lambda kv: self._power(kv[1]),
                        reverse=True)
         lines = [
@@ -1445,12 +1339,10 @@ class PetModule:
         pa, pd = self._power(a), self._power(d)
         bonus_a = self._elem_bonus(a.get("elem", "金"), d.get("elem", "金"))
         bonus_d = self._elem_bonus(d.get("elem", "金"), a.get("elem", "金"))
-        # 胜率：基础 50% + 战力差影响 + 属性克制影响
         ratio = (pa * bonus_a) / max(1.0, (pa * bonus_a + pd * bonus_d))
         win_rate = max(10, min(90, int(ratio * 100)))
         win = random.randint(1, 100) <= win_rate
 
-        # 双方消耗
         a["hp"] = max(1, int(a.get("hp", 1)) - random.randint(5, 20))
         d["hp"] = max(1, int(d.get("hp", 1)) - random.randint(5, 20))
         a["mp"] = max(0, int(a.get("mp", 0)) - 5)
@@ -1490,9 +1382,6 @@ class PetModule:
         lines.append(f"⏳ 决斗冷却：{self.cd_duel} 小时")
         return "\n".join(lines)
 
-    # ============================================================
-    # 宠物上班
-    # ============================================================
     def _work_one(self, name: str, p: dict, score_getter=None,
                   score_setter=None):
         """
@@ -1535,7 +1424,6 @@ class PetModule:
         if not pets:
             return f"⚠️ 你还没有宠物"
 
-        # 指定了名字：只跑那一只（保持原有输出格式）
         if name:
             p = pets.get(name)
             if not isinstance(p, dict):
@@ -1547,9 +1435,6 @@ class PetModule:
             return (f"{title_bar(f'宠物上班：{name}')}\n\n{text}\n"
                     f"⏳ 下次上班需等：{_fmt_cd(self.cd_work * 3600)}")
 
-        # 没给名字：全部一起上班
-        #   ★ 与冒险一致：所有宠物都真正跑一遍并保存，
-        #     但输出只显示前 BATCH_SHOW 只，其余省略号带过。
         blocks, went, skipped = [], 0, 0
         for nm in list(pets.keys()):
             p = pets.get(nm)
@@ -1557,7 +1442,7 @@ class PetModule:
                 continue
             text, state = self._work_one(nm, p, score_getter, score_setter)
             if state == "noevent":
-                return text                      # 后台没配事件，整条中止
+                return text
             blocks.append(text)
             if state == "ok":
                 went += 1
@@ -1580,9 +1465,6 @@ class PetModule:
             lines.append(f"⏳ 下次上班需等：{_fmt_cd(self.cd_work * 3600)}")
         return "\n".join(lines)
 
-    # ============================================================
-    # 物品商店 / 购买 / 使用
-    # ============================================================
     def item_shop_text(self, group_id, user_id) -> str:
         if not self.items:
             return "⚠️ 后台还没有配置物品"
@@ -1704,4 +1586,3 @@ class PetModule:
             f"💧 {p.get('mp', 0)}/{p.get('mp_max', 0)}",
             f"📦 剩余：{bag.get(name, 0)}",
         ])
-

@@ -33,16 +33,8 @@ import time
 
 from astrbot.api import logger
 
-# 本插件输出的「招牌」标记：标题行 + 分隔线
-#   只有含这些的回复才认为是本插件发的（避免影响别的插件/LLM）
-#
-# ★★ 1.3.0：分隔线长度是**可变的**（标题线 12 连、收尾线 22 连，
-#   手机不折行才好看）。所以这里不能写死某个长度，否则横线一改短，
-#   尾巴兜底就**认不出自己的回复**了。改成「正则：任意长度 >= 5 的连横线」。
 _BAR_MARK_RE = re.compile(r"[━─]{5,}")
-# 兼容保留：旧版写死的长度（外部若有引用不致报错）
 _BAR_MARK = "━" * 20
-
 
 def _own_marks():
     """
@@ -59,15 +51,12 @@ def _own_marks():
     marks = list(_own_marks_static())
     if pfx:
         marks.insert(0, pfx)
-    # ★ 常用前缀也留着，避免「改了前缀后旧回复认不出来」
     marks.extend(["铁剑娘系统：", "自定义娱乐：", "鸡鸡娱乐系统："])
     return tuple(dict.fromkeys(m for m in marks if m))
-
 
 def _own_marks_static():
     """固定标记（不含可自定义前缀）。"""
     return ("━━━━━━━━━━━━━━━━━━━━",)
-
 
 def _own_render_dir() -> str:
     """
@@ -81,7 +70,6 @@ def _own_render_dir() -> str:
     import os
     import tempfile
     return os.path.join(tempfile.gettempdir(), "astrbot_output_mode")
-
 
 def _comp_file_path(comp) -> str:
     """
@@ -101,9 +89,8 @@ def _comp_file_path(comp) -> str:
             if not s:
                 continue
             if s.startswith(("http://", "https://")):
-                continue        # 外链，不是我们渲染的
+                continue
             if s.startswith("file://"):
-                # file:///C:/x.jpg -> C:/x.jpg（并去掉多余的前导斜杠）
                 s = urllib.parse.unquote(s[7:])
                 if os.name == "nt" and s.startswith("/") and len(s) > 2 \
                         and s[2] == ":":
@@ -113,7 +100,6 @@ def _comp_file_path(comp) -> str:
         except Exception:
             pass
     return ""
-
 
 def _is_own_image(comp) -> bool:
     """这张图是不是本插件渲染出来的（按缓存目录判断）"""
@@ -127,7 +113,6 @@ def _is_own_image(comp) -> bool:
         return ap.startswith(root + os.sep)
     except Exception:
         return False
-
 
 def chain_has_own_image(result) -> bool:
     """
@@ -145,7 +130,6 @@ def chain_has_own_image(result) -> bool:
     except Exception:
         pass
     return False
-
 
 def _bool_cfg(cfg, key, default=True):
     """
@@ -166,14 +150,12 @@ def _bool_cfg(cfg, key, default=True):
         return True
     return default
 
-
 def _int_cfg(cfg, key, default, lo, hi):
     try:
         v = int(str((cfg or {}).get(key, str(default))).strip() or default)
     except Exception:
         v = default
     return max(lo, min(hi, v))
-
 
 def join_tail(text: str, tail: str, sep: str = "\n") -> str:
     """
@@ -204,27 +186,22 @@ def join_tail(text: str, tail: str, sep: str = "\n") -> str:
             break
     _tail_lines = tail.split("\n")
     if ins >= 0:
-        # ★ 插在最后一条横线**下面**（`ins + 1`）
         return "\n".join(lines[:ins + 1] + _tail_lines + lines[ins + 1:])
     return body + _sep + tail
-
 
 class ReplyTail:
     """回复尾巴：配置 + 取文本 + 拼接"""
 
     def __init__(self):
         self.enable = False
-        self.mode = "api"          # text / api / both
-        self.text = ""             # 固定文字
-        self.api = ""              # 接口地址
-        self.prefix = ""           # 接口内容前缀
+        self.mode = "api"
+        self.text = ""
+        self.api = ""
+        self.prefix = ""
         self.timeout = 6
-        self.sep = "\n"            # 尾巴和正文的分隔
-        self.only_group = True     # 只在群聊加
-        self.max_len = 200         # 尾巴总长度上限
-        # ★ 1.7.6：**每次输出都重新请求接口**（用户要求：每次都随机到新的一句）。
-        #   所以不做时间缓存；只在「同一次回复内」复用，
-        #   避免一条回复里取两次拿到不同内容。
+        self.sep = "\n"
+        self.only_group = True
+        self.max_len = 200
         self._cache = {"ts": 0.0, "text": "", "token": None}
         self._cache_ttl = 0
 
@@ -246,9 +223,6 @@ class ReplyTail:
             f"[reply_tail] enable={self.enable} mode={self.mode} "
             f"api={self.api!r} text_len={len(self.text)}")
 
-    # ------------------------------------------------------------
-    # 取接口文本
-    # ------------------------------------------------------------
     async def fetch_api_text(self) -> str:
         """
         取文本接口内容（失败返回空串）。
@@ -285,9 +259,6 @@ class ReplyTail:
                            f"{type(e).__name__}: {str(e)[:80]}")
             return ""
 
-    # ------------------------------------------------------------
-    # 拼尾巴
-    # ------------------------------------------------------------
     async def tail_text(self, token=None) -> str:
         """
         按配置拼出完整尾巴（可能为空）。
@@ -318,9 +289,6 @@ class ReplyTail:
         out = self.sep.join(parts)
         return out[:self.max_len]
 
-    # ------------------------------------------------------------
-    # 判断这条回复是不是「本插件发的」
-    # ------------------------------------------------------------
     @staticmethod
     def is_own_result(result) -> bool:
         """
@@ -346,7 +314,6 @@ class ReplyTail:
             _chain = list(result.chain or [])
         except Exception:
             return False
-        # 先扫一遍：有视频/语音/文件就直接判否
         for comp in _chain:
             _cn = type(comp).__name__.lower()
             if _cn in ("video", "record", "file", "music", "forward"):
@@ -357,16 +324,13 @@ class ReplyTail:
             Plain = None
         try:
             for comp in _chain:
-                # ① 文字标记
                 if Plain is not None and isinstance(comp, Plain):
                     t = str(getattr(comp, "text", "") or "")
                     if any(m in t for m in _own_marks()):
                         return True
-                    # ★★ 1.3.0：横线长度可变，用正则匹配任意长度 >= 5 的连横线
                     if _BAR_MARK_RE.search(t):
                         return True
                     continue
-                # ② 本插件渲染缓存里的图
                 if _is_own_image(comp):
                     return True
         except Exception:

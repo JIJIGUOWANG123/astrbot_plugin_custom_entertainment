@@ -1,6 +1,5 @@
 from astrbot.api.message_components import At
 
-
 def to_str(value) -> str:
     if value is None:
         return ""
@@ -10,7 +9,6 @@ def to_str(value) -> str:
         except Exception:
             return value.decode("latin-1", errors="ignore")
     return str(value)
-
 
 def get_group_id_from_event(event) -> str:
     try:
@@ -29,7 +27,6 @@ def get_group_id_from_event(event) -> str:
         pass
     return ""
 
-
 def get_ats_from_msg(event) -> list:
     """从消息链里提取所有 @ 的 QQ 号"""
     at_list = []
@@ -47,7 +44,6 @@ def get_ats_from_msg(event) -> list:
     except Exception:
         pass
     return at_list
-
 
 def split_text_and_ats(event):
     """
@@ -81,7 +77,6 @@ def split_text_and_ats(event):
         pass
     return "".join(parts), at_map
 
-
 def restore_ats(text: str, at_map: dict) -> str:
     """把占位符还原回真实 QQ 号"""
     if not text:
@@ -91,7 +86,6 @@ def restore_ats(text: str, at_map: dict) -> str:
         out = out.replace(ph, qq)
     return out
 
-
 def has_at_bot(event, bot_id: str) -> bool:
     """判断消息里有没有 @ 到指定 bot"""
     if not bot_id:
@@ -100,7 +94,6 @@ def has_at_bot(event, bot_id: str) -> bool:
         return bot_id in get_ats_from_msg(event)
     except Exception:
         return False
-
 
 def _get_sender_name_raw(event) -> str:
     """尽最大努力获取发送者的**显示名**。
@@ -122,7 +115,6 @@ def _get_sender_name_raw(event) -> str:
          （aiocqhttp 的 MessageMember.nickname 就是 `card or nickname`）
       ⑤ message_obj / event 上的 nickname 兜底
     """
-    # ① 事件上直接挂的 sender 对象 -> 先看群名片
     try:
         _s = getattr(event, "sender", None)
         if _s is not None:
@@ -132,7 +124,6 @@ def _get_sender_name_raw(event) -> str:
                     return to_str(v)
     except Exception:
         pass
-    # ② 事件上的字符串字段（card 放在 nickname 前面）
     for attr in ("sender_name", "sender_nickname", "card", "nickname",
                  "nick"):
         try:
@@ -141,7 +132,6 @@ def _get_sender_name_raw(event) -> str:
                 return to_str(v)
         except Exception:
             pass
-    # ③ message_obj 里的 sender
     try:
         mo = getattr(event, "message_obj", None)
         if mo is not None:
@@ -158,7 +148,6 @@ def _get_sender_name_raw(event) -> str:
     except Exception:
         pass
     return ""
-
 
 def get_sender_name(event) -> str:
     """

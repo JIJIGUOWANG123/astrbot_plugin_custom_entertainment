@@ -1,4 +1,3 @@
-#测试#
 import os
 import random
 import time
@@ -35,15 +34,8 @@ except Exception as e:
     _HAS_QQ_INFO = False
     logger.warning(f"[apix-meme] qq_info 模块加载失败: {e}")
 
-# ★★ 市场版：**只支持文字模式**（不再连接 output_mode 模块）
-#
-#   用户要求：市场版仅文本输出，不依赖任何本地渲染服务。
-#   做法：把 `output_mode_module` 恒置 None —— 所有调用点本来就有
-#         `om is None -> 纯文本` 的兜底，于是全线自动走文字模式。
-#   （`core/output_mode.py` 文件保留，方便将来需要时恢复。）
 _HAS_OUTPUT_MODE = False
 OutputModeModule = None
-
 
 def strip_inline_img(text):
     """
@@ -57,117 +49,64 @@ def strip_inline_img(text):
         out = []
         for ln in str(text or "").split("\n"):
             if _re.match(r"^\s*\[\[\s*img\s*:.*?\]\]\s*$", ln, _re.I):
-                continue          # 整行都是标记 -> 去掉这一行
+                continue
             out.append(_re.sub(r"\[\[\s*img\s*:.*?\]\]", "", ln, flags=_re.I))
         return "\n".join(out)
     except Exception:
         return str(text or "")
 
-
-# ★★ 市场版：`from .core.music import ...` 已移除（点歌功能整体删除）
-
 from aiohttp import web
 
-# ============================================================
-# 菜单文案版本号
-# ------------------------------------------------------------
-# ★ 改了任何菜单生成代码（menu_builder / 菜单里显示的数值来源）就把这里 +1。
-#   插件启动时会把后台存的、**没被用户自定义过**的旧文案重生成一遍，
-#   这样菜单里写死的数值（每次抽奖花多少 / 借款利息 / 各指令名…）
-#   就能跟最新配置保持一致，而不是停在最初生成时的旧值。
-#   v2(1.7.6)：签到系统去掉「签到排行」、新增「抽奖功能」、
-#              查询指令改列三种排行榜、银行加入借款
 MENU_TEXT_VERSION = "40"
 
-# ★★ 1.7.8：**专属设置页**（独立 HTML，放在 pages/<名字>/index.html）
-#   主面板里只放一个按钮，点开进独立页面改该功能的全部选项。
-#   加新页面：建目录 + 往这里加名字 + 在 app.js 里加 open-page 分组。
 _EXTRA_PAGES = {"poke"}
 
-# ============================================================
-# 「实时菜单」：这些菜单**永远按当前配置即时生成**，不读后台存盘文案。
-# ------------------------------------------------------------
-# 为什么需要：抽奖/银行这类菜单里写着一堆**数值**
-# （每次抽奖花多少、奖品上限、每天次数、借款利息…）。
-# 存盘文案只会在版本升级时刷新，用户改了后台配置后菜单不会跟着变，
-# 于是「菜单显示的数」和「实际生效的数」就对不上了。
-# 放进这个集合的菜单，每次读取都重新生成 —— 改后台立刻反映。
-# ★ 副作用：这些菜单**不支持后台自定义文案**（本来也不该自定义数值）。
-# ★★ 1.7.7：**分页 / 含实时数值的菜单必须放这里**。
-#   原因：`_menu()` 会优先返回后台／数据文件里存的文案（`_menu_custom()`），
-#   而存盘文案是**单页静态文本**，拿不到 `page` 参数、也跟不上配置改动 ——
-#   于是「商店帮助 2」永远显示第 1 页（用户反馈），
-#   加班菜单里「加班功能 all」这种旧指令名也一直残留。
-#   放进 LIVE 后每次都实时重新生成。
 MENU_TEXT_LIVE = {"checkin_lottery", "checkin_bank", "checkin_shop_help",
                   "job_refill", "job_refill_status", "job_list",
                   "checkin_job"}
 
-# 各菜单「历史默认文案」的特征片段：老数据没存 prev 时用它判断
-# 「这还是系统生成的旧默认值，不是用户手改的」，从而可以安全地重生成。
-# ★ 只放**老默认值里独有**的片段，别放新文案也有的字（否则会误判）。
 MENU_TEXT_LEGACY_FRAGS = {
-    # ★ 抢银行一度被列进签到菜单（v5~v9）、说明也被追加在末尾；
-    #   现在它只属于「银行功能」菜单。这几条片段专门认那些旧版式。
     "checkin": ("🏆签到排行", "每天只能抢一次", "🚨抢银行"),
     "checkin_signin": ("🏆签到排行",),
     "checkin_query": ("🏆签到排行",
-                      # ★★ 1.7.6：查询指令菜单新增「保险箱 / 理财」两大段后，
-                      #   内容从 238 字涨到 624 字 —— 相似度只有 0.469、
-                      #   长度比 0.381，两条兜底都过不了，于是**旧版系统文案
-                      #   被当成用户手改、永远不刷新**（用户反馈缺保险箱指令）。
-                      #   这条旧版独有的行是它的指纹：新版把这段换成了
-                      #   「🏆三种排行榜（各自独立指令）」，所以只认旧版。
-                      #   ★ 只有「用户没动过」的旧文案才会命中（比对的是原文），
-                      #     真被手改过的文案不会含这行，不会被冲掉。
                       "三种排行榜"),
     "checkin_bank": ("查看持有", "总资产"),
     "checkin_lottery": ("投入",
-                        # ★★ 1.7.6：旧版抽奖菜单（金币时代、只有普通抽奖）
-                        #   缺「全部抽奖 / 奖池」两段 -> 相似度 0.585 过不了
-                        #   兜底，会被当成用户手改、永不刷新。这条行是新版
-                        #   **已经删掉**的，只出现在旧版系统文案里。
                         "每次固定花"),
     "checkin_steal": ("银行里的",),
-    # ★ 1.7.6：坐骑菜单新增「装备坐骑 / 坐骑查看」，旧文案靠这两条识别
     "checkin_mount": ("没有任何坐骑", "只显示坐骑列表",
-                      # ★ 1.7.6：旧版（金币时代）坐骑文案
                       "消耗金币购买坐骑", "装备后每天群里第一句话会提示登场",
                       "图片模式会把坐骑图插在"),
     "checkin_job": ("打工赚取",),
     "checkin_admin": ("减到 0 为止",),
-    # ★ 1.7.6：音乐菜单重排（点歌=直接播第一首 / 新增搜歌），
-    #   旧文案靠这几条识别，否则会被误判成「用户手改过」永不刷新。
     "music": ("搜索歌曲，列出前几首供选择", "供选择",
               "也可以：点歌 QQ", "一次搜索只能选一首，想再选请重新「点歌",
-              # ★★ 1.7.7：音乐菜单拆出「单曲点歌 / 搜歌功能 / 音源设置」
-              #   三个下级后主菜单变短，相似度掉到兜底阈值以下；
-              #   这几条是**旧版主菜单独有的行**，用来认出旧文案。
               "卡片仅网易云/酷我/咪咕有效", "不带参数查看全部音源",
               "打开本菜单", "音乐地址带时间签名会过期"),
-    # ★★ 1.7.7：音乐下级菜单「搜歌功能」改版（去掉了对已停用入口
-    #   「单曲点歌」的引用、写法也压短），相似度掉到兜底阈值以下。
-    #   这条是**旧版独有**的行，用来认出旧文案。
     "music_find": ("知道要听哪首、不想挑",),
-    # ★★ 1.7.6：提示功能菜单 —— 旧版结尾用词不同（相似度 0.532）。
-    #   「提示功能总开关」这半句只出现在旧版系统文案里，新版已换写法。
     "notice": ("提示功能总开关",),
-    # ★★ 1.7.6：宠物菜单拆成「宠物养成 / 宠物玩法 / 宠物道具」三个下级后，
-    #   主菜单从 523 字缩到 221 字 —— 相似度过不了兜底，
-    #   旧文案会被当成用户手改、永不刷新（和查询指令菜单同一个坑）。
-    #   这条是**旧版主菜单独有的行**（新版主菜单不再逐条列这些指令）。
     "pet": ("指定**自己的**宠物（对方随机）",),
-    # ★★ 1.7.7：商店帮助从「单页」改成「3 页分页」，旧文案独有的行
-    #   （新版已删掉这些写法）。只有用户没手改过的旧文案才会命中。
     "checkin_shop_help": ("共 12 件商品（后台可增删改）",
                           "花金币购买（每样只需买一次）",
                           "要用下面的「启用武器」选出在用的那把",
                           "「签到统计」里会多显示保险箱余额"),
-    # ★★ 1.7.7：猜数改成「开始猜数 + 猜数 数字」多人抢猜后，
-    #   旧菜单里这些行已经删掉（相似度过不了兜底）。
     "guess": ("放弃当前这局，重新开始",
               "每次花费：",
               "📊 次数限制："),
+    "auth": ("📝 授权指令（群里发，需管理员）", "🔍 授权状态指令",
+             "📋 授权列表指令", "三条指令分工：",
+             "💡 后台可改：总开关",
+             "🔑 插件总开关：", "📝 远程指令：「授权 群号 时长」",
+             "📅 未设置的群：", "⚙️ 后台可改："),
+    "auth_cmd": ("🔒 需 **AstrBot 全局管理员**（群主 / 群管 无权）",
+                 "📝 授权（不带群号 = 本群）",
+                 "🎯 指定群（群号放前面）",
+                 "🛠️ 管理"),
+    "auth_query": ("🔓 任何人都能查（不需要权限）",
+                   "🔍 授权状态（查本群）",
+                   "📋 授权列表（查全部群）",
+                   "「授权状态」　　　　查**本群**是否已授权",
+                   "「授权查询」　　　　列出**每个群**的授权状态"),
 }
 
 def _host_is_trusted(host: str) -> bool:
@@ -201,7 +140,6 @@ def _host_is_trusted(host: str) -> bool:
         pass
     return False
 
-
 def _cors_allow_origin_of(request) -> str:
     """
     计算要回显的 Access-Control-Allow-Origin。
@@ -227,13 +165,11 @@ def _cors_allow_origin_of(request) -> str:
     try:
         from urllib.parse import urlparse
         host = (urlparse(origin).hostname or "").lower()
-        # ★★ 1.1：放行本机 **和内网**（局域网访问面板时 Origin 是内网 IP）
         if _host_is_trusted(host):
             return origin
     except Exception:
         pass
     return ""
-
 
 def _with_cors(resp: web.Response, request=None) -> web.Response:
     """给响应补上 CORS 头（仅对 null / 本机来源回显）"""
@@ -249,11 +185,9 @@ def _with_cors(resp: web.Response, request=None) -> web.Response:
         pass
     return resp
 
-
 async def _options_handler(request):
     """处理浏览器 OPTIONS 预检：回 204 并带上 CORS 头"""
     return _with_cors(web.Response(status=204), request)
-
 
 async def _fetch_daily_news_text() -> str:
     """拉取 60s 读报的文字版，作为图片不可用时的回退。"""
@@ -279,7 +213,6 @@ try:
         collect_runtime_status,
         GLOBAL_STATS,
         set_plugin_version,
-        # ★★ 1.7.7：收发计数落盘（重载插件不再归零）
         set_msg_stats_path as _set_msg_stats_path,
         load_msg_stats as _load_msg_stats,
         save_msg_stats as _save_msg_stats,
@@ -301,7 +234,6 @@ except Exception as e:
     def _save_msg_stats(force=False):
         return False
     logger.warning(f"[apix-meme] system_status 模块加载失败: {e}")
-
 
 def _fmt_uptime(sec) -> str:
     """
@@ -367,7 +299,6 @@ except Exception as e:
     LuckModule = None
     logger.warning(f"[apix-meme] luck 模块加载失败: {e}")
 
-# ★★ 1.3.0：授权功能（按群到期时间，到期关闭整个插件）
 try:
     from .core.auth import AuthModule
     _HAS_AUTH = True
@@ -451,7 +382,6 @@ except Exception as e:
     NOTICE_LABEL = {}
     logger.warning(f"[apix-meme] notice 模块加载失败: {e}")
 
-# ★★ 1.7.8：戳一戳随机回复（词库 + 全局限频）
 try:
     from .core.poke_reply import PokeReplyModule, DEFAULT_WORDS
     _HAS_POKE_REPLY = True
@@ -559,12 +489,6 @@ except Exception as e:
     PetModule = None
     logger.warning(f"[apix-meme] pet 模块加载失败: {e}")
 
-# 小鸟素材默认目录（后台可改；改了就用后台的）
-
-
-# ★★ 市场版：猜拳模块（core/rps.py）已整体移除
-
-# ★★ 1.7.7：猜数游戏（娱乐功能）
 try:
     from .core.guess import GuessModule
     _HAS_GUESS = True
@@ -573,7 +497,6 @@ except Exception as e:
     GuessModule = None
     logger.warning(f"[apix-meme] guess 模块加载失败: {e}")
 
-# ★★ 市场版 1.1：赛车系统（core/racing.py）
 try:
     from .core.racing import (
         RacingModule as _RacingModule,
@@ -631,7 +554,6 @@ try:
             build_greeting_morning_menu,
         build_greeting_night_menu,
         build_greeting_rank_menu,
-        # ★★ 市场版 1.1：赛车功能菜单
         build_racing_menu,
         build_checkin_signin_menu,
         build_checkin_query_menu,
@@ -642,12 +564,9 @@ try:
         build_checkin_mount_manage_menu,
         build_checkin_mount_admin_menu,
         build_checkin_job_menu,
-        # ★★ 1.7.7：打工下级菜单 + 体力菜单
         build_checkin_job_list_menu,
         build_checkin_job_refill_menu,
         build_stamina_menu,
-        # ★★ 1.7.7 修正：这些**一直被调用却没导入**，一打开对应菜单就
-        #   NameError（银行 4 个下级、宠物 3 个下级、天气、商店帮助）。
         build_checkin_bank_save_menu,
         build_checkin_bank_loan_menu,
         build_checkin_bank_fund_menu,
@@ -674,8 +593,10 @@ try:
         build_news_admin_menu,
         build_member_admin_menu,
         build_notice_menu,
-        # ★★ 1.3.0：授权功能（管理系统下级）
         build_auth_menu,
+    build_auth_query_menu,
+    build_auth_cmd_menu,
+    _ga_help_lines,
         build_must_at_admin_menu,
         build_super_admin_menu,
         build_entertain_menu,
@@ -713,8 +634,6 @@ except Exception as e:
     def build_checkin_job_list_menu(p): return ""
     def build_checkin_job_refill_menu(p): return ""
     def build_stamina_menu(p): return ""
-    # ★★ 1.7.7 修正：兜底块也要有这 9 个，否则 menu_builder 加载失败时
-    #   打开银行/宠物下级、天气、商店帮助菜单会 NameError。
     def build_checkin_bank_save_menu(p): return ""
     def build_checkin_bank_loan_menu(p): return ""
     def build_checkin_bank_fund_menu(p): return ""
@@ -733,8 +652,9 @@ except Exception as e:
     def build_news_admin_menu(p): return ""
     def build_member_admin_menu(p): return ""
     def build_notice_menu(p): return ""
-    # ★★ 1.3.0：授权功能
     def build_auth_menu(p): return ""
+    def build_auth_cmd_menu(p): return ""
+    def build_auth_query_menu(p): return ""
     def build_must_at_admin_menu(p): return ""
     def build_super_admin_menu(p): return ""
 
@@ -758,10 +678,6 @@ except Exception as e:
     async def ensure_daily_news(plugin): pass
     async def daily_news_checker(plugin): pass
 
-
-# ============================================================
-# ★ 引用新的工具模块
-# ============================================================
 from .core.path_utils import (
     PLUGIN_ID,
     plugin_dir as _plugin_dir,
@@ -770,7 +686,6 @@ from .core.path_utils import (
     fortune_data_path as _fortune_data_path,
     husband_data_path as _husband_data_path,
     luck_data_path as _luck_data_path,
-    # ★★ 1.3.0：授权功能数据路径
     auth_data_path as _auth_data_path,
     greeting_data_path as _greeting_data_path,
     minecraft_data_path as _minecraft_data_path,
@@ -780,16 +695,11 @@ from .core.path_utils import (
     daily_news_data_path as _daily_news_data_path,
     speak_stats_data_path as _speak_stats_data_path,
     pet_data_path as _pet_data_path,
-    # ★★ 1.7.7：猜数游戏数据文件
     guess_data_path as _guess_data_path,
-    # ★★ 1.7.7：收发消息计数文件
     msg_stats_path as _msg_stats_path,
     parse_gid_list,
-    # ★★ 市场版 1.1：坐骑插图已移除（不再 import mount_image_path）
     data_store_path as _data_store_path,
-    # ★★ 市场版 1.1：赛车文案要用数字缩写（10000 -> 1万）
     fmt_num,
-    # ★★ 市场版 1.1：赛车数据文件
     racing_data_path as _racing_data_path,
     read_plugin_version,
     read_disk_config,
@@ -809,21 +719,9 @@ from .core.nickname import NicknameCache
 from .core.path_utils import title_bar, title_foot
 from .core.path_utils import cmd_arg
 
-
-# ============================================================
-# ★★ 市场版：**小鸟图鉴已整体移除**。
-# ------------------------------------------------------------
-# 下面这些是「安全存根」。为什么需要保留而不是全删干净：
-#   · 初始化/配置读取里仍有 `or BIRD_DIR_DEFAULT`、`if _HAS_BIRD:`
-#     这类**兜底表达式**，直接删掉会 NameError / AttributeError；
-#   · 图鉴相关的方法体已全部删除，这些分支永远走不到；
-#   · 存根值都是「空 / False」，不可能被误用出东西来。
-# 想彻底清理这些遗留引用，需要逐个改写初始化与配置块 —— 风险大于收益。
-# ============================================================
-BIRD_DIR_DEFAULT = ""      # 小鸟素材目录（图鉴已移除，恒为空）
-_HAS_BIRD = False          # 小鸟模块未加载
-BirdCollection = None      # 小鸟收集类（已移除）
-
+BIRD_DIR_DEFAULT = ""
+_HAS_BIRD = False
+BirdCollection = None
 
 @register(
     PLUGIN_ID,
@@ -834,11 +732,6 @@ BirdCollection = None      # 小鸟收集类（已移除）
 )
 class ApixIqfkSimpleMeme(Star):
 
-    # ============================================================
-    # ★★ 市场版：小鸟图鉴已移除，但名片/图鉴等旧代码路径里仍会
-    #   引用下面两个方法。保留**空存根**，避免 AttributeError；
-    #   名片功能本身不依赖小鸟，仍可正常使用。
-    # ============================================================
     def _bird_img_of(self, nm):
         """存根：小鸟图鉴已移除，永远返回空"""
         return ""
@@ -855,9 +748,6 @@ class ApixIqfkSimpleMeme(Star):
         self.config = config or {}
         self.rules = []
         self.must_at_bot = False
-        # ★★ 审核整改：**不再内置第三方接口的默认 key**。
-        #   留空 = 不带 key 请求（很多公开接口本来也不需要）。
-        #   需要 key 的接口请在后台「接口系统」页面自己填。
         self.default_key = ""
         self.cmd_main_name = "自定义娱乐"
         self.cmd_admin_name = "管理员指令"
@@ -904,10 +794,7 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_greeting_menu_name = "打卡系统"
         self.cmd_checkin_menu_name = "签到系统"
         self.cmd_daily_menu_name = "每日系列"
-        # ★ 娱乐功能（1.7.3）
         self.cmd_entertain_menu_name = "娱乐功能"
-        # ★★ 市场版：名片功能已移除
-        # ★ 查询功能（QQ 用户信息）
         self.qqinfo_enable = True
         self.cmd_qqinfo = "查询,查QQ,查qq,查用户"
         self.cmd_qqinfo_menu_name = "查询功能"
@@ -920,13 +807,11 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_chime_list_name = "整点报时列表"
         self.cmd_chime_test_name = "整点报时测试"
 
-        # ★ 每日定时状态推送指令
         self.cmd_daily_push_on_name = "状态推送开"
         self.cmd_daily_push_off_name = "状态推送关"
         self.cmd_daily_push_time_name = "状态推送间隔"
         self.cmd_daily_push_list_name = "状态推送列表"
 
-        # ★ 群员管理指令
         self.cmd_kick_name = "踢出群员"
         self.cmd_mute_name = "禁言群员"
         self.cmd_unmute_name = "解除禁言"
@@ -934,9 +819,7 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_unblacklist_name = "解除拉黑"
         self.cmd_blacklist_list_name = "黑名单列表"
 
-        # ★ 每日读报指令
         self.cmd_daily_news_name = "今日读报,每日读报"
-        # ★★ 1.2：手动读报开关（默认「开启功能 读报功能 / 关闭功能 读报功能」）
         self.cmd_daily_news_manual_on_name = "开启功能 读报功能,开启读报功能"
         self.cmd_daily_news_manual_off_name = "关闭功能 读报功能,关闭读报功能"
         self.cmd_daily_news_on_name = "开启功能 读报推送,开启读报推送"
@@ -947,25 +830,18 @@ class ApixIqfkSimpleMeme(Star):
         self.group_mode = "off"
         self.group_whitelist = []
         self.group_blacklist = []
-        # ★ 群白名单（不填 = 不限制群聊）
         self.allowed_groups = []
-        # ★ 电脑状态单独群开关
         self.status_groups = []
-        # ★ 电脑状态功能总开关（同时控制定时推送）
         self.status_enable = True
         self.score_admin_enable = True
         self.score_admin_groups = []
-        # ★ 接口系统功能总开关 + 允许使用的群号（留空=不限群）
         self.meme_enable = True
         self.meme_groups = []
         self.group_block_map = {}
         self.disabled_groups = []
         self.plugin_admins = []
-        # ★ 允许使用「加积分 / 减积分」的 QQ 白名单
-        #   （填了就无视群管身份；留空则只认 全局管理员/群主/群管/插件管理员）
         self.score_admin_whitelist = []
-        self.web_admin_token = ""   # 写操作令牌（可选，reload_cfg 会按配置覆盖）
-        # 群员管理（reload_cfg 会按配置覆盖）
+        self.web_admin_token = ""
         self.moderation_enable = True
         self._blacklist_raw = ""
         self.member_blacklist = {}
@@ -974,7 +850,6 @@ class ApixIqfkSimpleMeme(Star):
         self.group_feature_switches = {}
         self.group_must_at_bot = {}
         self.minecraft_auto_groups = []
-        # ★ MC 功能的群号黑名单（留空 = 所有群生效）
         self.minecraft_groups = []
         self.minecraft_test_groups = []
         self.feature_switch = {
@@ -999,7 +874,6 @@ class ApixIqfkSimpleMeme(Star):
         self._daily_news_task = None
         self._platform_id_cache = None
 
-        # ★ 全局昵称缓存（跨群共享 QQ 昵称）
         self._nickname_cache = NicknameCache()
         self.nickname_cache = self._nickname_cache.as_dict()
 
@@ -1008,9 +882,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 注入插件版本失败")
 
-        # ★★ 1.7.7：收发消息计数落盘 —— 重载插件不再归零
-        #   ① 告诉 system_status 计数文件放哪
-        #   ② 把上次的计数读回内存
         try:
             _set_msg_stats_path(_msg_stats_path())
             _load_msg_stats()
@@ -1049,7 +920,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化人品模块失败")
 
-        # ★★ 1.3.0：授权功能模块（按群到期时间，到期关闭整个插件）
         self.auth_module = None
         if _HAS_AUTH:
             try:
@@ -1138,7 +1008,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化管理指令模块失败")
 
-        # ★ 1.7.6：全局回复尾巴（可接文本 API）
         self.reply_tail = None
         if _HAS_REPLY_TAIL:
             try:
@@ -1191,15 +1060,10 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化发言统计模块失败")
 
-        # 小鸟图鉴：收集记录（每群每人）
         self.bird_collection = None
         if _HAS_BIRD:
             try:
                 self.bird_collection = BirdCollection(_bird_data_path())
-                # ★ 不能访问 .groups —— BirdCollection 没这个属性
-                #   （数据结构已改成全群共享的 {"users": ...}）。
-                #   之前这里抛 AttributeError 被 except 吞掉，
-                #   导致 bird_collection 一直是 None、整个图鉴功能失效。
                 _bst = self.bird_collection.stats()
                 logger.info(
                     "[apix-meme] 小鸟收集模块初始化成功"
@@ -1207,24 +1071,20 @@ class ApixIqfkSimpleMeme(Star):
                     _bst.get("users", 0), _bst.get("owned", 0))
             except Exception:
                 logger.exception("[apix-meme] 初始化小鸟收集模块失败")
-        # 小鸟：总开关 / 指令名 / 素材目录
         self.bird_enable = True
         self.cmd_bird = ["今日小鸟"]
         self.cmd_gallery = ["我的图鉴", "小鸟图鉴"]
         self.cmd_bird_menu = ["小鸟图鉴"]
-        # ★ 图鉴列表 / 图鉴查看（编号查阅，1.7.5）
         self.cmd_bird_list = ["图鉴列表"]
         self.cmd_bird_view = ["图鉴查看"]
-        self.bird_list_per_page = 10   # 图鉴列表每页条数（后台可改）
-        self.bird_groups = []          # 黑名单：这些群不触发（图鉴系统共用）
+        self.bird_list_per_page = 10
+        self.bird_groups = []
         self.bird_image_dir = BIRD_DIR_DEFAULT
-        self.bird_rank_enable = True   # 图鉴左上角显示「收集第几名」
+        self.bird_rank_enable = True
 
-        # ★★ 市场版：猜拳功能（含名片）已整体移除
-        self.score_name = "积分"          # 积分显示名称（后台可改）
+        self.score_name = "积分"
         self.cmd_weather_menu_name = "天气查询"
 
-        # ============ 猜数游戏（1.7.7，娱乐功能）============
         self.guess_module = None
         if _HAS_GUESS:
             try:
@@ -1233,16 +1093,12 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化猜数模块失败")
         self.guess_enable = True
-        self.guess_groups = []           # 群号黑名单（留空 = 全部生效）
+        self.guess_groups = []
 
-        # ============================================================
-        # ★★ 市场版 1.1：赛车系统（纯文本输出，**不支持插图**）
-        # ============================================================
         self.racing_module = None
         if _HAS_RACING:
             try:
                 self.racing_module = _RacingModule(_racing_data_path())
-                # ★ 借签到模块的「逻辑日」（奖池加成按天固定）
                 self.racing_module._plugin = self
                 logger.info("[apix-meme] 赛车模块初始化成功")
             except Exception:
@@ -1274,24 +1130,21 @@ class ApixIqfkSimpleMeme(Star):
         self.race_shop_list = ""
         self.race_lottery_cars = ""
 
-        # ★★ 市场版 1.1：后台「机器人数据」统计用的内部状态
         import time as _bt
-        self._boot_ts = _bt.time()          # 插件启动时刻（算运行时长）
-        self._seen_groups = set()           # 见过消息的群
-        self._schema_cache = {}             # 配置 schema 缓存
-        self._registered_routes = []        # 已注册的 Web 路由
-        # ★★ 1.7.7 重写：开新局 / 参与 分成两条指令
-        self.cmd_guess_start = ["开始猜数"]   # 开一局
-        self.cmd_guess = ["猜数"]             # 参与（后面接数字）
-        self.guess_min = 1               # 题目下限
-        self.guess_max = 100             # 题目上限
-        self.guess_max_tries = 3         # 每人每局最多猜几次
-        self.guess_timeout_sec = 60      # 多少秒没人猜就关闭（0 = 不自动关）
-        self.guess_reward_min = 100      # 猜对奖励下限（随机）
-        self.guess_reward_max = 500      # 猜对奖励上限（随机）
-        self.guess_penalty = 1000        # 猜错扣多少（默认 1000）
-        self.guess_allow_negative = True  # 是否允许扣成负分
-        # 旧字段保留，避免旧配置/旧代码引用报错
+        self._boot_ts = _bt.time()
+        self._seen_groups = set()
+        self._schema_cache = {}
+        self._registered_routes = []
+        self.cmd_guess_start = ["开始猜数"]
+        self.cmd_guess = ["猜数"]
+        self.guess_min = 1
+        self.guess_max = 100
+        self.guess_max_tries = 3
+        self.guess_timeout_sec = 60
+        self.guess_reward_min = 100
+        self.guess_reward_max = 500
+        self.guess_penalty = 1000
+        self.guess_allow_negative = True
         self.guess_cost = 0
         self.guess_reward = 100
         self.guess_daily_limit = 0
@@ -1307,7 +1160,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化宠物模块失败")
 
-        # ★ 统一数据存储（1.7.2：数据类内容从后台配置搬到独立文件）
         self.data_store = None
         if _HAS_DATA_STORE:
             try:
@@ -1319,17 +1171,12 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化数据存储失败")
 
-        # ★ 1.7.6：把数据存储注入签到模块
-        #   mount_list 这类**同时**存在于后台配置和独立数据文件的项，
-        #   以数据文件为准（配置里那只是只读摘要，早期版本还误写成文本）。
         if self.checkin_module is not None and self.data_store is not None:
             try:
                 self.checkin_module.data_store = self.data_store
             except Exception:
                 logger.exception("[apix-meme] 注入数据存储到签到模块失败")
 
-        # ★ 1.7.6：群事件提示（改群昵称 / 禁言 / 退群 / 管理员 / 专属称号）
-        #   ★ 必须在 data_store 之后初始化（要读写每群开关）
         self.notice_module = None
         if _HAS_NOTICE:
             try:
@@ -1338,7 +1185,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化提示模块失败")
 
-        # ★★ 1.7.8：戳一戳随机回复（词库 + 全局限频）
         self.poke_reply_module = None
         if _HAS_POKE_REPLY:
             try:
@@ -1347,27 +1193,17 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化戳一戳回复模块失败")
 
-        # ★★ 市场版：**只支持文字模式**
-        #   不再连接 output_mode 模块（`_HAS_OUTPUT_MODE = False`），
-        #   所以这里恒为 None —— 所有调用点走 `om is None -> 纯文本` 分支。
-        #   好处：不需要任何本地渲染服务，也不会出现"图片模式没反应/渲染失败"。
         self.output_mode_module = None
         logger.info("[apix-meme] 市场版：仅文字输出模式（未启用图片渲染）")
-        if False:  # pragma: no cover —— 保留原逻辑备查，正式版不执行
+        if False:
             try:
                 self.output_mode_module = OutputModeModule(
                     plugin_dir=_plugin_dir()
                 )
-                # ★ 启动时清掉旧版本的渲染缓存，
-                #   避免历史上生成的图（如字体未修时的方框图）被继续复用
                 try:
                     self.output_mode_module._clean_old_caches()
                 except Exception:
                     logger.exception("[apix-meme] 清理旧渲染缓存失败")
-                # ★★ 1.7.7：把「缺字形探测」注入 path_utils ——
-                #   渲染服务能精确判断哪些字符没字形（会画成方框），
-                #   这里接上之后，`clean_display()` 才能把**真方框**
-                #   去掉（它自己只能按 Unicode 区间猜）。
                 try:
                     from .core import path_utils as _pu
                     _om = self.output_mode_module
@@ -1381,10 +1217,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 初始化输出模式模块失败")
 
-        # ★★ 市场版：点歌/音乐模块已整体移除
-        #   （原来这里是 `if _HAS_MUSIC:` 的初始化块 —— 连同
-        #     MusicModule(...) 的多行参数一起删干净，否则语法错误）
-
         try:
             logger.info(f"[apix-meme] 磁盘配置路径: {_config_path()}")
         except Exception:
@@ -1393,10 +1225,6 @@ class ApixIqfkSimpleMeme(Star):
         self.reload_cfg()
         self._migrate_old_format()
 
-        # ★ 数据迁移与默认数据落盘（1.7.2）
-        #   ① 把旧后台配置里的数据搬进独立数据文件（幂等，只搬一次）
-        #   ② 内置默认数据（宠物图鉴/事件/物品、接口规则）首次写入数据文件
-        #   ③ 把数据摘要写回后台配置，后台只读可见
         try:
             self._migrate_data_to_store()
         except Exception:
@@ -1405,7 +1233,6 @@ class ApixIqfkSimpleMeme(Star):
             self._sync_defaults_to_store()
         except Exception:
             logger.exception("[apix-meme] 写入默认数据失败")
-        # ★ 清理 AstrBot 可能误写到插件目录的数据（本插件不读它）
         try:
             self._cleanup_stray_astrbot_data()
         except Exception:
@@ -1414,19 +1241,16 @@ class ApixIqfkSimpleMeme(Star):
             self._sync_summaries_to_config()
         except Exception:
             logger.exception("[apix-meme] 同步数据摘要失败")
-        # 数据有变动，重载一次让各模块读到最新内容
         try:
             self.reload_cfg()
         except Exception:
             logger.exception("[apix-meme] 迁移后重载配置失败")
 
-        # 1) 先注册桥接路由（给独立 HTML 用）
         try:
             self._register_bridge_routes()
         except Exception:
             logger.exception("[apix-meme] 注册桥接路由异常")
 
-        # 2) 再注册 web_config 的 aiohttp 路由（备选）
         if _HAS_WEB_CONFIG:
             try:
                 ok = register_web_apis(self.context)
@@ -1437,9 +1261,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 注册自定义配置页面路由异常")
 
-    # ============================================================
-    # ★ 注册桥接路由（同源访问，不下发任何 CORS 放行头）
-    # ============================================================
     def _register_bridge_routes(self):
         try:
             from astrbot.api.web import json_response, error_response
@@ -1453,10 +1274,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 json_response = lambda d, status_code=200: d
                 error_response = lambda m, status_code=400: {"ok": False, "msg": m}
-
-        # ★ 安全：本插件的页面与接口都由 AstrBot 面板同源访问，
-        #   因此不再下发任何 Access-Control-Allow-Origin（避免跨域全开）。
-        #   同时校验 Origin，非本机/非面板来源的跨域请求一律拒绝。
 
         def _origin_allowed(request) -> bool:
             """
@@ -1474,17 +1291,12 @@ class ApixIqfkSimpleMeme(Star):
                 origin = str(headers.get("Origin", "") or "").strip()
                 if not origin:
                     return True
-                # ★ iframe（srcdoc/blob）的 Origin 是字符串 "null"，
-                #   属本机受信任页面，必须放行
                 if origin == "null":
                     return True
                 from urllib.parse import urlparse
                 host = (urlparse(origin).hostname or "").lower()
-                # ★★ 1.1：本机 + 内网都放行（局域网访问面板时 Origin 是内网 IP），
-                #   否则「后台点保存全部」会被自己拒掉（403）。
                 return _host_is_trusted(host)
             except Exception:
-                # 校验本身出错时不拦截，避免误伤正常使用
                 return True
 
         def _cors_allow_origin(request=None) -> str:
@@ -1580,7 +1392,6 @@ class ApixIqfkSimpleMeme(Star):
                 status_code=403,
             ), request)
 
-        # ---------- 请求对象 / 请求体提取 ----------
         def _bound_request():
             """AstrBot 4.27+ 插件 Web API 的请求对象由框架绑定在模块级代理上，
             而不是通过处理函数的第一个位置参数传入（路由无 <...> 占位符时
@@ -1601,13 +1412,9 @@ class ApixIqfkSimpleMeme(Star):
 
         async def _extract_payload(request=None, kwargs=None):
             """按 位置参数 → 框架绑定请求(body/json) → kwargs 顺序提取配置字典。"""
-            # 1) 位置参数直接就是配置字典（旧版 aiohttp 直连路由）
             if isinstance(request, dict) and request:
                 return request
 
-            # 2) 框架绑定的请求对象（AstrBot 4.27+ 唯一可靠来源）
-            #    同时兼容 Starlette 风格 json()/text()/body()
-            #    与 Quart 风格 get_json()/get_data()
             for src in (_bound_request(), request):
                 if src is None:
                     continue
@@ -1633,7 +1440,6 @@ class ApixIqfkSimpleMeme(Star):
                         if isinstance(parsed, dict) and parsed:
                             return parsed
 
-            # 3) kwargs 兜底（仅 path_params，通常为空）
             if kwargs:
                 meta_keys = {"request", "self", "context", "data", "config", "body", "payload"}
                 candidate = {k: v for k, v in kwargs.items() if k not in meta_keys}
@@ -1641,12 +1447,9 @@ class ApixIqfkSimpleMeme(Star):
                     return candidate
             return None
 
-        # ---------- GET /config ----------
         async def _get_config_handler(request=None, **kwargs):
-            # OPTIONS 预检
             if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
                 return _options_response(request)
-            # ★ 安全：拒绝跨域
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1668,12 +1471,9 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] GET /config 失败")
                 return _with_cors(error_response(f"读取失败: {e}", status_code=500), request)
 
-        # ---------- POST /config ----------
         async def _save_config_handler(request=None, **kwargs):
-            # OPTIONS 预检（request 可能为 None，必须用安全的取值方式）
             if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
                 return _options_response(request)
-            # ★ 安全：拒绝跨域 + 写操作鉴权
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1686,30 +1486,22 @@ class ApixIqfkSimpleMeme(Star):
                 data = await _extract_payload(request, kwargs)
                 logger.info(f"[apix-meme] POST /config 提取到 payload 类型={type(data).__name__}")
 
-                # 兼容外层再包一层 {data:{}} / {config:{}}
                 if isinstance(data, dict):
                     for _wrap in ("data", "config"):
                         if len(data) == 1 and isinstance(data.get(_wrap), dict) and data[_wrap]:
                             data = data[_wrap]
                             break
 
-                # 校验数据
                 if not isinstance(data, dict) or not data:
                     logger.warning("[apix-meme] POST /config 数据为空")
                     return _with_cors(json_response({"ok": False, "msg": "数据为空"}), request)
 
-                # 读取旧配置，合并更新
                 old_cfg = self._read_disk_config() or {}
                 if not isinstance(old_cfg, dict):
                     old_cfg = {}
                 _prev_cfg = dict(old_cfg)
                 old_cfg.update(data)
 
-                # ★★ 1.7.6 保护：别让「后台面板保存」把已配好的尾巴开关关掉。
-                #   面板保存会把**所有键**一起下发，未填的走 schema 默认值，
-                #   于是 `reply_tail_enable` 被默认的 false 覆盖，
-                #   用户明明配好了接口却突然「没有尾巴」。
-                #   规则：原本是开着的 + 尾巴三个内容来源都空 -> 保持开着。
                 try:
                     def _bt(v):
                         if isinstance(v, bool):
@@ -1729,10 +1521,6 @@ class ApixIqfkSimpleMeme(Star):
                 except Exception:
                     pass
 
-                # ★★ 1.7.7：后台「批量解冻」——
-                #   `bank_unfreeze_list` 里填的是英文本逗号分隔的 QQ 号，
-                #   保存配置时**立刻执行**解冻，然后把输入框清空，
-                #   免得下次保存又解一遍。
                 _freed_n = 0
                 try:
                     _qq_raw = to_str(
@@ -1746,7 +1534,6 @@ class ApixIqfkSimpleMeme(Star):
                                     _freed_n += _ck.unfreeze_by_qq(_one)
                             logger.info(f"[apix-meme] 后台批量解冻 {_freed_n} 条"
                                         f"（输入：{_qq_raw}）")
-                    # 无论有没有解冻，都清空这个输入框
                     old_cfg["bank_unfreeze_list"] = ""
                 except Exception:
                     logger.exception("[apix-meme] 后台批量解冻失败")
@@ -1765,10 +1552,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 保存配置接口异常")
                 return _with_cors(json_response({"ok": False, "msg": f"保存失败:{e}"}, status_code=500), request)
 
-        # ---------- GET /previewStatus ----------
         async def _preview_status_handler(request=None, **kwargs):
             """返回当前配置下的电脑状态文本，供独立页面预览。"""
-            # ★ 安全：拒绝跨域
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1799,10 +1584,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 预览电脑状态失败")
                 return _with_cors(json_response({"ok": False, "msg": f"预览失败: {e}"}, status_code=500), request)
 
-        # ---------- POST /testStatusPush ----------
         async def _test_status_push_handler(request=None, **kwargs):
             """按当前（含未保存）配置生成状态文本并立即推送到指定群。"""
-            # ★ 安全：拒绝跨域 + 写操作鉴权
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1823,7 +1606,6 @@ class ApixIqfkSimpleMeme(Star):
                     data = {}
 
                 group_id = str(data.pop("group_id", "") or "").strip()
-                # 优先用推送模块里已知的群；否则取已开启推送的第一个群
                 if not group_id:
                     enabled = self.status_push_module.list_groups()
                     if enabled:
@@ -1834,7 +1616,6 @@ class ApixIqfkSimpleMeme(Star):
                         "msg": "没有可推送的群：请先在群里用「状态推送开」开启，或把群号作为 group_id 传入",
                     }), request)
 
-                # 磁盘配置 + 表单里未保存的修改
                 cfg = dict(self._read_disk_config() or {})
                 cfg.update(data)
 
@@ -1842,7 +1623,6 @@ class ApixIqfkSimpleMeme(Star):
                     event=None, group_id=group_id, cfg=cfg, plugin=self
                 )
                 umo = self.status_push_module.get_umo(group_id)
-                # ★ 按该群「输出模式」渲染（图片模式下附图）
                 images = []
                 try:
                     text, images = await self.render_group_text(
@@ -1862,10 +1642,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 测试推送失败")
                 return _with_cors(json_response({"ok": False, "msg": f"推送失败: {e}"}, status_code=500), request)
 
-        # ---------- GET /backupInfo ----------
         async def _backup_info_handler(request=None, **kwargs):
             """返回默认备份目录与数据文件清单，供页面展示。"""
-            # ★ 安全：拒绝跨域
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1893,10 +1671,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 读取备份信息失败")
                 return _with_cors(json_response({"ok": False, "msg": f"读取失败: {e}"}, status_code=500), request)
 
-        # ---------- POST /backup ----------
         async def _backup_handler(request=None, **kwargs):
             """把数据备份到指定目录（留空则用默认目录）。"""
-            # ★ 安全：拒绝跨域 + 写操作鉴权
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1923,10 +1699,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 备份失败")
                 return _with_cors(json_response({"ok": False, "msg": f"备份失败: {e}"}, status_code=500), request)
 
-        # ---------- GET /backupDownload ----------
         async def _backup_download_handler(request=None, **kwargs):
             """返回全部数据文件的聚合 JSON，供浏览器下载。"""
-            # ★ 安全：拒绝跨域
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1938,10 +1712,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 生成下载包失败")
                 return _with_cors(json_response({"ok": False, "msg": f"生成失败: {e}"}, status_code=500), request)
 
-        # ---------- POST /importPreview ----------
         async def _import_preview_handler(request=None, **kwargs):
             """预检导入来源，不写入任何文件。"""
-            # ★ 安全：拒绝跨域
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -1967,10 +1739,8 @@ class ApixIqfkSimpleMeme(Star):
                 return _with_cors(json_response({"ok": False, "files": [], "total": 0,
                                                  "msg": f"预检失败: {e}"}, status_code=500), request)
 
-        # ---------- POST /importData ----------
         async def _import_data_handler(request=None, **kwargs):
             """从备份目录或备份包还原数据（导入前自动备份当前数据）。"""
-            # ★ 安全：拒绝跨域 + 写操作鉴权
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -2005,11 +1775,9 @@ class ApixIqfkSimpleMeme(Star):
                 return _with_cors(json_response({"ok": False, "imported": [], "skipped": [],
                                                  "msg": f"导入失败: {e}"}, status_code=500), request)
 
-        # ---------- GET /page ----------
         async def _page_handler(request=None, **kwargs):
             if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
                 return _options_response(request)
-            # ★ 安全：拒绝跨域
             denied = _reject_cross_origin(request)
             if denied is not None:
                 return denied
@@ -2030,9 +1798,6 @@ class ApixIqfkSimpleMeme(Star):
                 from aiohttp import web as _web
                 return _web.Response(text=f"error: {e}", status=500)
 
-        # ---------- GET /page/<名字> ★★ 1.7.8：专属设置页 ----------
-        #   主面板里放一个按钮，点开就是**独立 HTML**（不跟主面板挤在一起）。
-        #   目前只有 poke（戳一戳随机回复）；以后加功能往 _EXTRA_PAGES 里加。
         async def _page_extra_handler(request=None, **kwargs):
             if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
                 return _options_response(request)
@@ -2041,7 +1806,6 @@ class ApixIqfkSimpleMeme(Star):
                 return denied
             try:
                 req = request if request is not None else _bound_request()
-                # 从路径里取页面名：.../page/<name>
                 _path = str(getattr(req, "path", "") or "").rstrip("/")
                 _name = _path.rsplit("/", 1)[-1].strip().lower()
                 from aiohttp import web as _web
@@ -2060,7 +1824,6 @@ class ApixIqfkSimpleMeme(Star):
                 from aiohttp import web as _web
                 return _web.Response(text=f"error: {e}", status=500)
 
-        # ---------- 数据集合读取 / 增删改（1.7.2 独立数据文件） ----------
         def _query_param(request, key: str, default: str = "") -> str:
             """
             从请求里取 GET 查询参数。
@@ -2076,7 +1839,6 @@ class ApixIqfkSimpleMeme(Star):
                     req = None
             if req is None:
                 return default
-            # ① 常见属性（mapping / getall）
             for attr in ("query", "args", "params", "rel_url"):
                 try:
                     q = getattr(req, attr, None)
@@ -2093,7 +1855,6 @@ class ApixIqfkSimpleMeme(Star):
                             return str(v[0])
                 except Exception:
                     continue
-            # ② req 自身是 dict
             try:
                 if isinstance(req, dict):
                     for holder in (req, req.get("query"), req.get("args"),
@@ -2102,7 +1863,6 @@ class ApixIqfkSimpleMeme(Star):
                             return str(holder[key])
             except Exception:
                 pass
-            # ③ 从完整 URL 手工解析
             try:
                 url = ""
                 for attr in ("url", "path_qs", "query_string", "raw_path"):
@@ -2147,10 +1907,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.info("[apix‑meme] GET /data 被调用")
                 cols = {}
                 if self.data_store is not None:
-                    # ★ 后台一打开就自动补齐菜单默认内容。
-                    #   `_init_menu_texts` 是幂等的（只补缺失的 id），
-                    #   所以每次都调：既解决「没重载插件 -> 暂无数据」，
-                    #   也能把用户误删的项补回来（不会动他改过的内容）。
                     try:
                         self._init_menu_texts()
                     except Exception:
@@ -2161,7 +1917,6 @@ class ApixIqfkSimpleMeme(Star):
                     "ok": True,
                     "collections": cols,
                     "keys": list(DATA_COLLECTIONS),
-                    # ★★ 市场版 1.1：机器人数据统计（后台第一个按钮）
                     "botStats": self._bot_stats(),
                 }), request)
             except Exception as e:
@@ -2215,19 +1970,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] /birdResolve 失败")
                 return _with_cors(error_response(f"解析失败: {e}", status_code=500), request)
 
-
-
-
-        # ============================================================
-        # ★★ 1.7.7：银行冻结账号管理（后台查看 + 提前解冻）
-        # ------------------------------------------------------------
-        # 冻结是**按群**存的（`bank_frozen_until` 时间戳），
-        # 后台要能：① 列出所有还在冻结中的账号 ② 删除（提前解冻）。
-        # 请求参数（query 或 body 都行）：
-        #   qq     —— 用英文逗号分隔的 QQ 号（该号在**所有群**的冻结全解）
-        #   gid    —— 群号（配合 qq 只解这一个群）
-        #   clear  —— 清空后台那个输入框（保存后自动做，避免重复解冻）
-        # ============================================================
         async def _bank_frozen_handler(request=None, **kwargs):
             """GET/POST /bankFrozen —— 查看冻结账号 / 提前解冻"""
             if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
@@ -2241,7 +1983,6 @@ class ApixIqfkSimpleMeme(Star):
                     return _with_cors(json_response({
                         "ok": False, "msg": "签到模块未加载"}), request)
 
-                # 取参数（query 优先，其次 JSON body）
                 params = {}
                 try:
                     if request is not None and getattr(request, "query", None):
@@ -2264,20 +2005,16 @@ class ApixIqfkSimpleMeme(Star):
 
                 freed = 0
                 if qq_raw:
-                    # ★ 支持英文 / 中文逗号、顿号、空格分隔
                     for _one in re.split(r"[,，、\s]+", qq_raw):
                         _one = _one.strip()
                         if not _one:
                             continue
                         if gid:
-                            # 指定群：只解这一个群
                             if ck.unfreeze(gid, _one):
                                 freed += 1
                         else:
-                            # 不指定群：该 QQ 在所有群的冻结全解
                             freed += ck.unfreeze_by_qq(_one)
 
-                # 清空后台输入框（保存后调用）
                 if clear:
                     try:
                         _cfg = self._read_disk_config() or {}
@@ -2322,7 +2059,6 @@ class ApixIqfkSimpleMeme(Star):
             try:
                 req = request if request is not None else _bound_request()
 
-                # ★ 同时支持 GET 查询串 与 POST JSON body
                 _body = {}
                 if _req_method(req) == "POST":
                     try:
@@ -2347,7 +2083,6 @@ class ApixIqfkSimpleMeme(Star):
                     except Exception:
                         return default
 
-                # ---- 令牌校验（复用同一套逻辑）----
                 token_cfg = str(getattr(self, "web_admin_token", "") or "").strip()
                 if token_cfg and _q("token").strip() != token_cfg:
                     logger.warning("[apix-meme] /dataOp 令牌校验失败，已拒绝")
@@ -2366,7 +2101,6 @@ class ApixIqfkSimpleMeme(Star):
                         {"ok": False, "msg": "数据存储未初始化"},
                         status_code=500), request)
 
-                # ★ 先强制重读，避免内存副本落后导致「删了又回来」
                 try:
                     self.data_store.get(key, autoreload=2)
                 except Exception:
@@ -2488,10 +2222,6 @@ class ApixIqfkSimpleMeme(Star):
                     rows = body.get("rows")
                     if not isinstance(rows, list):
                         return _with_cors(error_response("rows 必须是数组", status_code=400), request)
-                    # ★ menu_texts 写入时强制清洗：
-                    #   去掉「id 为空 / 不在注册表 / 重复」的条目。
-                    #   这些多半是后台误点「+ 新增一条」加出来的，
-                    #   留着既没用，又会让「删除」看起来删不掉。
                     if key == "menu_texts":
                         _seen2, _clean2 = set(), []
                         for _r2 in rows:
@@ -2532,7 +2262,6 @@ class ApixIqfkSimpleMeme(Star):
                 else:
                     return _with_cors(error_response(f"未知操作：{action}", status_code=400), request)
 
-                # 数据变了 -> 让各模块重新加载
                 try:
                     self.reload_cfg()
                 except Exception:
@@ -2556,8 +2285,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.error("[apix-meme] context 没有 register_web_api，无法注册桥接路由")
             return False
 
-        # ★ 给 config 路由加上 OPTIONS 方法
-        # ★★ 1.8.0：授权状态列表（后台页面用）
         async def _auth_status_handler(request=None, **kwargs):
             """
             GET /auth —— 授权状态列表（后台页面用）。
@@ -2619,12 +2346,10 @@ class ApixIqfkSimpleMeme(Star):
                         "left_days": round(left, 2),
                         "note": str(r.get("note", "") or ""),
                     })
-                # 排序：永久 -> 即将到期 -> 有效 -> 过期 -> 停用
                 _ord = {"never": 0, "soon": 1, "active": 2, "expired": 3,
                         "disabled": 4}
                 rows.sort(key=lambda x: (_ord.get(x["state"], 9),
                                          x["expire_ts"] or 0))
-                # 未设置的群规则文案（-1 不授权 / 0 永久 / N 试用 N 天）
                 try:
                     _dtxt = am.default_rule_text(markdown=False)
                 except Exception:
@@ -2662,15 +2387,10 @@ class ApixIqfkSimpleMeme(Star):
             (f"/{PLUGIN_ID}/bankFrozen",       _bank_frozen_handler,       ["GET", "POST", "OPTIONS"], "银行冻结账号（查看 / 解冻）"),
             (f"/{PLUGIN_ID}/data",             _get_data_handler,          ["GET", "OPTIONS"],  "读取数据集合"),
             (f"/{PLUGIN_ID}/data",             _save_data_handler,         ["POST", "OPTIONS"], "保存数据集合"),
-            # ★ 单条操作通道：同时支持 GET 与 POST
-            #   GET  —— 桥接 POST 与同源 POST 都不可用时的可靠兜底
-            #   POST —— 同源 fetch 可用时走这里（大 payload 也不怕）
             (f"/{PLUGIN_ID}/dataOp",           _data_op_handler,           ["GET", "OPTIONS"],  "单条数据增删改（GET）"),
             (f"/{PLUGIN_ID}/dataOp",           _data_op_handler,           ["POST", "OPTIONS"], "单条数据增删改（POST）"),
             (f"/{PLUGIN_ID}/page",   _page_handler,        ["GET", "OPTIONS"],  "配置页面"),
-            # ★★ 1.3.0：授权状态列表（后台页面展示）
             (f"/{PLUGIN_ID}/auth",   _auth_status_handler,  ["GET", "OPTIONS"],  "授权状态列表"),
-            # ★★ 1.7.8：专属设置页（独立 HTML）—— 主面板按钮点开就是这里
             (f"/{PLUGIN_ID}/page/{{name}}", _page_extra_handler,
              ["GET", "OPTIONS"], "专属设置页（独立HTML）"),
         ]
@@ -2685,7 +2405,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.info(f"[apix-meme] 桥接路由已注册: {route} {methods}")
             except Exception as e:
                 logger.error(f"[apix-meme] 注册失败 {route} {methods}: {e}")
-        # ★★ 市场版 1.1：记下注册成功的路由
         try:
             self._registered_routes = list(_reg)
         except Exception:
@@ -2721,7 +2440,6 @@ class ApixIqfkSimpleMeme(Star):
         out["seen_count"] = len(_seen)
         out["enabled_groups"] = _enabled
         out["enabled_count"] = len(_enabled)
-        # ---- 功能开关 ----
         _feat = {}
         try:
             for _k, _v in (getattr(self, "feature_switch", None) or {}).items():
@@ -2731,7 +2449,6 @@ class ApixIqfkSimpleMeme(Star):
         out["features"] = _feat
         out["feature_on"] = sum(1 for v in _feat.values() if v)
         out["feature_total"] = len(_feat)
-        # ---- 逐功能「开了几个群」 ----
         _gf = {}
         try:
             for _k, _v in (getattr(self, "group_feature_switches",
@@ -2744,7 +2461,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             _gf = {}
         out["group_feature_on"] = _gf
-        # ---- 数据 / 菜单 / 配置 / 路由 ----
         try:
             out["collections"] = len(DATA_COLLECTIONS)
         except Exception:
@@ -2762,7 +2478,6 @@ class ApixIqfkSimpleMeme(Star):
             out["routes"] = len(self._registered_routes or [])
         except Exception:
             out["routes"] = 0
-        # ---- 版本 / 运行时长 ----
         try:
             from .core import system_status as _ss
             out["version"] = str(_ss.get_plugin_version() or "")
@@ -2787,9 +2502,6 @@ class ApixIqfkSimpleMeme(Star):
             out["now"] = ""
         return out
 
-    # ============================================================
-    # 基础判定 / 配置读写
-    # ============================================================
     def _config_path(self) -> str:
         return _config_path()
 
@@ -2821,11 +2533,8 @@ class ApixIqfkSimpleMeme(Star):
             mode = om.mode_of(_gid)
         except Exception:
             mode = "text"
-        # ★★ 1.7.7：图片模式有深色 / 白底黑字两种，统一用 startswith 判断
         if not str(mode).startswith("image"):
             return self._build_text_avatar_result(event, text, avatar_path)
-        # ★ 图片模式：渲染成「图中图」卡片 —— 头像嵌在名称下方，
-        #   整张只发一条消息（不再文字/头像分开发）
         img_path = ""
         try:
             img_path = await om.render_husband_card(text, avatar_path or "")
@@ -2836,7 +2545,6 @@ class ApixIqfkSimpleMeme(Star):
                 return [Image.fromFileSystem(img_path)]
             except Exception:
                 logger.exception("[apix-meme] 加载老公卡片失败")
-        # 渲染失败才回落原来的「文字 + 头像」
         return self._build_text_avatar_result(event, text, avatar_path)
 
     def _is_group_feature_enable(self, group_id: str, feature_key: str) -> bool:
@@ -2909,8 +2617,6 @@ class ApixIqfkSimpleMeme(Star):
         om = getattr(self, "output_mode_module", None)
         if om is None or not text:
             return text, []
-        # ★★ 1.7.6：文本模式也要去掉 markdown 强调标记（`**`）
-        #   （图片模式在 render_to_path 里已经去掉；这里覆盖文本模式）
         try:
             from .core.path_utils import strip_md as _smd2
         except Exception:
@@ -2920,7 +2626,6 @@ class ApixIqfkSimpleMeme(Star):
                 _smd2 = None
         if _smd2 is not None:
             text = _smd2(text)
-        # ★ 保证末尾有底部横线（尾巴统一挂它下面）
         try:
             from .core.path_utils import with_bottom_bar as _wbb2
         except Exception:
@@ -2930,7 +2635,6 @@ class ApixIqfkSimpleMeme(Star):
                 _wbb2 = None
         if _wbb2 is not None:
             text = _wbb2(text)
-        # ★ 取尾巴（单独传，不拼进正文）
         _tail = ""
         if with_tail:
             try:
@@ -2943,10 +2647,7 @@ class ApixIqfkSimpleMeme(Star):
             mode = om.mode_of(group_id)
         except Exception:
             return text, []
-        # ★★ 1.7.7：图片模式有深色 / 白底黑字两种，都用 `startswith`
-        #   判断，否则 `image_light` 会被当成文本模式（用户反馈过）。
         if not str(mode).startswith("image"):
-            # 纯文本模式：尾巴直接接末尾
             if _tail:
                 return text + "\n" + _tail, []
             return text, []
@@ -2960,7 +2661,6 @@ class ApixIqfkSimpleMeme(Star):
                 return text + "\n" + _tail, []
             return text, []
         if p:
-            # ★ 只发图片，不再附文字（避免同一条内容重复两遍）
             return "", [p]
         if _tail:
             return text + "\n" + _tail, []
@@ -2980,15 +2680,14 @@ class ApixIqfkSimpleMeme(Star):
             disk = {}
         panel = getattr(self, "config", None)
         if not isinstance(panel, dict) or not panel:
-            # ★ 兜底：self.config 拿不到就直读面板配置文件
             try:
                 panel = read_astrbot_panel_config()
             except Exception:
                 panel = {}
         if isinstance(panel, dict) and panel:
             merged = {}
-            merged.update(panel)     # 面板先铺底（补上新注册的键）
-            merged.update(disk)      # 插件侧覆盖（它更新）
+            merged.update(panel)
+            merged.update(disk)
             return merged
         return disk
 
@@ -3012,9 +2711,9 @@ class ApixIqfkSimpleMeme(Star):
             disk = self._read_disk_config()
             if isinstance(disk, dict):
                 merged.update(disk)
-            merged.update(cfg)                 # 面板已有的键优先
+            merged.update(cfg)
             if isinstance(updates, dict):
-                merged.update(updates)         # 本次改动最终覆盖
+                merged.update(updates)
             cfg.clear()
             cfg.update(merged)
             save = getattr(cfg, "save_config", None)
@@ -3028,9 +2727,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.exception("[apix-meme] 同步到 AstrBot 配置失败")
             return False
 
-    # ============================================================
-    # ★ AstrBot 桥接入口：get_config / save_config
-    # ============================================================
     async def get_config(self):
         """
         前端 AstrBotPluginPage.apiGet("getConfig") 会调用这里。
@@ -3043,14 +2739,12 @@ class ApixIqfkSimpleMeme(Star):
                     schema = read_schema()
                 except Exception:
                     logger.exception("[apix-meme] read_schema 失败")
-            # ★★ 市场版 1.1：缓存一份（后台「机器人数据」显示配置项数量）
             try:
                 if isinstance(schema, dict) and schema:
                     self._schema_cache = schema
             except Exception:
                 pass
 
-            # 统一用 path_utils 读取，和 system_status.py 走同一个路径
             config = self._read_disk_config() or {}
             if not isinstance(config, dict):
                 config = {}
@@ -3082,12 +2776,10 @@ class ApixIqfkSimpleMeme(Star):
 
             payload = None
 
-            # ---------- 1) 位置参数 data ----------
             if isinstance(data, dict) and data:
                 payload = data
                 logger.info(f"[apix-meme] save_config 使用位置参数，{len(payload)} 项")
 
-            # ---------- 2) kwargs 里带 data / config / body / payload ----------
             if not payload and kwargs:
                 for k in ("data", "config", "body", "payload"):
                     v = kwargs.get(k)
@@ -3108,7 +2800,6 @@ class ApixIqfkSimpleMeme(Star):
                         except Exception:
                             pass
 
-            # ---------- 3) kwargs 本身就是配置键值对 ----------
             if not payload and kwargs:
                 meta_keys = {"request", "self", "context", "data", "config", "body", "payload"}
                 candidate = {k: v for k, v in kwargs.items() if k not in meta_keys}
@@ -3120,7 +2811,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.warning("[apix-meme] save_config 数据为空，拒绝保存")
                 return {"ok": False, "msg": "保存数据为空"}
 
-            # ---------- 4) 兼容外层再包一层 ----------
             if "data" in payload and isinstance(payload["data"], dict) and len(payload) == 1:
                 payload = payload["data"]
             if "config" in payload and isinstance(payload["config"], dict) and len(payload) == 1:
@@ -3128,14 +2818,11 @@ class ApixIqfkSimpleMeme(Star):
 
             logger.info(f"[apix-meme] save_config 待写入 keys={list(payload.keys())}")
 
-            # ---------- 5) 统一用 path_utils 合并写盘 ----------
             existing = self._read_disk_config() or {}
             if not isinstance(existing, dict):
                 existing = {}
             existing.update(payload)
             ok = self._write_disk_config(existing)
-            # ★ 同时同步到 AstrBot 配置（面板 data/config），
-            #   否则两处配置会各改各的、互相覆盖
             if ok:
                 self._sync_to_astrbot_config(payload)
             return {"ok": bool(ok), "msg": "已保存" if ok else "保存失败"}
@@ -3149,9 +2836,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.info(f"[apix-meme] 已写入磁盘: {_config_path()}")
         return ok
 
-    # ============================================================
-    # 旧格式迁移
-    # ============================================================
     def _migrate_old_format(self):
         try:
             disk_cfg = self._read_disk_config()
@@ -3205,9 +2889,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 自动迁移失败")
 
-    # ============================================================
-    # 配置刷新
-    # ============================================================
     def _write_group_list(self, cfg_key: str, group_id: str, enabled: bool) -> bool:
         """
         把某个群号加入/移出后台「生效的群号」名单（key=cfg_key），并立即生效。
@@ -3275,7 +2956,6 @@ class ApixIqfkSimpleMeme(Star):
             moved = result.get("moved") or {}
             if not moved:
                 return
-            # 迁移成功 -> 清空后台配置里的那些数据键
             for key in moved:
                 existing[key] = ""
             self._write_disk_config(existing)
@@ -3291,10 +2971,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 读取配置迁移数据失败")
 
-    # 各历史版本内置上班事件的「事件名集合」，用于判断
-    # 数据文件里存的是「内置默认」还是「用户自己改过」。
-    #   v1：最开始的 10 条（★ 这 10 条散落在默认表里，**不能用前缀取**）
-    #   v2：58 条（积分上限最高 300）
     _PET_WORK_V1_NAMES = (
         "在街角发传单", "帮邻居看店", "送外卖跑单", "当图书馆管理员",
         "参加宠物选美", "给小朋友当玩伴", "去码头搬货", "做直播当网红",
@@ -3318,12 +2994,10 @@ class ApixIqfkSimpleMeme(Star):
         out = []
         if cur:
             out.append(cur)
-        # 历史：v2 的 58 条 = 当前默认里「v1 那 10 条以外的全部」
         v1 = set(cls._PET_WORK_V1_NAMES)
         v2 = [x for x in cur if x not in v1]
         if v2:
             out.append(sorted(v2))
-        # 历史：v1 的 10 条 = 上面那份固定名单（只保留确实存在的）
         old = sorted(x for x in cls._PET_WORK_V1_NAMES if x in set(cur))
         if old:
             out.append(old)
@@ -3341,7 +3015,6 @@ class ApixIqfkSimpleMeme(Star):
         """
         if self.data_store is None:
             return
-        # ★ v3：120 条事件 + 上限全部四位数（1000~8000，按档阶梯递增）
         target = 3
         try:
             if int(getattr(self.data_store, "pet_work_events_ver", 0) or 0) >= target:
@@ -3349,7 +3022,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             pass
 
-        # ---- 先看现有内容是「内置默认」还是「用户自己改的」----
         try:
             _existing = self.data_store.get("pet_work_events", autoreload=2) or []
         except Exception:
@@ -3360,7 +3032,6 @@ class ApixIqfkSimpleMeme(Star):
         _is_builtin = bool(_names) and any(_names == sig for sig in _builtin)
 
         if _existing and not _is_builtin:
-            # 用户自己改过 -> 绝不动，只登记版本，避免以后反复检查
             logger.info(
                 "[apix-meme] 上班事件是你自己改过的（%d 条），"
                 "本次升级**不覆盖**；想用新的内置事件可在后台清空该列表",
@@ -3372,7 +3043,6 @@ class ApixIqfkSimpleMeme(Star):
                 pass
             return
 
-        # ---- 备份原文件 ----
         try:
             import shutil
             import time as _t
@@ -3383,12 +3053,8 @@ class ApixIqfkSimpleMeme(Star):
                 logger.info(f"[apix-meme] 上班事件升级前已备份：{os.path.basename(bak)}")
         except Exception:
             logger.exception("[apix-meme] 备份数据文件失败（继续升级）")
-        # ---- 写入新的内置事件 ----
         try:
             pet = getattr(self, "pet_module", None)
-            # ★ 关键：**直接用内置默认表**，不要读 pet.work_events ——
-            #   它可能是内存里那份「旧配置里的上班事件」，
-            #   照抄回去就等于没升级（这正是以前升级没生效的原因）。
             try:
                 from .core.pet import DEFAULT_WORK_EVENTS as _DEF
             except Exception:
@@ -3401,7 +3067,6 @@ class ApixIqfkSimpleMeme(Star):
                     for (e, a, b, c, d) in (_DEF or [])]
             if rows:
                 self._save_collection("pet_work_events", rows)
-                # ★ 同步内存，避免本次运行内读到旧列表
                 if pet is not None:
                     try:
                         pet.work_events = [
@@ -3418,14 +3083,12 @@ class ApixIqfkSimpleMeme(Star):
                 logger.warning("[apix-meme] 内置上班事件表为空，跳过升级")
         except Exception:
             logger.exception("[apix-meme] 写入新的上班事件失败")
-        # ---- 登记版本（★ data_store.save() 会把它写进数据文件）----
         try:
             self.data_store.pet_work_events_ver = target
             self.data_store.save()
         except Exception:
             logger.exception("[apix-meme] 登记上班事件版本失败")
 
-    # AstrBot 误写进插件目录的文件（不是本插件的数据）
     _STRAY_MARKERS = ("cmd_config.json", "t2i_templates")
 
     def _cleanup_stray_astrbot_data(self) -> bool:
@@ -3459,25 +3122,20 @@ class ApixIqfkSimpleMeme(Star):
             live_r = _real(_plugin_data_dir())
             plugin_r = _real(_plugin_dir())
 
-            # 真正的数据目录必须存在，否则可能是兜底场景，别动
             if not os.path.isdir(live_r):
                 return False
-            # 与数据目录重合或互相包含 -> 放弃
             if (stray_r == live_r
                     or stray_r.startswith(live_r + os.sep)
                     or live_r.startswith(stray_r + os.sep)):
                 return False
-            # 必须在插件目录下
             if not stray_r.startswith(plugin_r + os.sep):
                 return False
-            # 有 plugin_data/ 就认为可能是本插件兜底数据 -> 放弃
             if os.path.isdir(os.path.join(stray_r, "plugin_data")):
                 logger.info(
                     "[apix-meme] 插件目录下的 data/plugin_data 存在，"
                     "按兜底数据处理，不清理"
                 )
                 return False
-            # 只认 AstrBot 特征文件
             names = set(os.listdir(stray_r))
             if not any(m in names for m in self._STRAY_MARKERS):
                 return False
@@ -3545,9 +3203,7 @@ class ApixIqfkSimpleMeme(Star):
                         for i in pet.items
                     ])
                     logger.info(f"[apix-meme] 已写入 {len(pet.items)} 个默认物品")
-                # ★ 一次性把旧的 10 条上班事件升级为 57 条（会自动备份）
                 self._upgrade_pet_work_events()
-            # ★ 早安 / 晚安打卡文案：把内置默认写进数据文件，方便后台直接改
             gm = getattr(self, "greeting_module", None)
             if gm is not None:
                 self._init_menu_texts()
@@ -3574,7 +3230,6 @@ class ApixIqfkSimpleMeme(Star):
                     if rows:
                         self._save_collection("greeting_night_messages", rows)
                         logger.info(f"[apix-meme] 已写入 {len(rows)} 条默认晚安文案")
-            # 接口规则：内存里的默认规则同步进数据文件
             if not self.data_store.get("api_list") and getattr(self, "rules", None):
                 self._save_collection("api_list", [
                     {"keywords": ",".join(r.get("keywords") or []),
@@ -3606,7 +3261,6 @@ class ApixIqfkSimpleMeme(Star):
                         or "").strip()
             except Exception:
                 d = ""
-        # ★★ 市场版：坐骑图片已移除，这里恒返回空
         return d
 
     def _sync_summaries_to_config(self):
@@ -3623,17 +3277,7 @@ class ApixIqfkSimpleMeme(Star):
             changed = False
             for key in DATA_COLLECTIONS:
                 text = self.data_store.summary(key, limit=5)
-                # ★★ 1.7.6 修复：**绝不能**把摘要写成 `key` 本身！
-                #   这些键（mount_list / pet_list / api_list …）和
-                #   `_conf_schema.json` 里的真实数据项**同名**，
-                #   写进去会把真数据覆盖成「共 28 个坐骑」这种文本，
-                #   导致 checkin.reload() 读到字符串 -> 坐骑列表变空。
-                #   摘要统一改放到 `data_summary_<key>`，只读展示用。
                 _skey = f"data_summary_{key}"
-                # ★ 顺手修掉历史脏数据（旧版本把摘要写进了真键）。
-                #   这些键的正确类型永远是**数组**；只要不是数组，
-                #   就一定是被摘要文本之类的脏值覆盖了，直接删掉，
-                #   让各模块走「独立数据文件」那条路。
                 _cur = existing.get(key)
                 if _cur is not None and not isinstance(_cur, list):
                     existing.pop(key, None)
@@ -3650,7 +3294,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 同步数据摘要失败")
 
-
     def _save_collection(self, key: str, rows: list) -> bool:
         """
         把一组数据写入独立数据文件（1.7.2 起数据不再存后台配置）。
@@ -3661,7 +3304,6 @@ class ApixIqfkSimpleMeme(Star):
             try:
                 ok = self.data_store.set(key, rows)
                 if ok:
-                    # 同步内存 config，避免同一次运行里读到旧值
                     try:
                         if isinstance(self.config, dict):
                             self.config[key] = rows
@@ -3670,7 +3312,6 @@ class ApixIqfkSimpleMeme(Star):
                     return True
             except Exception:
                 logger.exception(f"[apix-meme] 写入数据文件失败：{key}")
-        # 回退：写后台配置
         try:
             existing = self._read_disk_config() or {}
             if not isinstance(existing, dict):
@@ -3694,17 +3335,6 @@ class ApixIqfkSimpleMeme(Star):
             for c in (catalog or [])
         ])
 
-    # ============================================================
-    # ★★ 1.7.6：配置「热刷新」
-    # ------------------------------------------------------------
-    # 用户需求：后台（含独立 HTML 配置页）保存的自定义指令名，
-    #   要**实时**体现在所有指令输出里 —— 不用手动重载插件。
-    #
-    # 做法：每次输出前看一眼配置文件 mtime，
-    #   变了就 `reload_cfg()` 一次（自带节流，不会每次都读盘）。
-    #   ★ 用**实例属性**（在 _refresh 里初始化），不要用类属性 ——
-    #     类属性会被所有实例共享，多实例时互相干扰。
-    # ============================================================
     async def _group_member_ids(self, event, group_id: str):
         """
         取本群**当前真实成员**的 QQ 集合（用于排行榜剔除退群者）。
@@ -3731,7 +3361,6 @@ class ApixIqfkSimpleMeme(Star):
             _hit = _cache.get(gid)
             if _hit and _now - _hit[0] < 300:
                 return _hit[1]
-            # ---- 找 bot ----
             bot = getattr(event, "bot", None)
             if bot is None:
                 for _a in ("api", "client", "onebot"):
@@ -3774,7 +3403,6 @@ class ApixIqfkSimpleMeme(Star):
                 return None
             _cache[gid] = (_now, _ids)
             logger.info(f"[apix-meme] 群 {gid} 成员名单 {len(_ids)} 人（已缓存）")
-            # ★★ 1.2：拿到名单就**顺手清掉已退群成员的本群数据**
             try:
                 if self.checkin_module is not None:
                     self.checkin_module.purge_departed(gid, _ids)
@@ -3800,7 +3428,6 @@ class ApixIqfkSimpleMeme(Star):
             if _last is not None and now - float(_last) < 1.0:
                 return False
             self._cfg_refresh_ts = now
-            # 找配置文件
             try:
                 from .core.path_utils import config_path as _cp
             except Exception:
@@ -3831,9 +3458,6 @@ class ApixIqfkSimpleMeme(Star):
 
         disk_cfg = self._read_disk_config()
 
-        # ★ 合并顺序：先面板配置，再用插件自己那份覆盖。
-        #   插件侧（plugin_data）是群内指令直接改的，必须优先，
-        #   否则面板里的旧值会把这些改动冲掉（曾导致图片模式失效）。
         merged = {}
         if isinstance(self.config, dict):
             merged.update(self.config)
@@ -3846,8 +3470,6 @@ class ApixIqfkSimpleMeme(Star):
                     f"[apix-meme] 面板有 {len(_missing)} 个插件配置里没有的键，"
                     f"沿用面板值（如 {_missing[:3]}）")
 
-        # ★ 数据类内容以独立数据文件为准（后台那些字段只是只读展示）
-        #   把它覆盖进 merged，各模块照旧从 cfg 里读，无需改动
         if self.data_store is not None:
             try:
                 for _k in DATA_COLLECTIONS:
@@ -3858,9 +3480,7 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 注入数据文件内容失败")
 
         self.must_at_bot = bool(merged.get("must_at_bot", False))
-        # ★★ 审核整改：默认 key 改为**完全由用户配置**（默认空串）
         self.default_key = to_str(merged.get("default_key", "")).strip()
-
 
         self.cmd_main_name = to_str(merged.get("cmd_main", "自定义娱乐")).strip() or "自定义娱乐"
         self.cmd_admin_name = to_str(merged.get("cmd_admin", "管理员指令")).strip() or "管理员指令"
@@ -3913,8 +3533,6 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_daily_menu_name = to_str(merged.get("cmd_daily_menu", "每日系列")).strip() or "每日系列"
         self.cmd_entertain_menu_name = to_str(
             merged.get("cmd_entertain_menu", "娱乐功能")).strip() or "娱乐功能"
-        # ★★ 市场版：名片功能已移除
-        # ★ 查询功能（QQ 用户信息）
         self.qqinfo_enable = bool(merged.get("qqinfo_enable", True))
         self.cmd_qqinfo = to_str(
             merged.get("cmd_qqinfo", "查询,查QQ,查qq,查用户")).strip() or "查询"
@@ -3938,7 +3556,6 @@ class ApixIqfkSimpleMeme(Star):
 
         self.cmd_blacklist_list_name = to_str(merged.get("cmd_blacklist_list", "黑名单列表")).strip() or "黑名单列表"
 
-        # 群员管理：开关 / 黑名单 / 禁言时长 / 默认动作
         self.moderation_enable = bool(merged.get("moderation_enable", True))
         self._blacklist_raw = to_str(merged.get("member_blacklist", ""))
         self.member_blacklist = parse_blacklist(self._blacklist_raw)
@@ -3955,8 +3572,6 @@ class ApixIqfkSimpleMeme(Star):
         if self.mute_duration < 60:
             self.mute_duration = 60
 
-        # ★★ 1.2 迁移：老配置里存的是旧默认值，这里自动升级一次
-        #   （只动「仍是旧系统默认」的，用户自定义过的一律保留）
         try:
             _mig = {
                 "cmd_daily_news": ("每日读报", "今日读报,每日读报"),
@@ -3973,7 +3588,6 @@ class ApixIqfkSimpleMeme(Star):
                     merged[_k] = _new
                     _cur[_k] = _new
             if _cur:
-                # 写回磁盘，避免每次启动都再迁一遍
                 try:
                     _disk = self._read_disk_config() or {}
                     if isinstance(_disk, dict):
@@ -3987,7 +3601,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.debug("[apix-meme] 读报指令名迁移失败", exc_info=True)
 
-        # ★★ 1.2：手动读报开关默认值
         self.cmd_daily_news_manual_on_name = to_str(merged.get(
             "cmd_daily_news_manual_on",
             "开启功能 读报功能,开启读报功能"
@@ -4008,14 +3621,12 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 刷新每日读报模块失败")
 
-        # ★ 发言统计：指令名 / 群号黑名单 / 总开关
         if self.speak_stats_module is not None:
             try:
                 self.speak_stats_module.reload(merged)
             except Exception:
                 logger.exception("[apix-meme] 刷新发言统计模块失败")
 
-        # ★ 小鸟图鉴：指令名 / 素材目录
         try:
             def _bn(v, dflt):
                 if isinstance(v, (list, tuple)):
@@ -4031,7 +3642,6 @@ class ApixIqfkSimpleMeme(Star):
                                    ["我的图鉴", "小鸟图鉴"])
             self.cmd_bird_menu = _bn(merged.get("cmd_bird_menu"),
                                      ["小鸟图鉴"])
-            # ★ 图鉴列表 / 图鉴查看（1.7.5）
             self.cmd_bird_list = _bn(merged.get("cmd_bird_list"),
                                      ["图鉴列表"])
             self.cmd_bird_view = _bn(merged.get("cmd_bird_view"),
@@ -4041,7 +3651,6 @@ class ApixIqfkSimpleMeme(Star):
                     merged.get("bird_list_per_page", 10) or 10)))
             except Exception:
                 self.bird_list_per_page = 10
-            # 黑名单：填了群号 = 这些群不触发（留空 = 所有群都触发）
             try:
                 self.bird_groups = parse_gid_list(
                     merged.get("bird_groups", ""))
@@ -4049,11 +3658,8 @@ class ApixIqfkSimpleMeme(Star):
                 self.bird_groups = []
             self.bird_image_dir = str(
                 merged.get("bird_image_dir") or BIRD_DIR_DEFAULT).strip()
-            # ★ 图鉴左上角是否显示「自己收集第几名」（全群共享，跨群统一名次）
             self.bird_rank_enable = bool(
                 merged.get("bird_rank_enable", True))
-            # ---- 猜拳（1.7.5）----
-            # ★ 积分显示名称（后台可改）
             _sn = str(merged.get("score_name", "") or "积分").strip() or "积分"
             self.score_name = _sn
             for _mod in ("checkin_module", "pet_module"):
@@ -4064,10 +3670,6 @@ class ApixIqfkSimpleMeme(Star):
                     except Exception:
                         pass
 
-            # ★★ 1.7.6：统一标题前缀（后台可自定义「鸡鸡娱乐系统：」）
-            #   只改一处模块级变量，100 多个 title_bar() 调用点全部生效。
-            #   · 留空 = 完全不要前缀
-            #   · 没配过（键不存在）= 用默认值
             try:
                 from .core.path_utils import (
                     set_title_prefix as _set_pfx,
@@ -4091,8 +3693,6 @@ class ApixIqfkSimpleMeme(Star):
                     logger.exception("[apix-meme] 设置标题前缀失败")
                     self.title_prefix = _PFX_DEF
 
-            # ★★ 1.7.6：坐骑**指令菜单**入口（后台可自定义）
-            #   默认 `坐骑功能,坐骑帮助`；用 `_mount_menu_names()` 读取。
             try:
                 _mmn = merged.get("mount_menu_names")
                 self.mount_menu_names_raw = (
@@ -4100,10 +3700,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 self.mount_menu_names_raw = ""
 
-            # ★★ 1.7.7：菜单入口名（后台可自定义）
-            #   一次把所有 `menu_*_names` 配置键读进来，
-            #   `_menu_entry_names()` 按需取用；改完实时生效。
-            #   ★ 同时记住「历史用过的名字」，改名后旧名仍能打开菜单。
             try:
                 _prev = dict(getattr(self, "_menu_entry_prev", {}) or {})
                 _er = {}
@@ -4125,18 +3721,13 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 self._menu_entry_raw = {}
 
-            # ★★ 市场版：猜拳 / 名片配置读取已移除
             self.qqinfo_groups = parse_gid_whitelist(
                 merged.get("qqinfo_groups", ""))
 
-            # ★★ 1.7.7：猜数游戏配置
             self.guess_groups = parse_gid_whitelist(
                 merged.get("guess_groups", ""))
             self.guess_enable = bool(merged.get("guess_enable", True))
 
-            # ============================================================
-            # ★★ 市场版 1.1：赛车配置
-            # ============================================================
             self.racing_enable = bool(merged.get("racing_enable", True))
 
             def _ri(key, dflt, lo=None, hi=None):
@@ -4254,7 +3845,6 @@ class ApixIqfkSimpleMeme(Star):
                                      exc_info=True)
                 except Exception:
                     logger.exception("[apix-meme] 同步赛车配置失败")
-            # ★★ 1.7.7 重写：开新局 / 参与 两条指令
             self.cmd_guess_start = _bn(merged.get("cmd_guess_start"),
                                        ["开始猜数"])
             self.cmd_guess = _bn(merged.get("cmd_guess"), ["猜数"])
@@ -4310,7 +3900,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 刷新小鸟图鉴配置失败")
 
-        # ★ 宠物：总开关与各项配置
         if self.pet_module is not None:
             try:
                 self.pet_module.reload(merged)
@@ -4345,19 +3934,16 @@ class ApixIqfkSimpleMeme(Star):
             if x.strip()
         ]
 
-        # 写操作令牌（可选）：留空时仅依赖同源 + 面板登录防护
         self.web_admin_token = to_str(merged.get("web_admin_token", "")).strip()
 
         self.minecraft_auto_groups = [
             x.strip() for x in to_str(merged.get("minecraft_auto_groups", "")).splitlines()
             if x.strip()
         ]
-        # MC 测试推送的指定群：留空则回退到所有开启自动检测的群
         self.minecraft_test_groups = [
             x.strip() for x in to_str(merged.get("minecraft_test_groups", "")).splitlines()
             if x.strip()
         ]
-        # ★ MC 群号黑名单（留空 = 所有群生效）
         self.minecraft_groups = parse_gid_whitelist(
             merged.get("minecraft_groups", ""))
         if self.minecraft_module is not None:
@@ -4382,14 +3968,12 @@ class ApixIqfkSimpleMeme(Star):
         if self.group_admin_module is not None:
             self.group_admin_module.set_ttl(ttl)
 
-        # ★ 1.7.6：群事件提示配置
         if self.notice_module is not None:
             try:
                 self.notice_module.reload(merged)
             except Exception:
                 logger.exception("[apix-meme] 载入提示功能配置失败")
 
-        # ★★ 1.7.8：戳一戳随机回复（配置 + 词库）
         if self.poke_reply_module is not None:
             try:
                 _pw = None
@@ -4415,27 +3999,20 @@ class ApixIqfkSimpleMeme(Star):
             self.group_mode = "off"
         self.group_whitelist = parse_line_list(merged.get("group_whitelist", ""))
         self.group_blacklist = parse_line_list(merged.get("group_blacklist", ""))
-        # ★ 全局群白名单：填了群号则只有这些群能用本插件；留空 = 不限制群聊
         self.allowed_groups = parse_gid_whitelist(merged.get("global_groups", ""))
-        # ★ 电脑状态：单独群开关（填了则只有这些群能查电脑状态）
         self.status_groups = parse_gid_whitelist(merged.get("status_groups", ""))
-        # ★ 电脑状态：功能开关（和「启用早安晚安」同一层级）
-        #   旧的 status_enable / daily_status_push_enable 仍兼容
         if "status_feature_enable" in merged:
             self.status_enable = bool(merged.get("status_feature_enable"))
         elif "status_enable" in merged:
             self.status_enable = bool(merged.get("status_enable"))
         else:
             self.status_enable = bool(merged.get("daily_status_push_enable", True))
-        # 同步给定时推送模块（推送也受这个功能开关控制）
         if self.status_push_module is not None:
             try:
                 self.status_push_module.set_enable(self.status_enable)
             except Exception:
                 logger.exception("[apix-meme] 同步电脑状态总开关失败")
 
-        # ★ 让群里的开关指令能写回后台群号名单
-        #   白名单语义：开启 = 加入名单，关闭 = 移除
         try:
             if self.hourly_chime_module is not None:
                 self.hourly_chime_module._cfg_write = (
@@ -4446,22 +4023,18 @@ class ApixIqfkSimpleMeme(Star):
                     lambda gid, on: self._write_group_list(
                         "daily_status_push_groups", gid, on))
             if self.daily_news_module is not None:
-                # 自动推送名单（「每日读报」开关）
                 self.daily_news_module._cfg_write = (
                     lambda gid, on: self._write_group_list(
                         "daily_news_auto_groups", gid, on))
-                # 手动读报名单（「读报功能」开关）
                 self.daily_news_module._manual_cfg_write = (
                     lambda gid, on: self._write_group_list(
                         "daily_news_groups", gid, on))
         except Exception:
             logger.exception("[apix-meme] 注入群号写回回调失败")
 
-        # ★ 积分调整（作弊）功能开关与群号黑名单
         self.score_admin_enable = bool(merged.get("score_admin_feature_enable", True))
         self.score_admin_groups = parse_gid_whitelist(merged.get("score_admin_groups", ""))
 
-        # ★ 接口系统：功能开关（和「启用早安晚安」同一层级）
         if "meme_feature_enable" in merged:
             self.meme_enable = bool(merged.get("meme_feature_enable"))
         elif "meme_enable" in merged:
@@ -4488,7 +4061,6 @@ class ApixIqfkSimpleMeme(Star):
                 self.luck_module.reload(merged)
             except Exception:
                 logger.exception("[apix-meme] 刷新人品模块失败")
-        # ★★ 1.3.0：授权模块
         if getattr(self, "auth_module", None) is not None:
             try:
                 self.auth_module.reload(merged)
@@ -4519,7 +4091,6 @@ class ApixIqfkSimpleMeme(Star):
                 self.hourly_chime_module.reload(merged)
             except Exception:
                 logger.exception("[apix-meme] 刷新整点报时模块失败")
-        # ★ 1.7.6：刷新全局回复尾巴配置
         if self.reply_tail is not None:
             try:
                 self.reply_tail.reload(merged)
@@ -4607,9 +4178,6 @@ class ApixIqfkSimpleMeme(Star):
             return [str(x).strip() for x in raw if str(x).strip()]
         return [x.strip() for x in str(raw).splitlines() if x.strip()]
 
-    # ============================================================
-    # 保存配置
-    # ============================================================
     def save_rules_to_config(self):
         try:
             new_list = []
@@ -4648,7 +4216,6 @@ class ApixIqfkSimpleMeme(Star):
 
             existing["default_key"] = self.default_key
             existing["must_at_bot"] = self.must_at_bot
-            # ★ 接口规则存入独立数据文件（去掉后台配置里的 __template_key）
             self._save_collection("api_list", [
                 {k: v for k, v in r.items() if k != "__template_key"}
                 for r in new_list
@@ -4673,7 +4240,6 @@ class ApixIqfkSimpleMeme(Star):
             existing["cmd_disable"] = self.cmd_disable_name
             existing["cmd_view_admin"] = self.cmd_view_admin_name
             existing["cmd_refresh_admin"] = self.cmd_refresh_admin_name
-            # 小鸟图鉴（1.7.4）：总开关 / 指令名
             existing["bird_enable"] = bool(getattr(self, "bird_enable", True))
             existing["cmd_bird"] = ",".join(
                 getattr(self, "cmd_bird", None) or ["今日小鸟"])
@@ -4759,7 +4325,6 @@ class ApixIqfkSimpleMeme(Star):
             existing["meme_feature_enable"] = self.meme_enable
             existing["meme_groups"] = ",".join(self.meme_groups)
             if self.status_push_module is not None:
-                # 定时推送群配置由后台填写，这里保持一致，避免内存与磁盘不同步
                 existing.setdefault("daily_status_push_groups", "")
             existing["group_block_keywords"] = block_text
             existing["disabled_groups"] = "\n".join(self.disabled_groups)
@@ -4777,11 +4342,7 @@ class ApixIqfkSimpleMeme(Star):
             existing["cmd_qqinfo"] = getattr(self, "cmd_qqinfo", "查询")
             existing["cmd_qqinfo_menu"] = getattr(
                 self, "cmd_qqinfo_menu_name", "查询功能")
-            # ★★ 市场版：名片 / 猜拳配置已移除
 
-            # ============================================================
-            # ★★ 市场版 1.1：赛车配置回写
-            # ============================================================
             existing["racing_enable"] = self.racing_enable
             existing["racing_groups"] = ",".join(
                 getattr(self, "racing_groups", None) or [])
@@ -4833,9 +4394,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.exception("[apix-meme] 保存规则失败（未知错误）")
             return False
 
-    # ============================================================
-    # 判定辅助
-    # ============================================================
     def _extract_multi_arg(self, text: str, cmd_name: str):
         variants = [cmd_name, f"/{cmd_name}"]
         for v in variants:
@@ -4889,9 +4447,6 @@ class ApixIqfkSimpleMeme(Star):
                 return ("self",)
         return None
 
-    # ============================================================
-    # 接口列表渲染（供图片/视频子菜单与接口列表指令共用）
-    # ============================================================
     def _interface_media_of(self, rule: dict) -> str:
         """取规则的媒体类型：image / video / text（缺省视为 image）。"""
         media = str(rule.get("media_type", "") or "").strip().lower()
@@ -4948,7 +4503,6 @@ class ApixIqfkSimpleMeme(Star):
                         labels.append("参数")
                 type_desc = " + ".join(labels) if labels else "参数"
 
-            # 参数说明后面再标注返回的是图片还是视频
             media_desc = {"video": "视频", "text": "文本"}.get(
                 self._interface_media_of(rule), "图片")
             lines.append(f"{i}. {kw}（{type_desc}｜{media_desc}）")
@@ -4985,7 +4539,6 @@ class ApixIqfkSimpleMeme(Star):
                         return str(k).strip()
             return ""
 
-        # 按参数个数把规则分成两类，示例只从对应类别里取，避免文不对题
         no_param, with_param = [], []
         for r in pool:
             pc = str(r.get("param_count", "1") or "1").strip()
@@ -4994,7 +4547,6 @@ class ApixIqfkSimpleMeme(Star):
             else:
                 no_param.append(r)
 
-        # 该分类下全都是无参数接口：直接发第一个关键词即可
         if not with_param:
             kw = _first_kw(no_param)
             if not kw:
@@ -5004,7 +4556,6 @@ class ApixIqfkSimpleMeme(Star):
                 f"例：{kw}",
             ]
 
-        # 该分类下全都是带参数接口：给出参数示例
         if not no_param:
             kw = _first_kw(with_param)
             lines = ["发送「关键词 + 参数」调用带参数接口"]
@@ -5015,7 +4566,6 @@ class ApixIqfkSimpleMeme(Star):
                 lines.append("例：关键词 @某人")
             return lines
 
-        # 两者都有：分别举例说明
         lines = ["发送「关键词」调用无参数接口，发送「关键词 + 参数」调用带参数接口"]
         kw_np = _first_kw(no_param)
         if kw_np:
@@ -5025,9 +4575,6 @@ class ApixIqfkSimpleMeme(Star):
             lines.append(f"例：{kw_wp} @某人")
         return lines
 
-    # ---------- 签到系统指令：统一走 checkin_module 的触发词匹配 ----------
-    # 触发词由 checkin_trigger_names /
-    # checkin_info_trigger_names 配置，均支持英文逗号分隔多个。
     def _is_checkin_cmd(self, text: str) -> bool:
         if self.checkin_module is None:
             return False
@@ -5103,8 +4650,6 @@ class ApixIqfkSimpleMeme(Star):
         nm = getattr(self, "cmd_qqinfo_menu_name", "") or "查询功能"
         return t in (nm, f"/{nm}")
 
-
-
     def _pet_parse_target(self, event, arg: str) -> str:
         """
         从「决斗」/「他的宠物」的参数里取目标 QQ。
@@ -5124,11 +4669,9 @@ class ApixIqfkSimpleMeme(Star):
         if tid:
             return tid
         raw = str(arg or "")
-        # @某人(123456) 这种文本形式
         m = re.search(r"[\(（](\d{5,12})[\)）]", raw)
         if m:
             return m.group(1)
-        # 裸 QQ 号
         m = re.search(r"\d{5,12}", raw)
         return m.group(0) if m else ""
 
@@ -5146,7 +4689,6 @@ class ApixIqfkSimpleMeme(Star):
         """
         tid = self._pet_parse_target(event, arg)
         rest = str(arg or "")
-        # 去掉 @ 部分，留下的就是宠物名
         rest = re.sub(r"@[^\s]*", " ", rest)
         rest = re.sub(r"[\(（]\d{5,12}[\)）]", " ", rest)
         rest = re.sub(r"\d{5,12}", " ", rest)
@@ -5169,7 +4711,6 @@ class ApixIqfkSimpleMeme(Star):
         """
         self._qqinfo_handled = False
 
-        # ① 子菜单入口
         if self._is_qqinfo_menu(msg_str):
             async for _r in self._send_content(event,
                                                self._build_qqinfo_menu()):
@@ -5177,7 +4718,6 @@ class ApixIqfkSimpleMeme(Star):
             self._qqinfo_handled = True
             return
 
-        # ② 是否 @ 了机器人（AstrBot 会把 @ 从文本剔除，靠组件判断）
         _bot_at = False
         try:
             _self_id = to_str(event.get_self_id())
@@ -5191,7 +4731,6 @@ class ApixIqfkSimpleMeme(Star):
         if _qq_arg is None:
             return
 
-        # ③ @机器人 且没带别人 -> 查机器人自己
         if _qq_arg == "" and _bot_at:
             try:
                 _self_qq = to_str(event.get_self_id()).strip()
@@ -5202,7 +4741,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.info("[apix-meme][追踪] @机器人 -> 查询机器人自己 %s",
                             _self_qq)
 
-        # 开关 / 黑名单 / 群功能状态
         if not getattr(self, "qqinfo_enable", True):
             self._qqinfo_handled = True
             return
@@ -5237,8 +4775,6 @@ class ApixIqfkSimpleMeme(Star):
         支持：`查询 @某人` / `查询 QQ号` / `查询@某人(QQ)` / `查询123456789`
         只认「指令 + @某人 或 纯数字 QQ」，后面跟别的字符一律不触发。
         """
-        # ★ 把换行 / 全角空格 / 制表符都当普通空格，避免
-        #   「查询\n123456789」这种多行输入匹配不上
         t = str(text or "").strip()
         t = t.replace("\r", " ").replace("\n", " ").replace("\t", " ")
         t = t.replace("\u3000", " ")
@@ -5250,15 +4786,12 @@ class ApixIqfkSimpleMeme(Star):
             if not nm:
                 continue
             for prefix in (nm, f"/{nm}"):
-                # ★ 纯指令：默认不触发；@ 了机器人则返回 ""，
-                #   由调用方换成「机器人自己的 QQ」
                 if t == prefix:
                     return "" if bot_mentioned else None
                 if not t.startswith(prefix):
                     continue
                 rest = t[len(prefix):].strip(" ：:，,")
                 if not rest:
-                    # 「查询 」没参数 -> 同样看有没有 @ 机器人
                     return "" if bot_mentioned else None
                 if rest.startswith("@") or rest.isdigit():
                     return rest
@@ -5283,16 +4816,12 @@ class ApixIqfkSimpleMeme(Star):
             return
         target = ""
         _at_raw = None
-        # ★ 先拿机器人自己的 QQ —— 用来排除「@ 了机器人」这种情况
         _self = ""
         try:
             _self = to_str(event.get_self_id())
         except Exception:
             _self = ""
 
-        # ★ ① 优先从**消息组件**直接取 @ 的 QQ（与名片功能同一套，
-        #     比解析字符串可靠：@ 的文本形式在不同端可能不一样）
-        #     ★ 但如果 @ 的是**机器人自己**，那不是查询目标 -> 跳过
         try:
             ats = get_ats_from_msg(event)
             _at_raw = [to_str(x).strip() for x in (ats or []) if to_str(x).strip()]
@@ -5303,7 +4832,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.exception("[apix-meme] 取 @ 列表失败")
             _at_raw = []
             target = ""
-        # ★ ② 组件没取到，再从参数文本里解析（@某人(QQ) / 裸 QQ 号）
         _parsed = ""
         if not target.isdigit() and arg:
             try:
@@ -5313,7 +4841,6 @@ class ApixIqfkSimpleMeme(Star):
                 _parsed = ""
             if _parsed.isdigit():
                 target = _parsed
-        # ★ 追踪：@ 这条路到底拿到了什么（排查用）
         try:
             logger.info(
                 "[apix-meme][追踪] 查询目标：msg=%r arg=%r ats=%r "
@@ -5323,7 +4850,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             pass
         if not target.isdigit():
-            # ★ 没认出目标（「查询 你好」这种）：出用法菜单，不擅自查自己
             _menu = self._build_qqinfo_menu()
             _tip = ("⚠️ 没认出要查谁的 QQ\n"
                     "💡 用法：查询 @某人 或 查询 QQ号")
@@ -5341,9 +4867,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             pass
 
-        # ★ 跟随本群「输出模式」：
-        #     text 模式 -> 直接发文本
-        #     image 模式 -> 发带头像的查询卡片（渲染失败回落文本）
         om = getattr(self, "output_mode_module", None)
         _mode = "text"
         if om is not None:
@@ -5355,7 +4878,6 @@ class ApixIqfkSimpleMeme(Star):
         if (str(_mode).startswith("image") and om is not None
                 and hasattr(om, "render_query_card")):
             avatar_path = ""
-            # ★★ 市场版：名片/头像模块已移除，查询卡片不再嵌头像
             try:
                 img_path = await om.render_query_card(
                     text, avatar_path=avatar_path,
@@ -5365,7 +4887,6 @@ class ApixIqfkSimpleMeme(Star):
                 img_path = ""
         if img_path:
             try:
-                # ★★ 1.7.6：**先打标记再 yield**（理由同猜拳卡）
                 self._mark_tail_done(event)
                 from astrbot.api.message_components import Image as _Img
                 yield event.chain_result([_Img.fromFileSystem(img_path)])
@@ -5378,7 +4899,6 @@ class ApixIqfkSimpleMeme(Star):
     def _is_daily_menu(self, text: str) -> bool:
         return text in (self.cmd_daily_menu_name, f"/{self.cmd_daily_menu_name}")
 
-    # ---- 每日系列三级子菜单 ----
     def _is_fortune_menu(self, text: str) -> bool:
         return text in ("运势功能", "/运势功能")
 
@@ -5446,62 +4966,35 @@ class ApixIqfkSimpleMeme(Star):
     def _is_checkin_query_menu(self, text: str) -> bool:
         return self._menu_entry_hit("checkin_query", text)
 
-    # ============================================================
-    # ★★ 1.7.7：菜单入口名统一管理（后台可自定义 + 实时生效）
-    # ------------------------------------------------------------
-    # 每个下级菜单一行：菜单id -> (配置键, 默认入口名)
-    #   · 入口判定 `_menu_entry_hit()` 从配置读，改了立刻生效
-    #   · 生成菜单时用 `_menu_entry_name()` 取名，**文案跟着配置走**
-    # 这样「后台改指令 → 菜单里显示的也变」不用改两处。
-    # ============================================================
     MENU_ENTRY_DEFS = {
-        # 签到系统
-        # ★★ 市场版 1.1：赛车功能（娱乐功能下级）
         "racing":           ("cmd_race_menu",       "赛车功能"),
         "checkin_signin":  ("menu_checkin_signin_names",  "签到指令"),
         "checkin_query":   ("menu_checkin_query_names",   "查询指令"),
         "checkin_bank":    ("menu_checkin_bank_names",    "银行功能"),
         "checkin_lottery": ("menu_checkin_lottery_names", "抽奖功能"),
         "checkin_steal":   ("menu_checkin_steal_names",   "神偷功能"),
-        # ★ 坐骑入口**不在这里** —— 它用已有的 `mount_menu_names`
-        #   （`_mount_menu_names()` / `_is_checkin_mount_menu()`）。
-        #   放两份会出现「同一入口名两个配置键」的假冲突。
         "checkin_job":     ("menu_checkin_job_names",     "打工功能"),
         "checkin_shop_help": ("menu_checkin_shop_help_names", "商店帮助"),
-        # ★★ 1.7.7：打工下级 + 体力
-        #   ★ 这几个入口名**复用指令名配置键**（和坐骑/音乐同理）——
-        #     再单独开 `menu_*` 键会出现「同一入口名两个配置键」的假冲突。
         "job_list":        ("job_info_trigger_names",       "打工列表"),
-        # ★★ 1.7.7：加班主菜单（显示名「加班功能」，独立配置键；
-        #   以前复用执行指令名，撞在一起会让执行指令失效）
         "job_refill":      ("stamina_refill_menu_names",    "加班功能"),
-        # ★★ 1.7.7：加班状态（独立指令 + 菜单入口，名字可在后台改）
         "job_refill_status": ("stamina_refill_status_names", "加班状态"),
         "stamina":         ("stamina_view_trigger_names",   "我的体力"),
-        # ★「吃食物」是**指令**不是菜单（没有独立菜单页），所以不在这里。
-        # 银行下级
         "checkin_bank_save": ("menu_bank_save_names",     "存钱取钱"),
         "checkin_bank_loan": ("menu_bank_loan_names",     "借款还款"),
         "checkin_bank_fund": ("menu_bank_fund_names",     "理财功能"),
         "checkin_bank_rob":  ("menu_bank_rob_names",      "抢银行帮助"),
-        # 宠物
         "pet":             ("menu_pet_names",             "宠物功能"),
         "pet_care":        ("menu_pet_care_names",        "宠物养成"),
         "pet_fight":       ("menu_pet_fight_names",       "宠物玩法"),
         "pet_item":        ("menu_pet_item_names",        "宠物道具"),
-        # ★★ 1.7.7：音乐下级菜单
-        #   ★ 音乐功能本身的入口名**不在这里** —— 它用已有的
-        #     `cmd_music_menu_names`（music 模块的 match_menu 在读），
-        #     放两份会出现「同一入口名两个配置键」的假冲突。
         "music_source":    ("menu_music_source_names",    "音源设置"),
-        # ★★ 1.7.7：娱乐功能 - 猜数游戏
         "guess":           ("cmd_guess_menu",            "猜数功能"),
         "music_find":      ("menu_music_find_names",      "搜歌功能"),
-        # ★★ 1.7.7：坐骑下级菜单
         "mount_manage":    ("menu_mount_manage_names",    "坐骑管理"),
         "mount_admin":     ("menu_mount_admin_names",     "坐骑设置"),
+        "auth_cmd":        ("menu_auth_cmd_names",        "授权指令"),
+        "auth_query":      ("menu_auth_query_names",      "授权查询"),
     }
-    # 旧名兼容（后台改名后，老名字仍然认，避免用户找不到入口）
     MENU_ENTRY_LEGACY = {
         "checkin_bank_fund": ("银行理财",),
     }
@@ -5527,16 +5020,14 @@ class ApixIqfkSimpleMeme(Star):
                     out.append(x)
             if not out and dflt:
                 out.append(dflt)
-            # ② 历史名字（每次 reload_cfg 累积）
             try:
                 for x in (getattr(self, "_menu_entry_prev", {}) or {}).get(
-                        key, ()):  # noqa: E501
+                        key, ()):
                     x = str(x or "").strip()
                     if x and x not in out:
                         out.append(x)
             except Exception:
                 pass
-        # ③ 内置旧名
         for x in self.MENU_ENTRY_LEGACY.get(mid, ()):
             if x and x not in out:
                 out.append(x)
@@ -5556,7 +5047,6 @@ class ApixIqfkSimpleMeme(Star):
     def _is_checkin_bank_menu(self, text: str) -> bool:
         return self._menu_entry_hit("checkin_bank", text)
 
-    # ★★ 1.7.6：银行下级菜单入口
     def _is_checkin_bank_save_menu(self, text: str) -> bool:
         return self._menu_entry_hit("checkin_bank_save", text)
 
@@ -5572,7 +5062,6 @@ class ApixIqfkSimpleMeme(Star):
         """★ 入口名默认「抢银行帮助」—— 避开 `抢银行` 这条**指令**。"""
         return self._menu_entry_hit("checkin_bank_rob", text)
 
-    # ★★ 1.7.6：宠物下级菜单入口
     def _is_pet_care_menu(self, text: str) -> bool:
         return self._menu_entry_hit("pet_care", text)
 
@@ -5668,12 +5157,9 @@ class ApixIqfkSimpleMeme(Star):
     def _is_pet_menu(self, text: str) -> bool:
         return self._menu_entry_hit("pet", text)
 
-
     def _is_guess_menu(self, text: str) -> bool:
         """★ 1.7.7：娱乐功能下级菜单「猜数功能」"""
         return self._menu_entry_hit("guess", text)
-
-
 
     def _is_meme_admin_menu(self, text: str) -> bool:
         return text in ("接口管理", "/接口管理", "表情管理", "/表情管理")
@@ -5815,7 +5301,6 @@ class ApixIqfkSimpleMeme(Star):
         n = self.cmd_chime_list_name
         return text in (n, f"/{n}")
 
-    # ---------- 定时状态推送指令识别 ----------
     @staticmethod
     def _reshape_time_args(arg: str):
         """
@@ -5835,7 +5320,6 @@ class ApixIqfkSimpleMeme(Star):
                 return parts[1], first
             if second:
                 return parts[0], second
-            # 都不是合法时间：第一个当群号，时间留空触发格式提示
             return parts[0], ""
         if parts:
             only = parse_hhmm(parts[0])
@@ -5867,7 +5351,6 @@ class ApixIqfkSimpleMeme(Star):
         n = self.cmd_daily_push_list_name
         return text in (n, f"/{n}")
 
-    # ---------- 群员管理指令识别 ----------
     def _is_kick_cmd(self, text: str):
         n = self.cmd_kick_name
         if text == n or text == f"/{n}":
@@ -5918,7 +5401,6 @@ class ApixIqfkSimpleMeme(Star):
         n = self.cmd_blacklist_list_name
         return text in (n, f"/{n}")
 
-    # ---------- 每日读报指令识别 ----------
     def _name_list(self, attr: str) -> list:
         """
         ★★ 1.7：把一个「指令名属性」展开成**全部候选名**。
@@ -6036,21 +5518,12 @@ class ApixIqfkSimpleMeme(Star):
                 return ("target", arg) if arg else ("self",)
         return None
 
-    # ============================================================
-    # 菜单 wrapper
-    # ============================================================
     def _build_entertain_menu(self):
         return self._menu("entertain", lambda: build_entertain_menu(self))
 
     def _build_qqinfo_menu(self):
         return self._menu("qqinfo", lambda: build_qqinfo_menu(self))
 
-
-
-
-    # ============================================================
-    # 猜拳（1.7.5）
-    # ============================================================
     def _is_global_admin(self, event) -> bool:
         """
         是否 **AstrBot 全局管理员**。
@@ -6093,7 +5566,6 @@ class ApixIqfkSimpleMeme(Star):
           ① 模块级登记表 `_BG_TASKS`（最可靠 —— 重载后新实例也能取消旧任务）
           ② 兼容兜底：实例属性上的任务对象
         """
-        # ---- ⓿ 收发计数落盘（重载前存一次，重载后能恢复）----
         try:
             _save_msg_stats(force=True)
             logger.info(f"[apix-meme] 收发计数已保存："
@@ -6102,7 +5574,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.debug("[apix-meme] 保存收发计数失败", exc_info=True)
 
-        # ---- ① 模块级登记表 ----
         try:
             from .core.background import _BG_TASKS as _reg
         except Exception:
@@ -6122,7 +5593,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.debug(f"[apix-meme] 取消 {name} 失败", exc_info=True)
             _reg.pop(name, None)
 
-        # ---- ② 实例属性兜底 ----
         tasks = [
             ("状态推送", getattr(self, "_status_push_task", None)),
             ("整点报时", getattr(self, "_chime_checker_task", None)),
@@ -6138,14 +5608,12 @@ class ApixIqfkSimpleMeme(Star):
                     logger.info(f"[apix-meme] 已取消后台任务：{name}")
             except Exception:
                 logger.debug(f"[apix-meme] 取消 {name} 任务失败", exc_info=True)
-        # 复位启动标志，便于同一实例被重新启用时能再次拉起
         for flag in ("_status_push_started", "_chime_checker_started",
                      "_mc_checker_started", "_daily_news_started"):
             try:
                 setattr(self, flag, False)
             except Exception:
                 pass
-        # 让被取消的任务有机会收尾（避免 "Task was destroyed but pending"）
         pend = [tk for _n, tk in tasks if tk is not None and not tk.done()]
         if pend:
             try:
@@ -6154,15 +5622,11 @@ class ApixIqfkSimpleMeme(Star):
                 pass
         logger.info("[apix-meme] 插件卸载")
 
-
     def _score_sn(self) -> str:
         """积分显示名（后台可自定义）"""
         mod = getattr(self, "checkin_module", None)
         nm = str(getattr(mod, "score_name", "") or "").strip() if mod else ""
         return nm or str(getattr(self, "score_name", "") or "积分").strip() or "积分"
-
-
-    @staticmethod
 
     def _is_weather_menu(self, text: str) -> bool:
         """是否命中「天气查询」菜单入口指令"""
@@ -6173,21 +5637,9 @@ class ApixIqfkSimpleMeme(Star):
             getattr(self, "cmd_weather_menu_name", "") or "天气查询")
         return s in names or ("/" + s) in names
 
-
     def _build_weather_menu(self):
         return self._menu("weather", lambda: build_weather_menu(self))
 
-
-
-
-
-    # ========================================================
-    # ★★ 1.6：赛车功能（娱乐功能下级）
-    #   默认指令：参与比赛 / 快速比赛 / 我的赛车 / 装备赛车 /
-    #             赛车查看 / 赛车商店
-    #   规则：满 5 人开赛；1 小时没满补 NPC；每人每天 10 场；
-    #         报名费不退进奖池；前三名按 50/30/20 瓜分。
-    # ========================================================
     def _race_name(self, attr: str, dflt: str) -> str:
         """取赛车某个指令名（读插件属性，改后台立刻生效）"""
         return (self._split_names(getattr(self, attr, "") or [dflt])
@@ -6229,17 +5681,11 @@ class ApixIqfkSimpleMeme(Star):
             rest = s[len(nm):]
             if not rest:
                 return ""
-            # ① 有分隔符 -> 剥掉分隔符
             if rest[0] in " \t\u3000:：,，、|-—@":
                 rest = rest.lstrip(" \t\u3000:：,，、|-—@").strip()
                 if rest:
                     return rest
                 return ""
-            # ② 紧挨着（无空格）：
-            #    · 纯数字 -> 序号（装备赛车2）
-            #    · 含中文/字母的数字混合 -> 车名（装备赛车疾风 GT）
-            #    ★ 唯一要防的是「短指令名 + 以该名开头的另一个指令」，
-            #      那种情况两边都会命中，调用方按**长度降序**先试长的即可。
             return rest.strip()
         return None
 
@@ -6263,7 +5709,7 @@ class ApixIqfkSimpleMeme(Star):
         if not _HAS_RACING or self.racing_module is None:
             return "⚠️ 赛车模块未加载（core/racing.py）"
         if not group_allowed(group_id, getattr(self, "racing_groups", None)):
-            return ""          # 群不在白名单 -> 静默（返回空串由调用方判断）
+            return ""
         return ""
 
     def _racing_ok(self, group_id) -> bool:
@@ -6275,7 +5721,6 @@ class ApixIqfkSimpleMeme(Star):
         return bool(group_allowed(group_id,
                                   getattr(self, "racing_groups", None)))
 
-    # ---------- 文案 ----------
     def _race_lucky_text(self, group_id, uid, user_name: str) -> str:
         """
         ★★ 1.6：赛车抽奖**说明页**（不带参数发指令时看这个）。
@@ -6317,8 +5762,6 @@ class ApixIqfkSimpleMeme(Star):
                  title_foot()]
         return "\n".join(rows)
 
-    # ---------- 文案 ----------
-    # ★★ 1.6：商店**每页几辆车**（用户要求一页 5 辆）
     RACE_SHOP_PER_PAGE = 5
 
     def _race_shop_text(self, page=1) -> str:
@@ -6353,14 +5796,12 @@ class ApixIqfkSimpleMeme(Star):
             rows.append(f"　 {_at}")
             if i != _hi - 1:
                 rows.append("")
-        # 抽奖限定车只在最后一页提示，别每页都占位
         if p >= total:
             lot = list(getattr(rm, "lottery_cars", []) or [])
             if lot:
                 rows += ["", "★ 以下为**抽奖限定**，商店买不到：",
                          "　" + "、".join(str(c.get("name")) for c in lot),
                          "💡 去抽奖碰碰运气"]
-        # 翻页导航
         if total > 1:
             _nav = []
             if p > 1:
@@ -6392,10 +5833,6 @@ class ApixIqfkSimpleMeme(Star):
                      f"买一辆"]
             rows.append(title_foot())
             return "\n".join(rows)
-        # ★★ 1.6：车位只给**数量 + 车名列表**（用户要求移除属性输出）——
-        #   属性要看就用「赛车查看 车名/序号」，这里保持清爽。
-        #   ★★ 1.6：「当前装备」**单独一行**（用户要求换行）——
-        #     以前和「拥有 N 辆」挤一行，车名一长就折行、两行都乱。
         rows.append(f"🏎️ 拥有 **{len(cars)}** 辆")
         if _eqname:
             rows.append(f"✅ 当前装备：**{_eqname}**")
@@ -6436,7 +5873,6 @@ class ApixIqfkSimpleMeme(Star):
         t = str(raw or "").strip()
         if not t:
             return None, "请写车名或序号"
-        # ① 车库
         owned = rm.owned_cars(group_id, uid)
         if owned:
             car, err = rm.pick_car(owned, t)
@@ -6445,7 +5881,6 @@ class ApixIqfkSimpleMeme(Star):
             _owned_err = err
         else:
             _owned_err = ""
-        # ② 商店
         shop = list(getattr(rm, "shop", []) or [])
         if shop:
             car, err = rm.pick_car(shop, t)
@@ -6454,11 +5889,9 @@ class ApixIqfkSimpleMeme(Star):
             _shop_err = err
         else:
             _shop_err = ""
-        # ③ 抽奖限定车按名字
         car = rm.find_car(t)
         if car is not None:
             return car, ""
-        # 都失败：按序号输入但两个列表都短
         if rm._is_index(t):
             return None, (f"序号超出范围（车库 {len(owned)} 辆、"
                           f"商店 {len(shop)} 辆）")
@@ -6466,7 +5899,6 @@ class ApixIqfkSimpleMeme(Star):
 
     def _race_view_text(self, group_id, uid, car_name: str) -> str:
         rm = self.racing_module
-        # ★★ 1.6：车名 或 序号 都认
         car, _err = self._race_resolve_car(group_id, uid, car_name)
         if car is None:
             return "\n".join([
@@ -6479,7 +5911,6 @@ class ApixIqfkSimpleMeme(Star):
                 f"「{self._race_name('cmd_race_shop', '赛车商店')}」/"
                 f"「{self._race_name('cmd_race_my', '我的赛车')}」",
                 title_foot()])
-        # 用商店里最强的几辆当参照，估算胜率
         others = sorted(list(getattr(rm, "shop", []) or []),
                         key=lambda x: -float(x.get("speed", 0) or 0))[:4]
         others = [c for c in others if c.get("name") != car.get("name")]
@@ -6492,10 +5923,6 @@ class ApixIqfkSimpleMeme(Star):
         rows = [title_bar("赛车查看"),
                 f"🏎️ **{car.get('name')}**"
                 + ("　（已拥有）" if owned else "")]
-        # ★★ 市场版 1.1：**纯文本输出，不插图**
-        #   （原版会在这里插一行 `[[img:车名]]` 行内图片标记，
-        #     市场版不连接图片模式，所以整段去掉。）
-        # ★ 描述为空就**不显示那一行**（以前会显示一个孤零零的「—」）
         _desc = str(car.get("desc") or "").strip()
         if _desc and _desc != "—":
             rows.append(f"　 {_desc}")
@@ -6546,13 +5973,12 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # times=0 表示「抽完剩余次数」
         _plan = _left if times <= 0 else min(int(times), _left)
         _unlimited = (_lim <= 0)
         if _plan <= 0:
             _plan = 1
 
-        _results = []       # [(kind, prize)]
+        _results = []
         _spent = 0
         _stop = ""
         for _i in range(_plan):
@@ -6571,7 +5997,6 @@ class ApixIqfkSimpleMeme(Star):
                 _spent += _fee
             kind, prize = rm.lucky_draw(group_id, uid)
             if kind is None:
-                # 失败退款
                 if _fee > 0:
                     try:
                         ck.add_score(group_id, uid, _fee)
@@ -6592,7 +6017,6 @@ class ApixIqfkSimpleMeme(Star):
                                  max(0, int(prize.get("amount", 0) or 0)))
                 except Exception:
                     logger.debug("[apix-meme] 发积分奖失败", exc_info=True)
-            # 不限次数时别死循环：最多抽到奖品池空
             if _unlimited and len(_results) >= 200:
                 _stop = "单次最多抽 200 次"
                 break
@@ -6604,7 +6028,6 @@ class ApixIqfkSimpleMeme(Star):
         _sum_score = sum(max(0, int(p.get("amount", 0) or 0))
                          for k, p in _results if k == "score")
 
-        # ---------- 抽了多次：汇总 ----------
         if len(_results) > 1:
             rows = [title_bar("赛车一键抽奖"),
                     f"🎰 共抽 **{len(_results)}** 次",
@@ -6633,7 +6056,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---------- 一次都没抽成 ----------
         if not _results:
             _msg = _stop or "没抽到东西"
             if "不够" in _msg:
@@ -6644,7 +6066,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---------- 单抽结果 ----------
         kind, prize = _results[0]
         if kind == "car":
             _nm = str(prize.get("name"))
@@ -6704,9 +6125,6 @@ class ApixIqfkSimpleMeme(Star):
         rm = self.racing_module
         sn = self._race_sn()
 
-        # ---------- 商店（只看不买）----------
-        # ★★ 1.6：商店**只负责浏览/翻页**；买车用独立的「购买赛车」指令
-        #   （用户要求：`购买赛车 车名/序号`）。
         if action == "shop":
             want = str(arg or "").strip()
             _cmd_shop = self._race_name("cmd_race_shop", "赛车商店")
@@ -6718,7 +6136,6 @@ class ApixIqfkSimpleMeme(Star):
             _shop = list(getattr(rm, "shop", []) or [])
             _per = max(1, int(self.RACE_SHOP_PER_PAGE or 5))
             _pages = max(1, (len(_shop) + _per - 1) // _per)
-            # 纯数字 = 翻页；非数字 = 当车名去**定位那一页**（方便找车）
             if want.isdigit():
                 _n = int(want)
                 if 1 <= _n <= _pages:
@@ -6730,7 +6147,6 @@ class ApixIqfkSimpleMeme(Star):
                         event, self._race_shop_text(1)):
                     yield _r
                 return
-            # 写了车名：在商店里找出它在第几页，直接翻到那页
             car, _perr = rm.pick_car(_shop, want)
             if car is None:
                 async for _r in self._send_content(
@@ -6751,8 +6167,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---------- 购买赛车 ----------
-        # ★★ 1.6：独立指令，`购买赛车 车名` 或 `购买赛车 序号`
         if action == "buy":
             want = str(arg or "").strip()
             _cmd_buy = self._race_name("cmd_race_buy", "购买赛车")
@@ -6813,14 +6227,12 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---------- 我的赛车 ----------
         if action == "my":
             async for _r in self._send_content(
                     event, self._race_garage_text(group_id, uid, user_name)):
                 yield _r
             return
 
-        # ---------- 装备 ----------
         if action == "equip":
             want = str(arg or "").strip()
             if not want:
@@ -6861,13 +6273,9 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---------- ★★ 1.6：赛车抽奖 ----------
         if action == "lucky":
             _cmd = self._race_name("cmd_race_lucky", "赛车抽奖")
             _want = str(arg or "").strip()
-            # ★ 不带参数 => 先看**说明页**（别一上来就扣钱抽掉）
-            #   单抽：`赛车抽奖 抽`（也认 1 / 抽奖 / 一次 / go）
-            #   一键：`赛车一键抽奖` / `赛车全部抽奖`（见下面的 luckyall）
             if _want not in ("抽", "1", "抽奖", "一次", "go", "GO",
                              "抽一次", "来一次", "抽一发"):
                 async for _r in self._send_content(
@@ -6880,14 +6288,12 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---------- ★★ 1.6：一键抽奖（把今天剩余次数一次抽完）----------
         if action == "luckyall":
             async for _r in self._race_do_draws(
                     event, group_id, uid, user_name, 0):
                 yield _r
             return
 
-        # ---------- 查看 ----------
         if action == "view":
             want = str(arg or "").strip()
             if not want:
@@ -6903,18 +6309,14 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                     return
                 want = str(eq.get("name"))
-            # ★★ 市场版 1.1：**纯文本输出** —— 不查插图、不发图片、
-            #   也不传 img_dir（原版那套是给图片模式用的）。
             txt = self._race_view_text(group_id, uid, want)
             async for _r in self._send_content(event, txt):
                 yield _r
             return
 
-        # ---------- 报名参加 ----------
         if action == "join":
             qs = rm.queue_size(group_id)
             if qs >= rm.players:
-                # 已经够人 -> 立刻开赛
                 async for _r in self._race_run(event, group_id, "normal"):
                     yield _r
                 return
@@ -6927,7 +6329,6 @@ class ApixIqfkSimpleMeme(Star):
                         f"买一辆"):
                     yield _r
                 return
-            # 报名费（不退）
             fee = max(0, int(getattr(rm, "entry_fee", 0) or 0))
             ck = getattr(self, "checkin_module", None)
             if fee > 0 and ck is not None:
@@ -6944,7 +6345,6 @@ class ApixIqfkSimpleMeme(Star):
                     return
             err = rm.join(group_id, uid, user_name, str(car.get("name")))
             if err:
-                # 报名失败要把报名费退回去
                 if fee > 0 and ck is not None:
                     try:
                         ck.add_score(group_id, uid, fee)
@@ -6956,7 +6356,6 @@ class ApixIqfkSimpleMeme(Star):
                 return
             n = rm.queue_size(group_id)
             left = rm.left_today(group_id, uid)
-            # ★★ 1.6：今日奖池加成（当天固定，报名前就让他看到）
             try:
                 _bonus, _ = rm.daily_bonus(group_id)
             except Exception:
@@ -6981,14 +6380,12 @@ class ApixIqfkSimpleMeme(Star):
             rows.append(title_foot())
             async for _r in self._send_content(event, "\n".join(rows)):
                 yield _r
-            # 满员 / 超时 -> 立刻开赛
             if rm.queue_size(group_id) >= rm.players or rm._queue_expired(
                     group_id):
                 async for _r in self._race_run(event, group_id, "normal"):
                     yield _r
             return
 
-        # ---------- 快速比赛（PVE，全是 NPC）----------
         if action == "fast":
             car = rm.equipped_car(group_id, uid)
             if car is None:
@@ -7066,7 +6463,6 @@ class ApixIqfkSimpleMeme(Star):
         prizes = res.get("prizes") or []
         winners = res.get("winners") or []
 
-        # ---- 发奖 ----
         for w in winners:
             if w.get("npc"):
                 continue
@@ -7078,7 +6474,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 赛车发奖失败 %s", w.get("uid"))
 
-        # ---- 文案 ----
         rows = [title_bar("比赛结果" + ("（PVE）" if pve else "")),
                 f"🏁 共 **{len(ranking)}** 辆车参赛"
                 + (f"（NPC {res.get('npc_n', 0)}）"
@@ -7107,16 +6502,6 @@ class ApixIqfkSimpleMeme(Star):
         async for _r in self._send_content(event, "\n".join(rows)):
             yield _r
 
-    # ========================================================
-    # ★★ 1.7.7：猜数游戏（娱乐功能）
-    # ========================================================
-    # ========================================================
-    # ★★ 1.7.7：猜数游戏（群内多人抢猜）
-    #   开始指令：`开始猜数`（可后台改）
-    #   参与指令：`猜数 数字`（可后台改）
-    #   规则：每人每局限猜 N 次；谁先猜中谁赢（随机奖励）；
-    #         猜错扣积分；可选「N 秒没人猜就关闭」。
-    # ========================================================
     def _guess_names(self) -> list:
         """
         参与指令名（默认「猜数」）。
@@ -7262,7 +6647,6 @@ class ApixIqfkSimpleMeme(Star):
 
         old = gm.current_round(group_id)
         if old and not old.get("finished"):
-            # 已经有一局在跑 -> 提示，不直接覆盖（避免误触清掉别人进度）
             async for _r in self._send_content(event, "\n".join([
                 f"{title_bar('猜数游戏')}",
                 f"👤 {nick}",
@@ -7298,7 +6682,6 @@ class ApixIqfkSimpleMeme(Star):
             async for _r in self._send_content(event, "⚠️ 猜数模块未加载"):
                 yield _r
             return
-        # ★ 先结算超时的旧局
         _settled = self._guess_settle(group_id)
         if _settled:
             async for _r in self._send_content(event, _settled):
@@ -7349,7 +6732,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ★ 次数限制
         _left = gm.left_of(r, uid)
         if _left <= 0:
             _max = max(1, int(getattr(self, "guess_max_tries", 3) or 3))
@@ -7369,7 +6751,6 @@ class ApixIqfkSimpleMeme(Star):
         _left2 = gm.left_of(gm.current_round(group_id), uid)
 
         if num == ans:
-            # ---- 猜中：随机奖励，结束这一局 ----
             reward = gm.roll_reward()
             if reward > 0:
                 self._guess_spend(group_id, uid, reward)
@@ -7393,7 +6774,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             return
 
-        # ---- 猜错：扣分 ----
         _hint = "太大了 ⬇️" if num > ans else "太小了 ⬆️"
         _paid = 0
         _ok = True
@@ -7424,8 +6804,6 @@ class ApixIqfkSimpleMeme(Star):
         """（保留占位，暂无内容）"""
         return ""
 
-
-
     def _nick_of_group(self, group_id, uid) -> str:
         """取群内昵称（签到模块优先，其次脱敏 QQ 号）"""
         try:
@@ -7438,12 +6816,6 @@ class ApixIqfkSimpleMeme(Star):
             pass
         s = str(uid or "")
         return f"{s[:3]}****{s[-2:]}" if len(s) > 5 else s
-
-
-    # ============================================================
-    # 小鸟图鉴（1.7.4）
-    # ============================================================
-
 
     def _parse_page_arg(self, text: str, names):
         """
@@ -7467,8 +6839,7 @@ class ApixIqfkSimpleMeme(Star):
                 continue
             rest = t[len(nm):].strip()
             if not rest:
-                return 1                      # 不带页码 -> 默认第一页
-            # 只接受「纯数字」或「第N页」（防止吃聊天）
+                return 1
             m = re.fullmatch(r"(?:第\s*)?(\d+)\s*(?:页)?", rest)
             if not m:
                 continue
@@ -7482,18 +6853,11 @@ class ApixIqfkSimpleMeme(Star):
         """「图鉴指令 [页码]」（保留原签名，内部走 _parse_page_arg）"""
         return self._parse_page_arg(text, names)
 
-
-
-
-
-
-
     async def _handle_gallery_cmd(self, event, group_id, page: int = 1):
         """「我的图鉴」：展示小鸟收集进度（固定图片输出，支持页码）"""
         from astrbot.api.message_components import Image
 
         if not group_id:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
             async for _r in self._send_content(event, "⚠️ 请在群聊中使用小鸟图鉴"):
                 yield _r
             return
@@ -7504,7 +6868,6 @@ class ApixIqfkSimpleMeme(Star):
                 if isinstance(row, dict) and str(row.get("name") or "").strip():
                     birds.append(row)
         if not birds:
-            # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
             async for _r in self._send_content(event, "❌ 后台还没有配置小鸟\n"
                 "💡 请在「后台 → 小鸟图鉴」里添加小鸟"):
                 yield _r
@@ -7518,8 +6881,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 owned = {}
 
-        # ---- 组装图鉴数据（顺序 = 后台列表顺序）----
-        #    ★ 图片一律按昵称在目录里找，不再看后台填的 img 字段
         items = []
         for row in birds:
             nm = str(row.get("name") or "").strip()
@@ -7535,8 +6896,6 @@ class ApixIqfkSimpleMeme(Star):
 
         got = sum(1 for x in items if x["owned"])
 
-        # ---- 收集排名（全群共享，跨群统一名次）----
-        #   ★ 只统计「后台仍在架」的小鸟，与图鉴显示口径一致
         rank, rank_users = 0, 0
         if bc is not None and getattr(self, "bird_rank_enable", True):
             try:
@@ -7572,7 +6931,6 @@ class ApixIqfkSimpleMeme(Star):
         if img_path:
             yield event.chain_result([Image.fromFileSystem(img_path)])
             return
-        # ---- 文本兜底（按 60 只一页分页）----
         _per = 60
         pages = max(1, -(-len(items) // _per))
         try:
@@ -7597,13 +6955,8 @@ class ApixIqfkSimpleMeme(Star):
             _gd = (self._split_names(getattr(self, "cmd_gallery", None))
                    or ["我的图鉴"])[0]
             lines.append(f"💡 发「{_gd} {min(page + 1, pages)}」看下一页")
-        # ★ 1.7.6：走统一出口，自动补底部横条 + 尾巴
         async for _r in self._send_content(event, "\n".join(lines)):
             yield _r
-
-    # ============================================================
-    # 图鉴列表 / 图鉴查看（编号查阅，1.7.5）
-    # ============================================================
 
     def _gallery_group_mode(self, group_id):
         """返回 (输出模式, 背景图)"""
@@ -7628,19 +6981,12 @@ class ApixIqfkSimpleMeme(Star):
                 "[apix-meme] 构造图片组件失败，已回落文本；path=%r", path)
             return []
 
-
-
-
-
-
-
     def _menu_rows(self) -> list:
         """后台菜单文本原始行（[{id,label,text}, ...]）"""
         try:
             rows = self.data_store.get("menu_texts")
         except Exception:
             return []
-        # 兼容旧格式：万一是 dict，转成行
         if isinstance(rows, dict):
             return [{"id": k, "label": "", "text": v}
                     for k, v in rows.items()]
@@ -7658,7 +7004,6 @@ class ApixIqfkSimpleMeme(Star):
                 out[mid] = txt
         return out
 
-    # ★★ 1.7.6：历史上用过的标题前缀（换前缀时要能把旧的替换掉）
     _OLD_TITLE_PREFIXES = ("自定义娱乐：", "自定义娱乐:",
                               "鸡鸡娱乐系统：", "鸡鸡娱乐系统:")
 
@@ -7687,11 +7032,9 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 _cur = ""
         _cur = _cur or ""
-        # 已知的旧前缀（含当前前缀、历史默认值）
         _olds = [p for p in (list(self._OLD_TITLE_PREFIXES)
                              + ["铁剑娘系统：", _cur]) if p]
         lines = s.split("\n")
-        # 找第一行非空（标题可能在前面有空行，但一般就是第 0 行）
         _i = 0
         while _i < len(lines) and not lines[_i].strip():
             _i += 1
@@ -7699,7 +7042,6 @@ class ApixIqfkSimpleMeme(Star):
             return s
         _first = lines[_i]
         _st = _first.strip()
-        # 去掉首行两端的横线装饰（`━━ 标题 ━━` 那种）
         _core = _st.strip("━─=＝-—·・ \t")
         _hit = ""
         for _p in _olds:
@@ -7709,16 +7051,13 @@ class ApixIqfkSimpleMeme(Star):
         if _hit:
             _title = _core[len(_hit):].strip()
         else:
-            # 没前缀：整行当标题（去掉装饰后）
             if any(_st.startswith(_p) for _p in _olds):
                 _title = _st
             else:
                 _title = _core or _st
         if not _title:
             return s
-        # ★ 横线装饰会被 title_bar/menu_builder 统一处理，这里只回标题
         _out = (_cur + _title) if _cur else _title
-        # 保留原缩进（菜单标题一般顶格）
         _lead = _first[:len(_first) - len(_first.lstrip())]
         lines[_i] = _lead + _out
         return "\n".join(lines)
@@ -7752,12 +7091,6 @@ class ApixIqfkSimpleMeme(Star):
                     _r = _icon_space_text(t)
                 except Exception:
                     _r = t
-            # ★★ 1.7.6：后台自定义的菜单文案**也要跟随全局标题前缀**。
-            #   以前这里补完图标空格就原样返回，于是「菜单输出内容」里
-            #   存着的老前缀（或没前缀）不会跟着
-            #   「菜单指令 → 全局标题前缀」变 —— 用户反馈的问题。
-            #   ★ 必须 try 包住：万一这步出问题，**绝不能把整条菜单吞掉**
-            #     （以前异常被外层 except 吃掉 -> 返回空菜单）。
             try:
                 _ap = getattr(self, "_apply_menu_prefix", None)
                 if callable(_ap):
@@ -7827,14 +7160,8 @@ class ApixIqfkSimpleMeme(Star):
         """
         cur = str(text or "").strip()
         if not cur:
-            return True          # 空 = 恢复默认
-        # ★ 忽略前缀后的正文（和历史值比对都用这个口径）
+            return True
         cur_body = self._strip_title_prefix(cur)
-        # ① 与「历史默认值清单」比对（prev 可为字符串或列表）
-        #   ★ 注意：命中就返回 True；**没命中不能直接返回 False** ——
-        #     还要继续走 ② 的历史指纹兜底，否则会出现
-        #     「内容其实是旧默认值、但不在 prev 清单里」时被判成用户自定义，
-        #     导致菜单永远刷新不了。
         try:
             for _r in self._menu_rows():
                 if not isinstance(_r, dict):
@@ -7843,7 +7170,6 @@ class ApixIqfkSimpleMeme(Star):
                     continue
                 _prev = _r.get("prev")
                 if isinstance(_prev, (list, tuple)):
-                    # ★ 前缀无关比对
                     if cur_body in [self._strip_title_prefix(str(x))
                                     for x in _prev if x]:
                         return True
@@ -7853,13 +7179,54 @@ class ApixIqfkSimpleMeme(Star):
                 break
         except Exception:
             pass
-        # ② 历史默认片段（每条菜单一份指纹）—— 用**去掉前缀**的正文比，
-        #   否则用户换过标题前缀后旧文案会认不出来。
         for frag in MENU_TEXT_LEGACY_FRAGS.get(str(menu_id), ()):
             if frag in cur_body:
                 return True
         return False
 
+    def _menu_text_is_stale_subset(self, menu_id: str, text: str) -> bool:
+        """
+        存盘文案是不是「**当前默认值的旧版**」—— 即它所有内容块都能在
+        当前生成的默认值里找到（只是**缺了新加的块**）。
+
+        ★★ 1.5 为什么需要（用户反馈：MC系统输出内容没有新功能相关指令）：
+          我给 MC 菜单加了「玩家查询 / MCJ / MCB」三块，旧文案因此
+          **少了一整块**，长度 164 vs 295 ——
+            · `_menu_text_similar_to_default` 有「长度比 < 0.6 直接 False」
+              的门槛（164/295 = 0.556），于是兜底失效；
+            · 结果被判成「用户手改过」，菜单**永远刷新不了**。
+          但「旧文案的每一块都在新默认里」恰恰证明它只是**过期默认值**，
+          不是用户自定义 —— 用户自己写的文案不会正好是默认值的子集。
+
+        ★ 防误伤：要求
+           · 两侧都切成 ≥3 个块（太短的文案不参与，免得误判）
+           · 旧文案的块**全部**能在新默认里找到
+           · 新默认确实更丰富（块数更多）
+        """
+        try:
+            cur = self._strip_title_prefix(text)
+            new = self._strip_title_prefix(
+                str(menu_default(self, menu_id) or ""))
+            if not cur or not new:
+                return False
+
+            def _blocks(s):
+                out = []
+                for ln in s.split("\n"):
+                    t = ln.strip()
+                    if not t or all(c in "━─=＝-—·・ \t" for c in t):
+                        continue
+                    out.append(t)
+                return out
+
+            cb, nb = _blocks(cur), _blocks(new)
+            if len(cb) < 3 or len(nb) <= len(cb):
+                return False
+            nset = set(nb)
+            return all(b in nset for b in cb)
+        except Exception:
+            logger.debug("[apix-meme] 过期子集判定失败", exc_info=True)
+            return False
     def _menu_text_similar_to_default(self, menu_id: str,
                                       text: str) -> bool:
         """
@@ -7877,9 +7244,6 @@ class ApixIqfkSimpleMeme(Star):
         """
         try:
             cur_body = self._strip_title_prefix(text)
-            # ★ `menu_default` 是**模块级函数**（menu_default(plugin, menu_id)），
-            #   不是实例方法 —— 之前写成 self.menu_default(...) 会抛异常
-            #   被 except 吞掉，导致相似度兜底永远返回 False。
             new_body = self._strip_title_prefix(
                 str(menu_default(self, menu_id) or ""))
             if not cur_body or not new_body:
@@ -7908,10 +7272,6 @@ class ApixIqfkSimpleMeme(Star):
         """
         try:
             rows = self._menu_rows()
-            # ★ 先清洗：去掉「id 为空/不在注册表」和「重复 id」的条目。
-            #   这些多半是后台误点「+ 新增一条」加出来的，
-            #   留在数据里既没用、又会让「删除」看起来删不掉
-            #   （前台读回旧数据再存一遍，空条目又被带回来）。
             _seen, _clean, _dropped = set(), [], []
             for _r in rows:
                 if not isinstance(_r, dict):
@@ -7928,8 +7288,6 @@ class ApixIqfkSimpleMeme(Star):
             _changed = len(_clean) != len(rows)
             rows = _clean
 
-            # ★ 按 id 建索引：内容为空的条目视为「待恢复默认」，
-            #   不占用 have（后台提示是「清空 = 恢复默认」，以前没实现）
             _by_id = {}
             for _r in rows:
                 _by_id[str(_r.get("id") or "").strip()] = _r
@@ -7937,12 +7295,8 @@ class ApixIqfkSimpleMeme(Star):
 
             added, restored, skipped = 0, 0, []
             refreshed = 0
-            _protect = []          # 判定为「用户手改」而跳过的菜单 id
-            _skipped_gen = []      # 生成不出默认值、留待下次再刷新的菜单 id
-            # ★ 菜单内容版本号：**改了任何菜单生成代码就把 MENU_TEXT_VERSION +1**
-            #   升级后会自动把「没被自定义过」的旧文案重生成一遍，
-            #   这样菜单里显示的数值（每次抽奖花多少、利息多少…）
-            #   就能跟后台配置保持一致，不会停在生成时的旧值。
+            _protect = []
+            _skipped_gen = []
             _menu_ver = str(MENU_TEXT_VERSION)
             for mid, (label, _fn) in MENU_REGISTRY.items():
                 is_new = mid not in _by_id
@@ -7950,45 +7304,28 @@ class ApixIqfkSimpleMeme(Star):
                     _row = _by_id[mid]
                     _cur = str(_row.get("text") or "")
                     _prev = _row.get("prev")
-                    # ★ 兼容旧格式：prev 早期是**单个字符串**，只能记住「上一版」
-                    #   默认值，跨版本升级时会认不出更早的默认文案。
-                    #   这里一次性迁移成**列表**（记录所有历史默认值）。
                     if not isinstance(_prev, list):
                         _lst = []
                         if isinstance(_prev, str) and _prev.strip():
                             _lst.append(_prev.strip())
                         _row["prev"] = _lst
-                    # ★ 关键：**不再依赖版本号做跳过判断**。
-                    #   因为出现过「插件是旧代码、却读到了新版本号」的情况——
-                    #   版本被盖成新的、内容却没换，之后再启动就会被
-                    #   「版本相同」直接跳过，永远修不好。
-                    #   所以这里改成：拿**当前代码生成的默认值**和内容比，
-                    #   不一致且判定为「系统默认（用户没改）」就重生成。
                     _new = str(menu_default(self, mid) or "")
                     if not _new.strip():
-                        # ★★ 1.7.6：生成不出默认值（该菜单依赖的模块还没就绪）。
-                        #   **保留原内容**、也不盖版本戳（下次启动会再试），
-                        #   否则一旦盖上「已是最新」，以后就永远不刷新了。
                         _skipped_gen.append(mid)
                         continue
-                    # ★★ 1.7.6：比对时**忽略标题前缀** —— 前缀是渲染时动态加的，
-                    #   用户换过前缀不该让整条菜单被当成「内容变了」。
                     if self._strip_title_prefix(_cur) == \
                             self._strip_title_prefix(_new):
-                        _row["version"] = _menu_ver   # 已是最新内容
+                        _row["version"] = _menu_ver
                         continue
                     if not self._menu_text_untouched(mid, _cur):
-                        # ★★ 1.7.6：再给一次机会 —— 与当前默认值**结构基本相同**
-                        #   （只有动态数值/个别词不同）也当系统默认，允许刷新。
-                        #   否则「配置改了但文案没进 prev 清单」会永远卡住。
-                        if not self._menu_text_similar_to_default(mid, _cur):
-                            # 用户手改过 -> 绝不动内容
+                        if (not self._menu_text_similar_to_default(mid, _cur)
+                                and not self._menu_text_is_stale_subset(
+                                    mid, _cur)):
                             _row["version"] = _menu_ver
                             if self._strip_title_prefix(
                                     _cur) != self._strip_title_prefix(_new):
                                 _protect.append(mid)
                             continue
-                    # 系统默认的旧内容 -> 重生成
                     _lst = [str(x) for x in _row.get("prev") or []]
                     if _cur.strip() and _cur.strip() not in _lst:
                         _lst.append(_cur.strip())
@@ -8000,7 +7337,7 @@ class ApixIqfkSimpleMeme(Star):
                     continue
                 txt = menu_default(self, mid)
                 if not str(txt or "").strip():
-                    skipped.append(mid)   # 生成失败：不覆盖
+                    skipped.append(mid)
                     continue
                 if is_new:
                     rows.append({"id": mid, "label": label, "text": txt,
@@ -8059,14 +7396,12 @@ class ApixIqfkSimpleMeme(Star):
                 cfg = {}
             cfg["output_group_modes"] = om.dump_groups()
             self._write_disk_config(cfg)
-            # 同步内存
             try:
                 if isinstance(self.config, dict):
                     self.config["output_group_modes"] = om.dump_groups()
             except Exception:
                 pass
             logger.info(f"[apix-meme] 输出模式已保存：{om.dump_groups()}")
-            # ★ 同步到 AstrBot 配置，否则面板一保存就会覆盖掉群内切换
             self._sync_to_astrbot_config(
                 {"output_group_modes": om.dump_groups(),
                  "output_default_mode": om.default_mode,
@@ -8095,7 +7430,6 @@ class ApixIqfkSimpleMeme(Star):
             rt = getattr(self, "reply_tail", None)
             if rt is None or not rt.enable:
                 return ""
-            # ★ 只给群聊加（可配）
             if rt.only_group:
                 try:
                     if not _get_group_id_from_event(event):
@@ -8127,22 +7461,16 @@ class ApixIqfkSimpleMeme(Star):
             （定时推送/整点报时自己拼，避免加两次）
           no_tail=True    -> 同上（可读性更好的别名）
         """
-        # ★ 防御：误传 list/tuple 时取第一条，否则 str(list) 会把
-        #   "['...\\n...']" 这种 repr 直接发出去（表现为不换行 + 带方括号）
         if isinstance(text, (list, tuple)):
             text = text[0] if text else ""
         if not isinstance(text, str):
             text = str(text or "")
         if not text:
             return
-        # ★★ 1.7.6：输出前**热刷新配置** —— 后台保存的自定义指令名/
-        #   积分名/开关等会立刻生效，不用手动重载插件。
         try:
             self._refresh_cfg_if_changed()
         except Exception:
             logger.debug("[apix-meme] 输出前热刷新失败", exc_info=True)
-        # ★★ 1.7.6：**保证输出末尾有底部横线**，尾巴才能统一挂在它下面
-        #   （排行 / 查询 / 各种状态以前没有收尾线，尾巴就跟正文挤在一起）。
         try:
             from .core.path_utils import with_bottom_bar as _wbb
         except Exception:
@@ -8152,11 +7480,6 @@ class ApixIqfkSimpleMeme(Star):
                 _wbb = None
         if _wbb is not None:
             text = _wbb(text)
-        # ★★ 1.7.6：回复尾巴**单独传给渲染端**，别再拼进正文。
-        #   为什么：拼进正文后渲染端只能靠「猜哪几行是尾巴」，
-        #   猜错就会画到错误位置（横线上面 / 中间）。显式传参最稳。
-        #   渲染端会把它画在**收尾横线下面**，并按卡片宽度换行
-        #   —— 尾巴再长也不加宽卡片。
         with_tail = bool(kwargs.pop("with_tail", True))
         _tail_text = ""
         if with_tail and not getattr(event, "_apix_tail_done", False) \
@@ -8164,7 +7487,6 @@ class ApixIqfkSimpleMeme(Star):
             _rt = getattr(self, "reply_tail", None)
             if _rt is not None and _rt.enable:
                 try:
-                    # ★ 只给群聊加（可配）
                     _okg = True
                     if _rt.only_group:
                         try:
@@ -8172,8 +7494,6 @@ class ApixIqfkSimpleMeme(Star):
                         except Exception:
                             _okg = True
                     if _okg:
-                        # ★ token = 本轮的 event（同一条回复内稳定，
-                        #   换一条消息就是新的 -> 每次都重新随机）
                         _tail_text = await _rt.tail_text(token=id(event))
                         if _tail_text:
                             logger.info(f"[reply_tail] 尾巴：{_tail_text[:40]!r}")
@@ -8181,12 +7501,9 @@ class ApixIqfkSimpleMeme(Star):
                     logger.exception("[apix-meme] 取回复尾巴失败")
         om = getattr(self, "output_mode_module", None)
         if om is None:
-            # 模块未加载：直接发纯文本（★ 不能递归调用自己）
             _plain0 = text
             if _tail_text:
                 _plain0 = text + "\n" + _tail_text
-            # ★ 1.7.6：**不能**在这里再调 _send_content（会自递归），
-            #   直接发纯文本即可（底部横条上面已经补过了）。
             yield event.plain_result(_plain0)
             if _tail_text:
                 try:
@@ -8195,9 +7512,7 @@ class ApixIqfkSimpleMeme(Star):
                     pass
             return
         try:
-            # ★ 必须传本群号，否则「按群切换」不生效
             _gid = _get_group_id_from_event(event) or ""
-            # ★ 行内图片素材目录（坐骑图等）
             _idir = ""
             try:
                 _idir = str(getattr(self.checkin_module, "mount_img_dir", "")
@@ -8210,7 +7525,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.exception("[apix-meme] 输出模式渲染异常，回落纯文本")
             chain, mode = [], "text"
         if chain:
-            # ★ 图片已经带尾巴了 -> 钩子不要再追加一次
             if _tail_text:
                 try:
                     event._apix_tail_done = True
@@ -8218,8 +7532,6 @@ class ApixIqfkSimpleMeme(Star):
                     pass
             yield event.chain_result(chain)
         else:
-            # text 模式 / 渲染失败：直接发纯文本
-            #   ★ 要把 [[img:...]] 标记去掉，否则会把标记当文字发出去
             try:
                 from .core.output_mode import strip_inline_img
             except Exception:
@@ -8228,7 +7540,6 @@ class ApixIqfkSimpleMeme(Star):
                 except Exception:
                     strip_inline_img = None
             _plain = strip_inline_img(text) if strip_inline_img else text
-            # ★★ 1.7.6：文本模式同样去掉 markdown 强调标记（`**`）
             try:
                 from .core.path_utils import strip_md as _smd3
             except Exception:
@@ -8238,16 +7549,13 @@ class ApixIqfkSimpleMeme(Star):
                     _smd3 = None
             if _smd3 is not None:
                 _plain = _smd3(_plain)
-            # ★ 纯文本模式：尾巴直接接在末尾（图形模式才交给渲染端）
             if _tail_text:
                 _plain = _plain + "\n" + _tail_text
                 try:
                     event._apix_tail_done = True
                 except Exception:
                     pass
-            # ★ 1.7.6：**不能**在这里再调 _send_content（会自递归）
             yield event.plain_result(_plain)
-
 
     def _is_output_mode_menu(self, text: str) -> bool:
         """「输出模式」菜单入口（管理员可看当前模式）"""
@@ -8293,7 +7601,6 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu("checkin_query", lambda: build_checkin_query_menu(self))
     def _build_checkin_bank_menu(self):
         return self._menu("checkin_bank", lambda: build_checkin_bank_menu(self))
-    # ★★ 1.7.6：银行下级菜单
     def _build_checkin_bank_save_menu(self):
         return self._menu("checkin_bank_save",
                           lambda: build_checkin_bank_save_menu(self))
@@ -8323,7 +7630,6 @@ class ApixIqfkSimpleMeme(Star):
                           lambda: build_checkin_shop_help_menu(self, page))
     def _build_checkin_mount_menu(self):
         return self._menu("checkin_mount", lambda: build_checkin_mount_menu(self))
-    # ★★ 1.7.7：坐骑下级菜单
     def _build_mount_manage_menu(self):
         return self._menu("mount_manage",
                           lambda: build_checkin_mount_manage_menu(self))
@@ -8333,14 +7639,12 @@ class ApixIqfkSimpleMeme(Star):
     def _build_checkin_job_menu(self):
         return self._menu("checkin_job", lambda: build_checkin_job_menu(self))
 
-    # ★★ 1.7.7：打工下级菜单 + 体力
     def _is_job_list_menu(self, text: str) -> bool:
         return self._menu_entry_hit("job_list", text)
 
     def _is_job_refill_menu(self, text: str) -> bool:
         return self._menu_entry_hit("job_refill", text)
 
-    # ★★ 1.7.7：加班状态（只列可加班 / 不可加班工种）
     def _is_job_refill_status_menu(self, text: str) -> bool:
         return self._menu_entry_hit("job_refill_status", text)
 
@@ -8376,7 +7680,6 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu("speak", lambda: build_speak_menu(self))
     def _build_pet_menu(self):
         return self._menu("pet", lambda: build_pet_menu(self))
-    # ★★ 1.7.6：宠物下级菜单
     def _build_pet_care_menu(self):
         return self._menu("pet_care", lambda: build_pet_care_menu(self))
     def _build_pet_fight_menu(self):
@@ -8385,7 +7688,6 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu("pet_item", lambda: build_pet_item_menu(self))
     def _build_guess_menu(self):
         return self._menu("guess", lambda: build_guess_menu(self))
-    # ★★ 1.7.7：音乐下级菜单
     def _build_meme_admin_menu(self):
         return self._menu("meme_admin", lambda: build_meme_admin_menu(self))
     def _build_word_admin_menu(self):
@@ -8408,14 +7710,12 @@ class ApixIqfkSimpleMeme(Star):
     def _is_member_admin_menu(self, text: str) -> bool:
         return text in ("成员管理", "/成员管理")
 
-    # ★ 1.7.6：提示功能（管理系统子菜单）
     def _is_notice_menu(self, text: str) -> bool:
         return text in ("提示功能", "/提示功能")
 
     def _build_notice_menu(self):
         return self._menu("notice", lambda: build_notice_menu(self))
 
-    # ★★ 1.3.0：授权功能（管理系统子菜单）
     def _is_auth_menu(self, text: str) -> bool:
         """
         授权功能菜单入口。
@@ -8441,6 +7741,28 @@ class ApixIqfkSimpleMeme(Star):
 
     def _build_auth_menu(self, group_id: str = ""):
         return self._menu("auth", lambda: build_auth_menu(self, group_id))
+
+    def _is_auth_sub_menu(self, text: str):
+        """返回 menu_id（'auth_cmd' / 'auth_query'）或 None"""
+        t = str(text or "").strip()
+        if not t:
+            return None
+        for mid in ("auth_cmd", "auth_query"):
+            for n in self._menu_entry_names(mid):
+                if n and (t == n or t == f"/{n}"):
+                    return mid
+        return None
+
+    def _build_auth_sub_menu(self, menu_id: str,
+                             group_id: str = ""):
+        _M = {
+            "auth_cmd": lambda: build_auth_cmd_menu(self, group_id),
+            "auth_query": lambda: build_auth_query_menu(self, group_id),
+        }
+        fn = _M.get(str(menu_id or ""))
+        if fn is None:
+            return ""
+        return self._menu(str(menu_id), fn)
 
     def _build_member_admin_menu(self):
         return self._menu("member_admin", lambda: build_member_admin_menu(self))
@@ -8494,14 +7816,6 @@ class ApixIqfkSimpleMeme(Star):
             lines.append("（群管识别模块未加载）")
         return "\n".join(lines)
 
-    # ============================================================
-    # ★ 1.7.6：全局回复尾巴（发送前的钩子）
-    #   `on_decorating_result` 是**发送前**触发的，所以能改内容；
-    #   `after_message_sent` 是发送后，改不了。
-    #   只给**本插件自己发出的**回复加（靠输出里的统一标记识别），
-    #   不影响其他插件 / LLM 的回复。
-    #   ★ 老版本 AstrBot 没这个钩子时用空装饰器兜底，不会崩。
-    # ============================================================
     def _decorating_result_hook():
         """拿到 on_decorating_result 装饰器；没有就返回空装饰器"""
         try:
@@ -8530,25 +7844,19 @@ class ApixIqfkSimpleMeme(Star):
             rt = getattr(self, "reply_tail", None)
             if rt is None or not rt.enable:
                 return
-            # ★ 已经提前拼过 -> 不要再加一次
             if getattr(event, "_apix_tail_done", False):
                 return
             result = event.get_result()
             if result is None or not getattr(result, "chain", None):
                 return
-            # ★ 只加群聊（可配）
             if rt.only_group:
                 try:
                     if not event.get_group_id():
                         return
                 except Exception:
                     pass
-            # ★ 只加本插件发出的回复（文字标记 或 本插件渲染的图）
             if not rt.is_own_result(result):
                 return
-            # ★★ 1.7.6：链里已经有**本插件渲染的图**时，
-            #   认为尾巴已经画进图里了 -> 绝不再补一条文本
-            #   （否则会出现「图片里一条尾巴 + 文本又一条」的重复）。
             try:
                 from .core.reply_tail import chain_has_own_image as _choi
                 if _choi(result):
@@ -8572,18 +7880,13 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 追加回复尾巴失败")
 
-    # ============================================================
-    # 主入口
-    # ============================================================
     @filter.event_message_type(EventMessageType.ALL)
     async def on_msg(self, event: AstrMessageEvent):
         GLOBAL_STATS["recv"] += 1
-        # ★★ 市场版 1.1：记下「见过」的群（后台「机器人数据」用）
         try:
             _sg = str(_get_group_id_from_event(event) or "")
             if _sg and isinstance(self._seen_groups, set):
                 self._seen_groups.add(_sg)
-            # ★★ 1.3.0：同步给授权模块 —— 「授权列表」要列出这些群的状态
             if _sg and getattr(self, "auth_module", None) is not None:
                 try:
                     self.auth_module.known_groups = self._seen_groups
@@ -8591,7 +7894,6 @@ class ApixIqfkSimpleMeme(Star):
                     pass
         except Exception:
             pass
-        # ★ 顺手记住机器人自身 ID，定时推送 / 预览时也能显示机器人QQ
         try:
             from .core.system_status import set_bot_id as _set_bot_id
             _set_bot_id(event.get_self_id())
@@ -8617,28 +7919,28 @@ class ApixIqfkSimpleMeme(Star):
         if not self._dirty:
             self.reload_cfg()
 
-        # ★ msg_str 要在所有用到它的判断之前取好（曾经因为顺序错导致
-        #   UnboundLocalError，这里显式提前）
         msg_str = to_str(event.message_str).strip()
 
-        # ============================================================
-        # ★★ 1.3.0：授权功能 —— **插件总闸门**
-        #   放在所有功能之前：本群授权到期/停用 -> 整个插件对本群静默，
-        #   连「娱乐系统开关」都轮不到。
-        #   ★ 授权指令本身**不受此限制**（否则没法续期）。
-        # ============================================================
         _auth_gid = str(_get_group_id_from_event(event) or "")
         if _auth_gid and getattr(self, "auth_module", None) is not None:
             try:
-                _auth_hit = self.auth_module.match_cmd(msg_str)
+                _is_menu_now = (self._is_auth_menu(msg_str)
+                                or bool(self._is_auth_sub_menu(msg_str)))
             except Exception:
-                _auth_hit = None
-            # ★★ 1.3.0：「授权状态」是**独立指令**（不带群号 = 查当前群）
-            #   优先判定，免得被 `授权` 指令抢走。
+                _is_menu_now = False
+            if _is_menu_now:
+                pass
+            else:
+                try:
+                    _auth_hit = self.auth_module.match_cmd(msg_str)
+                except Exception:
+                    _auth_hit = None
             try:
                 _auth_st = self.auth_module.match_status_cmd(msg_str)
             except Exception:
                 _auth_st = ""
+            if _is_menu_now:
+                _auth_hit = None
             if _auth_st and not _auth_hit:
                 try:
                     _sallowed = self.auth_module.cmd_allowed(_auth_gid)
@@ -8654,7 +7956,6 @@ class ApixIqfkSimpleMeme(Star):
                     async for _r in self._send_content(event, _stxt):
                         yield _r
                 return
-            # ★★ 1.3.0：「授权列表」也是独立指令（不带空格）
             try:
                 _auth_ls = self.auth_module.match_list_cmd(msg_str)
             except Exception:
@@ -8675,7 +7976,6 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                 return
             if _auth_hit:
-                # ---- 远程授权指令（自己处理，不走后面的功能）----
                 try:
                     _allowed = self.auth_module.cmd_allowed(_auth_gid)
                 except Exception:
@@ -8686,53 +7986,50 @@ class ApixIqfkSimpleMeme(Star):
                         f"忽略 {msg_str[:40]!r}")
                     return
                 try:
-                    _is_adm = await self._check_admin(event)
+                    _is_ga = self._is_global_admin(event)
                 except Exception:
-                    _is_adm = False
-                if not _is_adm:
+                    _is_ga = False
+                if not _is_ga:
                     async for _r in self._send_content(
-                            event, "⛔ 只有管理员能用授权指令"):
+                            event,
+                            "⛔ 只有 **AstrBot 全局管理员** 能授权\n"
+                            "────────────────────\n"
+                            "　 群主 / 群管理员 / 插件专属管理员 都无权\n"
+                            "💡 怎么设置：后台「授权功能」页有详细说明\n"
+                            f"💡 你可以自己查状态："
+                            f"{(getattr(self.auth_module, 'status_names', None) or ['授权状态'])[0]}"):
                         yield _r
+                    GLOBAL_STATS["send"] += 1
                     return
                 _txt = self.auth_module.handle_cmd(msg_str, _auth_gid)
                 if _txt:
                     async for _r in self._send_content(event, _txt):
                         yield _r
                 return
-            # ---- 授权闸门 ----
-            try:
-                if not self.auth_module.is_authorized(_auth_gid):
-                    logger.info(
-                        f"[auth] 群 {_auth_gid} 未授权，已提示用户")
-                    # ★★ 1.3.0：**不再静默** —— 明确告诉用户需要授权。
-                    try:
-                        _dtxt = self.auth_module.deny_text(_auth_gid)
-                    except Exception:
-                        _dtxt = ""
-                    if _dtxt:
-                        async for _r in self._send_content(event, _dtxt):
-                            yield _r
-                        GLOBAL_STATS["send"] += 1
-                    return
-                # ★★ 1.3.0：已授权但快到期 -> 续期提醒（每天最多一次）
+            if not _is_menu_now:
                 try:
-                    _wtxt = self.auth_module.warn_text(_auth_gid)
+                    if not self.auth_module.is_authorized(_auth_gid):
+                        logger.info(
+                            f"[auth] 群 {_auth_gid} 未授权，已提示用户")
+                        try:
+                            _dtxt = self.auth_module.deny_text(_auth_gid)
+                        except Exception:
+                            _dtxt = ""
+                        if _dtxt:
+                            async for _r in self._send_content(event, _dtxt):
+                                yield _r
+                            GLOBAL_STATS["send"] += 1
+                        return
+                    try:
+                        _wtxt = self.auth_module.warn_text(_auth_gid)
+                    except Exception:
+                        _wtxt = ""
+                    if _wtxt:
+                        async for _r in self._send_content(event, _wtxt):
+                            yield _r
                 except Exception:
-                    _wtxt = ""
-                if _wtxt:
-                    async for _r in self._send_content(event, _wtxt):
-                        yield _r
-            except Exception:
-                logger.exception("[apix-meme] 授权判定失败（放行）")
+                    logger.exception("[apix-meme] 授权判定失败（放行）")
 
-        # ============================================================
-        # ★ 1.7.6：提示功能（白名单）
-        #   · 「开启提示昵称」-> 把本群加入该类白名单（写进后台配置）
-        #   · 「关闭提示昵称」-> 移出
-        #   · 「开启提示」/「关闭提示」-> 五类一起
-        #   · 「提示状态」= 查看本群在各白名单里的情况（只读）
-        #   ★ 放在「群总开关」之前，这样即使本群娱乐系统关了也能配置。
-        # ============================================================
         _ngid = str(_get_group_id_from_event(event) or "")
         if self.notice_module is not None and _ngid:
             _want_admin = False
@@ -8775,7 +8072,6 @@ class ApixIqfkSimpleMeme(Star):
                             else ""))
                     else:
                         _bad.append(f"{_lab}（{_note}）")
-                # 让配置立刻生效（写的是磁盘配置，重载一次读回来）
                 try:
                     self.reload_cfg()
                 except Exception:
@@ -8799,17 +8095,7 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-        # ============================================================
-        # ★ 1.7.6：群通知事件（notice）——必须在指令分发**之前**拦掉
-        #   来源：NapCat / OneBot v11 的 notice 推送。
-        #   AstrBot 把它转成 GROUP_MESSAGE（raw_message 保留原始数据），
-        #   所以会走到这里；若不拦，message_str 为空但可能误触别的分支。
-        #   ★ 这里只取一次 group_id，后面所有分支共用（避免先用后赋值）
-        # ============================================================
         group_id = _get_group_id_from_event(event)
-        # ★★ 1.7.8：**戳一戳随机回复** —— 必须在 notice 的其它分支之前判。
-        #   来源：NapCat / OneBot v11 的 notice（notice_type=notify,
-        #   sub_type=poke）。命中就随机回一句，然后不再往下走。
         if self.poke_reply_module is not None \
                 and getattr(self.poke_reply_module, "enable", False):
             try:
@@ -8843,7 +8129,7 @@ class ApixIqfkSimpleMeme(Star):
                                 event, _pk["word"]):
                             yield _r
                         GLOBAL_STATS["send"] += 1
-                    return          # ★ 戳一戳一律不再往下走
+                    return
             except Exception:
                 logger.exception("[apix-meme] 处理戳一戳回复失败")
                 return
@@ -8855,8 +8141,6 @@ class ApixIqfkSimpleMeme(Star):
                     _raw = getattr(event.message_obj, "raw_message", None)
                 except Exception:
                     _raw = None
-                # ★ 诊断模式：只要是 notice，原样发出来（不按白名单过滤），
-                #   方便排查「某类事件到底有没有上报 / 字段长什么样」
                 _is_notice = (isinstance(_raw, dict)
                               and str(_raw.get("post_type") or "") == "notice")
                 if _is_notice and getattr(self.notice_module, "debug", False):
@@ -8876,10 +8160,6 @@ class ApixIqfkSimpleMeme(Star):
                 if _info:
                     _gid = str(_get_group_id_from_event(event)
                                or _raw.get("group_id") or "")
-                    # ★ 关键顺序：**先取旧名**，再把事件里的新名写进缓存。
-                    #   否则 notice 路会把缓存更新成新名，
-                    #   紧接着的「发言路」再读缓存就拿不到旧名，
-                    #   会渲染成「鸡鸡 → 鸡鸡」这种第二条重复提示。
                     try:
                         if str(_info.get("kind") or "") == "card" \
                                 and not _info.get("old"):
@@ -8887,13 +8167,11 @@ class ApixIqfkSimpleMeme(Star):
                                 _gid, _info.get("uid") or "", "")
                     except Exception:
                         pass
-                    # 再把事件里的昵称记进缓存（供后续渲染用）
                     try:
                         self.notice_module.remember_from_event(_gid, _raw)
                     except Exception:
                         pass
                     _kind = str(_info.get("kind") or "")
-                    # 人数缓存：入群 +1 / 退群（被踢）-1，仅用于 $count
                     try:
                         if _kind == "_count":
                             self.notice_module.bump_count(_gid, +1)
@@ -8901,7 +8179,6 @@ class ApixIqfkSimpleMeme(Star):
                             self.notice_module.bump_count(_gid, -1)
                     except Exception:
                         pass
-                    # 只有「本群开了这一类」才发
                     if _kind and _kind != "_count" and \
                             self.notice_module.is_on(_gid, _kind):
                         _txt = self.notice_module.build_message(_gid, _info)
@@ -8909,33 +8186,25 @@ class ApixIqfkSimpleMeme(Star):
                             async for _r in self._send_content(event, _txt):
                                 yield _r
                             GLOBAL_STATS["send"] += 1
-                    return          # ★ notice 一律不再往下走
+                    return
             except Exception:
                 logger.exception("[apix-meme] 处理群通知事件失败")
                 return
 
-        # msg_str 已在上面取好（提示状态判断要用），这里不再重复取
         bot_id = to_str(event.get_self_id())
         sender_id = to_str(event.get_sender_id())
         if sender_id == bot_id:
             return
 
-        # ★ 全局昵称缓存更新
         try:
             sender_name = get_sender_name(event)
             if sender_id and sender_name:
                 self._nickname_cache.update(sender_id, sender_name)
-                # ★ 1.7.6：同步给提示模块，让 $user 能显示人名而不是 QQ 号
                 if self.notice_module is not None:
                     _cg = str(_get_group_id_from_event(event) or "")
                     if _cg:
                         self.notice_module.remember_name(_cg, sender_id,
                                                          sender_name)
-            # ★★ 1.7.6：把**本群昵称**写进本群用户记录。
-            #   为什么需要：`nickname_cache` 是跨群共享的（{QQ: 昵称}），
-            #   只有一份，同一个人在多个群会互相覆盖；
-            #   而抽奖/排行这类按群展示的地方必须用**本群**的昵称。
-            #   每次发言顺手刷新一下，改名后也是最新的。
             try:
                 _gid2 = str(_get_group_id_from_event(event) or "")
                 if (_gid2 and sender_id and sender_name
@@ -8948,21 +8217,11 @@ class ApixIqfkSimpleMeme(Star):
                         self.checkin_module._need_save = True
             except Exception:
                 logger.debug("[apix-meme] 同步本群昵称失败", exc_info=True)
-            # ★ 顺手记住机器人自己（notice 的 operator_id 常是机器人，
-            #   但事件不带它的昵称，不记就只能显示 QQ 号）
             if self.notice_module is not None and bot_id:
                 self.notice_module.set_bot_identity(bot_id, sender_name or "")
         except Exception:
             logger.exception("[apix-meme] 更新昵称缓存失败")
 
-        # ★ 改昵称只走 notice 路（上面的群通知处理），
-        #   这里不再做「发言比对群名片」——两条路会重复提示。
-
-        # group_id 已在上面取好（notice / 卡片追踪都要用），此处不再重复取
-
-        # ★ 1.7.6：奖池超时自动开奖（名额没满、到点也开）
-        #   轻量检查：只在「本群有奖池未开、且已到时间」时才动，
-        #   平时只是一次内存判断，不会额外拉接口。
         if group_id and self.checkin_module is not None \
                 and getattr(self.checkin_module, "pool_enable", False):
             try:
@@ -8974,10 +8233,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 奖池超时检查失败")
 
-        # ★★ 1.7.7：猜数「没人猜超时」自动关闭
-        #   为什么挂在这里：群里**安静下来**时永远不会有人发「猜数」，
-        #   光靠参与指令结算的话这局会一直挂着。所以任意消息都轻量查一次。
-        #   平时只是一次内存判断（没局 / 没超时就直接返回）。
         if group_id and self.guess_module is not None:
             try:
                 _gt = self._guess_settle(group_id)
@@ -8988,10 +8243,6 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 猜数超时检查失败")
 
-        # ★ 1.7.6：坐骑「每天群里第一句话 -> 闪亮登场」
-        #   · 只在当天第一条消息触发（谁发的都算「开场」）
-        #   · 发的人有装备坐骑才播报，没有就静默消费掉这一次
-        #   · 图片模式：文字之后补一张坐骑卡（图片在顶部）
         if group_id and self.checkin_module is not None \
                 and getattr(self.checkin_module, "mount_greet_enable", False) \
                 and self._is_group_feature_enable(group_id, "mount"):
@@ -8999,26 +8250,21 @@ class ApixIqfkSimpleMeme(Star):
                 _gt = self.checkin_module.mount_daily_greet(
                     group_id, sender_id, sender_name)
                 if _gt:
-                    # 立刻落盘，避免同一天重复触发
                     try:
                         self.checkin_module._save()
                     except Exception:
                         pass
-                    # ★ 坐骑图已由 checkin 以 [[img:...]] 标记拼在文案里，
-                    #   这里不用再单独发图片（图文同一套输出）
                     async for _r in self._send_content(event, _gt):
                         yield _r
                     GLOBAL_STATS["send"] += 1
             except Exception:
                 logger.exception("[apix-meme] 坐骑登场提示失败")
 
-        # ============ 黑名单拦截（最先判定，早于所有功能）============
         if sender_id and self.moderation_enable and self.member_blacklist:
             bl_action = get_blacklist_action(
                 self.member_blacklist, sender_id, self.blacklist_default_action
             )
             if bl_action:
-                # 有权限才处罚；没权限时降级为「无视」，避免报错刷屏
                 if bl_action in (ACTION_KICK, ACTION_MUTE) and self.moderation_module is not None:
                     can, role = await self.moderation_module.bot_can_moderate(event)
                     if can:
@@ -9034,10 +8280,8 @@ class ApixIqfkSimpleMeme(Star):
                             f"[moderation] 机器人无管理权限（{role}），"
                             f"黑名单成员 {sender_id} 的 {bl_action} 动作被跳过，仅无视"
                         )
-                # 无论处罚是否成功，都不再响应其指令
                 return
 
-        # ============ 记录 UMO 供主动推送 ============
         if group_id:
             try:
                 umo = get_event_umo(event)
@@ -9072,7 +8316,6 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             pass
 
-        # ============ 输出模式切换（按群生效，1.7.3）============
         if self.output_mode_module is not None and group_id:
             _om_mode, _om_err = self.output_mode_module.match_switch_cmd(msg_str)
             if _om_mode is not None or _om_err:
@@ -9082,7 +8325,6 @@ class ApixIqfkSimpleMeme(Star):
                     GLOBAL_STATS["send"] += 1
                     return
                 if not _om_mode:
-                    # 只发了指令 或 模式名不认识
                     if _om_err:
                         async for _r in self._send_content(event, _om_err):
                             yield _r
@@ -9092,7 +8334,6 @@ class ApixIqfkSimpleMeme(Star):
                     GLOBAL_STATS["send"] += 1
                     return
                 if self.output_mode_module.set_mode(group_id, _om_mode):
-                    # 立即写回后台配置，重启也保留
                     try:
                         self._persist_output_modes()
                     except Exception:
@@ -9109,7 +8350,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-        # ============ 群总开关：关 ============
         if group_id and group_id in self.disabled_groups:
             if self._is_enable_cmd(msg_str):
                 if not await self._check_admin(event):
@@ -9158,7 +8398,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 管理员管理指令 ============
         arg_add_admin = self._is_add_admin(msg_str)
         if arg_add_admin is not None:
             if not await self._check_admin(event):
@@ -9211,7 +8450,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 单功能开关 ============
         arg_disable_feature, target_gid_dis = self._is_disable_feature(msg_str)
         if arg_disable_feature is not None:
             if not await self._check_admin(event):
@@ -9258,7 +8496,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 必须艾特机器人开关 ============
         must_at_on_args = self._is_must_at_on_cmd(msg_str)
         if must_at_on_args is not None:
             if not await self._check_admin(event):
@@ -9322,14 +8559,10 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 全局「必须艾特机器人」拦截 ============
         if self._should_require_at(group_id):
             if not has_at_bot(event, bot_id):
                 return
 
-        # ============ 打卡排行榜 ============
-        # ★★ 市场版 1.1：打卡排行三条独立指令
-        #   打卡天数排行 / 清醒时长排行 / 睡眠时长排行（各出前十榜）
         if self.greeting_module is not None:
             for _rk_kind, _rk_fn in (
                     ("days", "build_rank_by_days"),
@@ -9357,21 +8590,7 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                 GLOBAL_STATS["send"] += 1
                 return
-            if self.greeting_module is None:
-                logger.warning("[apix-meme] ❌ 早安晚安模块未加载")
-                GLOBAL_STATS["send"] += 1
-                return
-            try:
-                async for _r in self._send_content(event, self.greeting_module.build_rank_text()):
-                    yield _r
-            except Exception:
-                logger.exception("[apix-meme] 打卡排行失败")
-                async for _r in self._send_content(event, "❌ 查询失败"):
-                    yield _r
-            GLOBAL_STATS["send"] += 1
-            return
 
-        # ============ 打卡统计 ============
         gstats_args = self._is_greeting_stats_cmd(msg_str)
         if gstats_args is not None:
             if not self._is_group_feature_enable(group_id, "greeting"):
@@ -9417,7 +8636,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 签到 ============
         if self._is_checkin_cmd(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
                 GLOBAL_STATS["send"] += 1
@@ -9439,13 +8657,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 旧「签到排行」已删除（见下方三种排行榜）============
-        # ★ 1.7.6：「签到排行」旧指令已删除
-        #   排行榜拆成三条独立指令：签到次数排行 / 总财富排行 / 负债排行，
-        #   见下面的「三种排行榜」分支。
-
-        # ============ 发言统计（每群独立）============
-        #   关闭功能 发言排行 -> 该群进黑名单：静默不响应（仅日志）
         ss = self.speak_stats_module
         if ss is not None and ss.enable:
             def _ss_ok() -> bool:
@@ -9493,7 +8704,6 @@ class ApixIqfkSimpleMeme(Star):
                     GLOBAL_STATS["send"] += 1
                 return
 
-        # ============ 签到统计 ============
         info_args = self._is_checkin_info_cmd(msg_str)
         if info_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9539,7 +8749,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 偷积分 ============
         steal_args = self.checkin_module.match_steal_trigger(msg_str) if self.checkin_module else None
         if steal_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9577,9 +8786,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ ★★ 1.7.7：清空财富（管理员专用，不可撤销）============
-        #   ★ 权限和「加减积分」完全一样：只认 AstrBot 全局管理员 +
-        #     QQ 白名单，群主/群管理员不能用。
         if self.checkin_module is not None:
             _wipe = self.checkin_module.match_wipe_wealth(msg_str)
             if _wipe is not None:
@@ -9622,9 +8828,7 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                 return
 
-        # ============ 作弊：加积分 / 减积分（管理员专用）============
         score_cmd = None
-        # ★ 临时追踪：一次定位「加积分」为什么没反应（排查完可删）
         _dbg_hit = False
         if self.checkin_module is not None:
             for _key, _delta, _match in (
@@ -9636,7 +8840,6 @@ class ApixIqfkSimpleMeme(Star):
                     score_cmd = (_key, _delta, _hit)
                     _dbg_hit = True
                     break
-        # 只有当消息里像是积分指令时才打追踪日志，避免刷屏
         if (not _dbg_hit
                 and any(x in msg_str for x in ("积分", "加积分", "减积分"))):
             logger.info(
@@ -9654,13 +8857,10 @@ class ApixIqfkSimpleMeme(Star):
             _key, _delta, _hit = score_cmd
             _cmd_name = "加积分" if _delta >= 0 else "减积分"
             _verb = "增加" if _delta >= 0 else "减少"
-            # ★ 下面每一道关卡都**记日志**：以前权限不足是静默 return，
-            #   用户完全不知道为什么没反应，排查很痛苦。
             if not self.score_admin_enable:
                 logger.info("[apix-meme] 积分调整总开关关闭，忽略 %s", _cmd_name)
                 GLOBAL_STATS["send"] += 1
                 return
-            # 群号白名单：留空 = 所有群都生效
             if not group_allowed(group_id, self.score_admin_groups):
                 logger.warning(
                     "[apix-meme] 群 %s 未在「积分调整指定群」里，忽略 %s",
@@ -9677,8 +8877,6 @@ class ApixIqfkSimpleMeme(Star):
                             _cmd_name)
                 GLOBAL_STATS["send"] += 1
                 return
-            # ★ 权限：**只认 AstrBot 全局管理员 + QQ 白名单**
-            #   群主 / 群管理员不能用（用户明确要求）
             _who = to_str(event.get_sender_id())
             if not self._can_adjust_score(event):
                 logger.warning(
@@ -9707,7 +8905,6 @@ class ApixIqfkSimpleMeme(Star):
                     return
                 raw = _hit[1] if len(_hit) > 1 else ""
                 qq, amount, _err = self.checkin_module.parse_score_args(raw)
-                # 没解析出目标时，用消息里的 @ 兜底
                 if not qq:
                     try:
                         _ats = get_ats_from_msg(event) or []
@@ -9715,8 +8912,6 @@ class ApixIqfkSimpleMeme(Star):
                             qq = str(_ats[0])
                     except Exception:
                         pass
-                # ★ 解析失败要**明确告知**，不要静默
-                #   （以前「@某人」解析不出 QQ 时什么都不发，很难排查）
                 if not qq:
                     async for _r in self._send_content(
                             event,
@@ -9751,7 +8946,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 奖池：参与抽奖（1.7.6，无参数）============
         if self.checkin_module is not None and \
                 self.checkin_module.match_pool_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9775,7 +8969,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 奖池信息 ============
         if self.checkin_module is not None and \
                 self.checkin_module.match_pool_info_trigger(msg_str):
             try:
@@ -9788,7 +8981,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 奖池信息失败")
             return
 
-        # ============ 抢银行（1.7.6，每天一次、无参数）============
         if self.checkin_module is not None and \
                 self.checkin_module.match_rob_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9812,8 +9004,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 银行理财（★ 1.7.6 新增）============
-        #   ★ 必须在银行「存钱 / 取钱」之前判 —— 理财也有买入/取出。
         if self.checkin_module is not None:
             _fund_hit = (
                 self.checkin_module.match_fund_trigger(msg_str)
@@ -9848,7 +9038,6 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                 return
 
-        # ============ 银行信息 ============
         if self.checkin_module is not None and self.checkin_module.match_bank_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
                 GLOBAL_STATS["send"] += 1
@@ -9869,7 +9058,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 存钱 ============
         deposit_args = self.checkin_module.match_deposit_trigger(msg_str) if self.checkin_module else None
         if deposit_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9891,7 +9079,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 取钱 ============
         withdraw_args = self.checkin_module.match_withdraw_trigger(msg_str) if self.checkin_module else None
         if withdraw_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9913,7 +9100,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 银行借款（1.7.6）============
         loan_args = self.checkin_module.match_loan_trigger(msg_str) if self.checkin_module else None
         if loan_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9935,7 +9121,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 还款（1.7.6）============
         repay_args = self.checkin_module.match_repay_trigger(msg_str) if self.checkin_module else None
         if repay_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9957,7 +9142,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 我的借款（1.7.6）============
         if self.checkin_module is not None and self.checkin_module.match_loan_info_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
                 GLOBAL_STATS["send"] += 1
@@ -9977,8 +9161,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 全部抽奖（1.7.6：一个指令抽完当天剩余次数）============
-        #   ★ 必须排在「开始抽奖」之前判：触发词可能有包含关系。
         if self.checkin_module is not None and \
                 self.checkin_module.match_lottery_all_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -9999,7 +9181,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 抽奖（1.7.6：指令不带参数，每次固定花费）============
         if self.checkin_module is not None and \
                 self.checkin_module.match_lottery_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10020,7 +9201,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 三种排行榜（1.7.6：次数 / 总财富 / 负债）============
         for _rk_kind, _rk_fn in (
                 ("count", "build_rank_by_count"),
                 ("wealth", "build_rank_by_wealth"),
@@ -10033,8 +9213,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
             try:
-                # ★★ 1.2：拉群名单 -> 退群的人不上榜
-                #   （拉不到就传 None，排行榜照常显示，不会变空）
                 try:
                     _mids = await self._group_member_ids(event, group_id)
                 except Exception:
@@ -10051,12 +9229,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 坐骑信息 ============
-        # ★★ 1.7.6：**坐骑指令菜单优先**（必须在列表匹配之前）。
-        #   用户要求：发 `坐骑功能` -> 输出「坐骑相关指令菜单」。
-        #   而 `坐骑功能` 也可能被填进 `mount_trigger_names`（查看已拥有坐骑），
-        #   列表匹配在分发里更靠前会把它吃掉 -> 菜单永远出不来。
-        #   所以这里先判菜单，命中就直接出菜单。
         if self._is_checkin_mount_menu(msg_str):
             if self._is_group_feature_enable(group_id, "checkin") \
                     and self._is_group_feature_enable(group_id, "mount"):
@@ -10066,13 +9238,8 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-        # ★ 1.7.6：这里**只先算**，具体处理放到「装备/查看/商店」之后。
-        #   原因：别名 `坐骑` 是 `坐骑查看`/`坐骑商店` 的前缀，
-        #   如果先判它会把这些更具体的指令吃掉。
         mount_args = self.checkin_module.match_mount_trigger(msg_str) if self.checkin_module else None
 
-        # ============ 装备坐骑 / 坐骑查看（1.7.6）============
-        #   图文同一套输出：坐骑图由 checkin 以 [[img:...]] 标记插在卡片里
         mk_equip = self.checkin_module.match_mount_equip_trigger(msg_str) \
             if self.checkin_module else None
         mk_view = self.checkin_module.match_mount_view_trigger(msg_str) \
@@ -10100,7 +9267,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 坐骑商店（支持翻页：「坐骑商店 2」）============
         _ml_page = self.checkin_module.match_mount_list_trigger(msg_str) \
             if self.checkin_module else None
         if _ml_page is not None:
@@ -10122,7 +9288,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 「我的坐骑」（放在具体指令之后，避免别名吃掉它们）====
         if mount_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
                 GLOBAL_STATS["send"] += 1
@@ -10131,7 +9296,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
             try:
-                # ★ 1.7.6：支持翻页（「我的坐骑 2」）
                 _mpage = mount_args[1] if len(mount_args) > 1 else 1
                 text = self.checkin_module.do_mount_info(event, _mpage)
                 if text:
@@ -10144,7 +9308,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 购买坐骑 ============
         mount_buy_args = self.checkin_module.match_mount_buy_trigger(msg_str) if self.checkin_module else None
         if mount_buy_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10165,26 +9328,12 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ ★★ 1.7.7：体力 / 吃食物 / 加班 ============
-        #   ★ 必须在「签到商店」「打工」之前判 —— 否则「吃食物」可能被
-        #     商店的指令吃掉，「加班」可能被「打工」的前缀匹配吃掉。
-        #   ★★ 1.7.7 加班四条分流（顺序不能乱）：
-        #     ① 全部加班            -> 清掉所有冷却中的工种
-        #     ② 加班状态 / 裸「加班」-> 可加班 / 不可加班工种
-        #     ③ 加班 工种           -> 单独清这一个（必须带参数）
-        #     ④ 我的体力 / 吃食物    -> 原有分支
-        #   ★ 这四个名字**互斥**：匹配到一个就 return，不会再被后面的
-        #     「加班功能」菜单入口等分支抢走（历史上就因为共用配置键
-        #     导致指令互相吃掉）。
         if self.checkin_module is not None:
             _sall = self.checkin_module.match_stamina_refill_all(msg_str)
             _sst = self.checkin_module.match_stamina_refill_status(msg_str)
             _sr = self.checkin_module.match_stamina_refill_trigger(msg_str)
             _se2 = self.checkin_module.match_food_eat_trigger(msg_str)
             _sview = self.checkin_module.match_stamina_view_trigger(msg_str)
-            # ★★ 裸「加班」= 状态。`_sr` 返回 ""（无参数）也算命中，
-            #   所以这里必须用 `is not None`，不能用真值判断
-            #   （否则空串被当成未命中 -> 什么都不输出，用户反馈过）。
             _sr_bare = (_sr is not None and str(_sr).strip() == "")
             _st_hit = bool(
                 _sview or _se2 is not None or _sall or _sst
@@ -10198,19 +9347,13 @@ class ApixIqfkSimpleMeme(Star):
                     if _se2 is not None:
                         text = self.checkin_module.do_food_eat(event, _se2)
                     elif _sall:
-                        # ① 全部加班（内部哨兵，避开字面判断）
                         text = self.checkin_module.do_stamina_refill(
                             event, "__all__")
                     elif _sst:
-                        # ② 加班状态 -> 可/不可加班工种
                         text = self.checkin_module.do_stamina_refill(event, "")
                     elif _sr_bare:
-                        # ★★ 1.7.7：裸「加班」（只打了关键词、没给工种）
-                        #   -> **什么都不输出**（用户明确要求）。
-                        #   它只是「加班 工种」的关键词，少打参数就不该有反应。
                         text = ""
                     elif _sr is not None:
-                        # ③ 加班 工种 -> 单独一个
                         text = self.checkin_module.do_stamina_refill(event, _sr)
                     else:
                         text = self.checkin_module.do_stamina_view(event)
@@ -10224,18 +9367,13 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                 return
 
-        # ============ 签到商店（★ 1.7.6 新增）============
-        #   ★ 必须在**银行**的「存钱/取钱」之前判 —— 商店也有存钱取钱。
         if self.checkin_module is not None:
-            # ★★ 1.7.7：`match_shop_trigger` 现在返回**参数字符串**
-            #   （"" = 没写页码，None = 不是这条指令），所以用 `is not None`
             _shop_arg = self.checkin_module.match_shop_trigger(msg_str)
             _shop_hit = (
                 _shop_arg is not None
                 or self.checkin_module.match_shop_buy_trigger(msg_str) is not None
                 or self.checkin_module.match_shop_save_trigger(msg_str) is not None
                 or self.checkin_module.match_shop_take_trigger(msg_str) is not None
-                # ★★ 1.7.7：启用武器 / 我的装备
                 or self.checkin_module.match_shop_equip_trigger(msg_str) is not None
                 or self.checkin_module.match_my_equip_trigger(msg_str) is not None
             )
@@ -10250,7 +9388,6 @@ class ApixIqfkSimpleMeme(Star):
                     _sv = self.checkin_module.match_shop_buy_trigger(msg_str)
                     _ss = self.checkin_module.match_shop_save_trigger(msg_str)
                     _st = self.checkin_module.match_shop_take_trigger(msg_str)
-                    # ★★ 1.7.7：启用武器 / 我的装备
                     _se = self.checkin_module.match_shop_equip_trigger(msg_str)
                     _me = self.checkin_module.match_my_equip_trigger(msg_str)
                     if _se is not None:
@@ -10264,7 +9401,6 @@ class ApixIqfkSimpleMeme(Star):
                     elif _st is not None:
                         text = self.checkin_module.do_shop_take(event, _st)
                     else:
-                        # ★★ 1.7.7：商店列表支持页码（每页 10 个商品）
                         text = self.checkin_module.do_shop_list(
                             event=event, page=_shop_arg or 1)
                     if text:
@@ -10277,7 +9413,6 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                 return
 
-        # ============ 打工列表 ============
         if self.checkin_module is not None and self.checkin_module.match_job_info_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
                 GLOBAL_STATS["send"] += 1
@@ -10295,8 +9430,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 全部打工（★ 必须在「打工 工种」之前）============
-        #   「全部打工」会被短指令 `打工` 当成参数吃掉，所以先判它。
         if self.checkin_module is not None and \
                 self.checkin_module.match_job_all_trigger(msg_str):
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10317,7 +9450,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 打工 ============
         job_args = self.checkin_module.match_job_trigger(msg_str) if self.checkin_module else None
         if job_args is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10341,7 +9473,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 添加工种（管理员） ============
         job_add_arg = self.checkin_module.match_job_add_cmd(msg_str) if self.checkin_module else None
         if job_add_arg is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10359,8 +9490,6 @@ class ApixIqfkSimpleMeme(Star):
                 async for _r in self._send_content(event, self.checkin_module.do_job_add(job_add_arg)):
                     yield _r
                 try:
-                    # ★ 推导式的循环变量在 Python 3 里不对外层可见，
-                    #   必须显式用 for 循环构造列表（否则会 NameError）
                     _rows = []
                     for j in self.checkin_module.job_list:
                         _rows.append({
@@ -10379,7 +9508,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 删除工种（管理员） ============
         job_del_arg = self.checkin_module.match_job_del_cmd(msg_str) if self.checkin_module else None
         if job_del_arg is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10397,7 +9525,6 @@ class ApixIqfkSimpleMeme(Star):
                 async for _r in self._send_content(event, self.checkin_module.do_job_del(job_del_arg)):
                     yield _r
                 try:
-                    # ★ 推导式的循环变量在 Python 3 里不对外层可见
                     _rows = []
                     for j in self.checkin_module.job_list:
                         _rows.append({
@@ -10416,7 +9543,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 添加坐骑（管理员） ============
         mount_add_arg = self.checkin_module.match_mount_add_cmd(msg_str) if self.checkin_module else None
         if mount_add_arg is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10434,7 +9560,6 @@ class ApixIqfkSimpleMeme(Star):
                 async for _r in self._send_content(event, self.checkin_module.do_mount_add(mount_add_arg)):
                     yield _r
                 try:
-                    # ★ 推导式的循环变量在 Python 3 里不对外层可见
                     _rows = []
                     for m in self.checkin_module.mount_list:
                         _rows.append({
@@ -10452,7 +9577,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 删除坐骑（管理员） ============
         mount_del_arg = self.checkin_module.match_mount_del_cmd(msg_str) if self.checkin_module else None
         if mount_del_arg is not None:
             if not self._is_group_feature_enable(group_id, "checkin"):
@@ -10470,7 +9594,6 @@ class ApixIqfkSimpleMeme(Star):
                 async for _r in self._send_content(event, self.checkin_module.do_mount_del(mount_del_arg)):
                     yield _r
                 try:
-                    # ★ 推导式的循环变量在 Python 3 里不对外层可见
                     _rows = []
                     for m in self.checkin_module.mount_list:
                         _rows.append({
@@ -10488,20 +9611,12 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
-        # ============ 宠物功能（每群独立）============
-        #   关闭功能 宠物功能 -> 该群进黑名单：静默不响应（仅日志）
         pet = self.pet_module
         if pet is not None and pet.enable:
             _pet_arg = None
             _pet_cmd = ""
-            # ★ 指令**前面**的部分：「我的宠物名 宠物决斗 @某人」
-            #   前面那截就是"我方宠物名"（没有就是空）
             self._pet_pre = ""
             try:
-                # ★ 指令名前的那一段 = 我方宠物名
-                #   「影 宠物决斗 @某人」-> _pet_pre = "影"
-                #   pet.cmd_duel 已经是 list（reload 里 _parse_names 过了），
-                #   这里只做类型兜底
                 _names0 = getattr(pet, "cmd_duel", []) or []
                 if isinstance(_names0, str):
                     _names0 = [_names0]
@@ -10509,9 +9624,7 @@ class ApixIqfkSimpleMeme(Star):
                                    key=len, reverse=True):
                     _idx = msg_str.find(_nm0)
                     if _idx > 0:
-                        # ★ 去掉前导斜杠（/宠物决斗 这种写法）
                         _pre = msg_str[:_idx].strip().lstrip("/").strip()
-                        # 去掉可能带的 @ 部分，只留宠物名
                         _pre = re.sub(r"@[^\s]*", " ", _pre)
                         _pre = re.sub(r"[\(（]\d{5,12}[\)）]", " ", _pre)
                         _pre = re.sub(r"\d{5,12}", " ", _pre)
@@ -10537,7 +9650,6 @@ class ApixIqfkSimpleMeme(Star):
                     _pet_arg, _pet_cmd = _got, _name
                     break
 
-            # 管理员指令单独识别（避免与普通指令冲突）
             _pet_admin = ""
             if _pet_cmd == "":
                 _a = pet.parse_add(msg_str)
@@ -10549,19 +9661,16 @@ class ApixIqfkSimpleMeme(Star):
                         _pet_arg, _pet_cmd, _pet_admin = _a, "del", "del"
 
             if _pet_cmd:
-                # ① 群黑名单：静默
                 if not pet.is_group_allowed(group_id):
                     logger.warning(
                         f"[apix-meme] 群 {group_id} 未开启宠物功能，忽略指令 {_pet_cmd}"
                     )
                     GLOBAL_STATS["send"] += 1
                     return
-                # ② 本群功能开关：静默
                 if not self._is_group_feature_enable(group_id, "pet"):
                     GLOBAL_STATS["send"] += 1
                     return
 
-                # ③ 管理员指令需要权限
                 if _pet_admin and not await self._check_admin(event):
                     async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
                         yield _r
@@ -10593,7 +9702,6 @@ class ApixIqfkSimpleMeme(Star):
                         cur = _pet_score_get()
                         delta = int(v) - int(cur)
                         if delta < 0:
-                            # 花钱：走「先钱包、再银行」
                             ck2.pay(group_id, uid, -delta)
                         elif delta > 0:
                             u = ck2._guser_setdefault(
@@ -10606,10 +9714,6 @@ class ApixIqfkSimpleMeme(Star):
                     except Exception:
                         logger.exception("[apix-meme] 宠物积分写入失败")
 
-                # ★ 把签到模块的提示挂到宠物模块：
-                #   · loan_hint    余额不足时引导借款
-                #   · short_hint   显示「钱包 X + 银行 Y = Z，还差 N」
-                #   · pay_note     购买成功后说明钱是从哪扣的
                 try:
                     if self.checkin_module is not None:
                         _ck3 = self.checkin_module
@@ -10649,7 +9753,6 @@ class ApixIqfkSimpleMeme(Star):
                                         _pet_score_get, _pet_score_set)
                     elif _pet_cmd == "duel":
                         tid, d_want = self._pet_parse_names(event, _pet_arg)
-                        # ★ 我方宠物名：来自指令**前面**的部分
                         a_want = str(getattr(self, "_pet_pre", "") or "").strip()
                         if not tid:
                             text = (
@@ -10699,7 +9802,6 @@ class ApixIqfkSimpleMeme(Star):
                     logger.exception(f"[apix-meme] 宠物指令 {_pet_cmd} 失败")
                 return
 
-        # ============ 查看管理员 ============
         if self._is_view_admin_cmd(msg_str):
             try:
                 async for _r in self._send_content(event, await self._build_admin_list_text(event)):
@@ -10711,7 +9813,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 刷新群管 ============
         if self._is_refresh_admin_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
@@ -10735,7 +9836,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时开 ============
         chime_on_args = self._is_chime_on_cmd(msg_str)
         if chime_on_args is not None:
             if not await self._check_admin(event):
@@ -10763,7 +9863,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时关 ============
         chime_off_args = self._is_chime_off_cmd(msg_str)
         if chime_off_args is not None:
             if not await self._check_admin(event):
@@ -10791,7 +9890,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时状态 ============
         chime_status_args = self._is_chime_status_cmd(msg_str)
         if chime_status_args is not None:
             if self.hourly_chime_module is None:
@@ -10821,7 +9919,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时时段 ============
         chime_hours_args = self._is_chime_hours_cmd(msg_str)
         if chime_hours_args is not None:
             if not await self._check_admin(event):
@@ -10874,7 +9971,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时文案 ============
         chime_text_args = self._is_chime_text_cmd(msg_str)
         if chime_text_args is not None:
             if not await self._check_admin(event):
@@ -10911,7 +10007,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时列表 ============
         if self._is_chime_list_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
@@ -10943,7 +10038,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 整点报时测试 ============
         chime_test_args = self._is_chime_test_cmd(msg_str)
         if chime_test_args is not None:
             if not await self._check_admin(event):
@@ -10968,10 +10062,7 @@ class ApixIqfkSimpleMeme(Star):
             if current_umo:
                 self.hourly_chime_module.record_umo(target_gid, current_umo)
             umo = self.hourly_chime_module.get_umo(target_gid)
-            # ★ 1.7.6：第一行报时 + 第二行每日一言（和定时推送一致）
             text = await self.hourly_chime_module.build_text_async(target_gid)
-            # ★ 按目标群的「输出模式」渲染：图片模式下附带一张渲染图
-            #   （与后台定时推送保持一致）
             images = []
             try:
                 text, images = await self.render_group_text(
@@ -11001,7 +10092,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 状态推送开 ============
         push_on_arg = self._is_daily_push_on_cmd(msg_str)
         if push_on_arg is not None:
             if not await self._check_admin(event):
@@ -11019,7 +10109,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
                 GLOBAL_STATS["send"] += 1
                 return
-            # ★ 后台黑名单里的群不允许开推送
             if not self.status_push_module.is_group_configurable(target_gid):
                 async for _r in self._send_content(event, f"⚠️ 群【{target_gid}】在后台「电脑状态」的群号黑名单里\n"
                     f"💡 请先在后台「电脑状态 · 不生效的群号」中移除该群号"):
@@ -11039,7 +10128,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 状态推送关 ============
         push_off_arg = self._is_daily_push_off_cmd(msg_str)
         if push_off_arg is not None:
             if not await self._check_admin(event):
@@ -11065,7 +10153,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 状态推送间隔 ============
         push_time_args = self._is_daily_push_time_cmd(msg_str)
         if push_time_args is not None:
             if not await self._check_admin(event):
@@ -11080,7 +10167,6 @@ class ApixIqfkSimpleMeme(Star):
             m = self.status_push_module
 
             if push_time_args[0] == "self":
-                # 查询本群当前生效间隔
                 target_gid = group_id
                 if not target_gid:
                     async for _r in self._send_content(event, f"⏱ 全局默认推送间隔：每 {m.default_interval} 分钟一次\n"
@@ -11132,7 +10218,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 状态推送列表 ============
         if self._is_daily_push_list_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
@@ -11180,11 +10265,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 手动读报开关（★ 1.2）============
-        #   `开启功能 读报功能` / `关闭功能 读报功能`
-        #   改的是 daily_news_module 的 **manual_groups**（黑名单：
-        #   填了群号 = 该群不能手动读报；留空 = 所有群都能手动读）。
-        #   ★ 与「读报推送」（auto_groups 白名单）是两个独立名单。
         for _mn_on, _mn_attr in ((True, "cmd_daily_news_manual_on_name"),
                                  (False, "cmd_daily_news_manual_off_name")):
             if not self._name_list_hit(msg_str, _mn_attr):
@@ -11200,7 +10280,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.warning("[apix-meme] ❌ 每日读报模块未加载")
                 GLOBAL_STATS["send"] += 1
                 return
-            # 支持「开启功能 读报功能 群号」
             _mn_tgt = ""
             try:
                 _mn_tgt = self._extract_arg(
@@ -11224,9 +10303,7 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 每日读报（手动） ============
         if self._is_daily_news_cmd(msg_str):
-            # ★ 手动读报名单（黑名单）：本群被列入名单时不能手动发（静默，仅记日志）
             try:
                 mod = self.daily_news_module
                 if mod is not None and not mod.is_manual_allowed(group_id):
@@ -11269,7 +10346,6 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
             return
 
-        # ============ 读报推送开 ============
         news_on_arg = self._is_daily_news_on_cmd(msg_str)
         if news_on_arg is not None:
             if not await self._check_admin(event):
@@ -11298,7 +10374,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 读报推送关 ============
         news_off_arg = self._is_daily_news_off_cmd(msg_str)
         if news_off_arg is not None:
             if not await self._check_admin(event):
@@ -11323,7 +10398,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 读报推送时间 ============
         news_time_args = self._is_daily_news_time_cmd(msg_str)
         if news_time_args is not None:
             if not await self._check_admin(event):
@@ -11386,7 +10460,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 读报推送列表 ============
         if self._is_daily_news_list_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
@@ -11422,7 +10495,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 群员管理：踢出 / 禁言 / 解除禁言 / 拉黑 ============
         def _resolve_target_uid(raw: str) -> str:
             """从参数里解析目标 QQ：支持 @某人 或 纯数字。"""
             uid = ""
@@ -11448,7 +10520,6 @@ class ApixIqfkSimpleMeme(Star):
                 return False, "⚠️ 请在群聊中使用该指令"
             return True, ""
 
-        # ---------- 踢出群员 ----------
         kick_raw = self._is_kick_cmd(msg_str)
         if kick_raw is not None:
             if not await self._check_admin(event):
@@ -11481,9 +10552,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
             done = await self.moderation_module.do_kick(event, target)
-            # ★ 1.7.6：成功时**不再输出回执** ——
-            #   踢人/禁言会由「提示功能」的群通知自动播报，避免重复刷屏。
-            #   失败仍然要提示，否则用户不知道为什么没生效。
             if not done:
                 async for _r in self._send_content(
                         event, "❌ 踢出失败，请检查机器人权限或查看后台日志"):
@@ -11493,7 +10561,6 @@ class ApixIqfkSimpleMeme(Star):
                         f"target={target} ok={done}")
             return
 
-        # ---------- 禁言群员 ----------
         mute_raw = self._is_mute_cmd(msg_str)
         if mute_raw is not None:
             if not await self._check_admin(event):
@@ -11508,7 +10575,6 @@ class ApixIqfkSimpleMeme(Star):
                         yield _r
                     GLOBAL_STATS["send"] += 1
                 return
-            # 支持「@某人 600」或「@某人」（用后台默认时长）
             parts = str(mute_raw).split()
             target = _resolve_target_uid(parts[0] if parts else "")
             dur = self.mute_duration
@@ -11533,7 +10599,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
             done = await self.moderation_module.do_mute(event, target, dur)
-            # ★ 1.7.6：成功不再回执（提示功能会自动播报），失败仍提示
             if not done:
                 async for _r in self._send_content(
                         event, "❌ 禁言失败，请检查机器人权限或查看后台日志"):
@@ -11543,7 +10608,6 @@ class ApixIqfkSimpleMeme(Star):
                         f"target={target} dur={dur} ok={done}")
             return
 
-        # ---------- 解除禁言 ----------
         unmute_raw = self._is_unmute_cmd(msg_str)
         if unmute_raw is not None:
             if not await self._check_admin(event):
@@ -11571,7 +10635,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
             done = await self.moderation_module.do_unmute(event, target)
-            # ★ 1.7.6：成功不再回执（提示功能会自动播报），失败仍提示
             if not done:
                 async for _r in self._send_content(
                         event, "❌ 解除禁言失败，请查看后台日志"):
@@ -11581,7 +10644,6 @@ class ApixIqfkSimpleMeme(Star):
                         f"target={target} ok={done}")
             return
 
-        # ---------- 拉黑成员 ----------
         bl_raw = self._is_blacklist_cmd(msg_str)
         if bl_raw is not None:
             if not await self._check_admin(event):
@@ -11624,7 +10686,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ---------- 解除拉黑 ----------
         ubl_raw = self._is_unblacklist_cmd(msg_str)
         if ubl_raw is not None:
             if not await self._check_admin(event):
@@ -11649,7 +10710,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ---------- 黑名单列表 ----------
         if self._is_blacklist_list_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管/插件专属管理员可执行"):
@@ -11678,7 +10738,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ MC 自动检测开关 ============
         if self._is_mc_auto_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
@@ -11712,12 +10771,10 @@ class ApixIqfkSimpleMeme(Star):
                     f"💡 再次发送「{self.cmd_mc_auto_name}」可关闭"):
                     yield _r
             else:
-                # 关闭自动检测：静默处理，不回消息
                 pass
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ MC 测试推送 ============
         if self._is_mc_test_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
@@ -11732,7 +10789,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-            # 推送目标：优先用「MC测试推送指定群」后台配置，未配置则回退到所有开启自动检测的群
             test_groups = list(getattr(self, "minecraft_test_groups", []) or [])
             if test_groups:
                 groups = test_groups
@@ -11770,7 +10826,6 @@ class ApixIqfkSimpleMeme(Star):
             for gid in groups:
                 try:
                     umo = self.minecraft_module.get_umo(gid)
-                    # ★ 按该群「输出模式」渲染
                     _t, _imgs = await self.render_group_text(str(gid), push_text)
                     ok = await self._push_mc_notification(str(gid), _t,
                                                           umo=umo, images=_imgs)
@@ -11805,7 +10860,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ MC 版本手动查询 ============
         mc_args = self._is_minecraft_cmd(msg_str)
         if mc_args is not None:
             if not group_allowed(group_id, self.minecraft_groups):
@@ -11830,15 +10884,12 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 群白名单（不填 = 不限制群聊）============
         if self.allowed_groups:
             if not group_allowed(group_id, self.allowed_groups):
                 return
         elif not is_group_allowed(group_id, self.group_mode, self.group_whitelist, self.group_blacklist):
-            # 未填新白名单时，回退到旧的黑/白名单逻辑
             return
 
-        # ============ 运势 ============
         if (
             self._is_group_feature_enable(group_id, "fortune")
             and self.fortune_module is not None
@@ -11855,7 +10906,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 运势处理失败")
             return
 
-        # ============ 老公 ============
         if (
             self._is_group_feature_enable(group_id, "husband")
             and self.husband_module is not None
@@ -11873,7 +10923,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 老公处理失败")
             return
 
-        # ============ 逼迫（强行指定老公）============
         if (
             self._is_group_feature_enable(group_id, "husband")
             and self.husband_module is not None
@@ -11898,7 +10947,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 逼迫处理失败")
             return
 
-        # ============ 人品 ============
         if (
             self._is_group_feature_enable(group_id, "luck")
             and self.luck_module is not None
@@ -11915,7 +10963,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 人品处理失败")
             return
 
-        # ============ 词库回复 ============
         if self._is_group_feature_enable(group_id, "word_reply") and self.word_reply_module is not None:
             rule, _kw = self.word_reply_module.match(msg_str, group_id)
             if rule:
@@ -11926,7 +10973,6 @@ class ApixIqfkSimpleMeme(Star):
                     GLOBAL_STATS["send"] += 1
                 return
 
-        # ============ 词库管理指令 ============
         args_add = self._is_word_add(msg_str)
         if args_add is not None:
             if not self._is_group_feature_enable(group_id, "word_reply"):
@@ -11941,7 +10987,6 @@ class ApixIqfkSimpleMeme(Star):
                 logger.warning("[apix-meme] ❌管理指令模块未加载")
                 GLOBAL_STATS["send"] += 1
                 return
-            # 模块缺失时 ac 返回空串，静默不回消息
             _t = ac.word_add(args_add)
             if _t:
                 async for _r in self._send_content(event, _t):
@@ -11985,7 +11030,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 表情包管理指令 ============
         arg_add = self._extract_arg(msg_str, self.cmd_add_name)
         if arg_add is not None:
             if not await self._check_admin(event):
@@ -12033,22 +11077,18 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 电脑状态 ============
         if self._match_status_cmd(msg_str):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
                     yield _r
                 GLOBAL_STATS["send"] += 1
                 return
-            # ★ 电脑状态功能总开关（同时控制定时推送）
             if not self.status_enable:
                 GLOBAL_STATS["send"] += 1
                 return
-            # ★ 本群功能开关（默认开启，可用「关闭功能 电脑状态」关闭本群）
             if not self._is_group_feature_enable(group_id, "status"):
                 GLOBAL_STATS["send"] += 1
                 return
-            # ★ 电脑状态单独群开关：填了群号则只有这些群可查
             if not group_allowed(group_id, self.status_groups):
                 GLOBAL_STATS["send"] += 1
                 return
@@ -12065,12 +11105,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ================================================================
-        # ★★★ 菜单区 ★★★
-        # 顺序：三级子菜单 → 二级子菜单 → 主菜单
-        # ================================================================
-
-        # ---- 打卡系统 · 三级子菜单 ----
         if self._is_greeting_morning_menu(msg_str):
             async for _r in self._send_content(event, self._build_greeting_morning_menu()):
                 yield _r
@@ -12087,7 +11121,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ---- 签到系统 · 三级子菜单 ----
         if self._is_checkin_signin_menu(msg_str):
             async for _r in self._send_content(event, self._build_checkin_signin_menu()):
                 yield _r
@@ -12098,7 +11131,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 1.7.6：银行下级菜单（必须在 `银行功能` 之前判，避免被主菜单吃掉）
         if self._is_checkin_bank_save_menu(msg_str):
             async for _r in self._send_content(event, self._build_checkin_bank_save_menu()):
                 yield _r
@@ -12134,7 +11166,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 1.7.6：商店帮助（签到系统一级菜单右侧入口）
         if self._is_checkin_shop_help_menu(msg_str):
             async for _r in self._send_content(
                     event, self._build_checkin_shop_help_menu(
@@ -12142,7 +11173,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 1.7.7：坐骑下级菜单（必须在 `坐骑功能` 之前判）
         if self._is_mount_manage_menu(msg_str):
             async for _r in self._send_content(event, self._build_mount_manage_menu()):
                 yield _r
@@ -12158,9 +11188,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 1.7.7：打工下级菜单 / 体力菜单
-        #   ★ 必须在「打工功能」之前判 —— 否则「打工列表」「加班」会被
-        #     上级菜单或「打工」指令吃掉。
         if self._is_job_list_menu(msg_str):
             async for _r in self._send_content(event, self._build_job_list_menu()):
                 yield _r
@@ -12184,10 +11211,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 1.7.6：宠物下级菜单（必须在 `宠物功能` 之前判）
-        # ★★ 市场版：原来这里夹着「搜歌功能 / 音源设置」两个音乐块，
-        #   把 `if _pet_care / elif _pet_fight / elif _pet_item` 这条
-        #   链**拆断**了。音乐功能整体移除后，这里恢复成完整的一条链。
         _pet_sub = None
         if self._is_pet_care_menu(msg_str):
             _pet_sub = self._build_pet_care_menu
@@ -12235,7 +11258,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ---- 接口系统 · 三级子菜单（图片 / 视频 各自独立） ----
         meme_feature_args = self._is_meme_feature_menu(msg_str)
         if meme_feature_args is not None:
             if not self.meme_enable:
@@ -12266,9 +11288,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ---- MC系统 · 三级子菜单 ----
-
-        # ---- 管理系统 · 二级子菜单 ----
         if self._is_meme_admin_menu(msg_str):
             async for _r in self._send_content(event, self._build_meme_admin_menu()):
                 yield _r
@@ -12285,7 +11304,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
         if self._is_output_mode_menu(msg_str):
-            # 本群模式需用当前群号（菜单里显示「本群当前」）
             try:
                 self._menu_group_id = group_id or ""
             except Exception:
@@ -12329,13 +11347,11 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★ 1.7.6：提示功能
         if self._is_notice_menu(msg_str):
             async for _r in self._send_content(event, self._build_notice_menu()):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 1.3.0：授权功能（管理系统下级）
         if self._is_auth_menu(msg_str):
             async for _r in self._send_content(
                     event,
@@ -12344,19 +11360,23 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
+        _auth_sub = self._is_auth_sub_menu(msg_str)
+        if _auth_sub:
+            async for _r in self._send_content(
+                    event,
+                    self._build_auth_sub_menu(
+                        _auth_sub,
+                        str(_get_group_id_from_event(event) or ""))):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
 
-        # ---- 一级 / 二级菜单 ----
-        # ---- 娱乐功能（1.7.3）----
         if self._is_entertain_menu(msg_str):
             async for _r in self._send_content(event, self._build_entertain_menu()):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ★★ 市场版：名片 / 猜拳两个入口已移除
 
-        # ---- 猜数游戏（1.7.7，娱乐功能）----
-        #   ★ 菜单入口必须在**指令**之前判，否则「猜数功能」会被
-        #     `_is_guess_cmd` 当成「猜数」+ 参数「功能」吃掉。
         if self._is_guess_menu(msg_str):
             if not group_allowed(group_id, self.guess_groups):
                 GLOBAL_STATS["send"] += 1
@@ -12366,13 +11386,6 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
                 GLOBAL_STATS["send"] += 1
                 return
-        # ============================================================
-        # ★★ 市场版 1.1：赛车功能（娱乐功能下级）
-        #   `赛车功能` / `参与比赛` / `快速比赛` / `我的赛车` /
-        #   `装备赛车 <车>` / `赛车查看 <车>` / `赛车商店 [页]` /
-        #   `购买赛车 <车>` / `赛车抽奖` / `赛车一键抽奖`
-        #   有自己的群号黑名单 `racing_groups`
-        # ============================================================
         if (self.racing_module is not None
                 and self._is_group_feature_enable(group_id, "racing")):
             _race_page = self._is_race_menu(msg_str)
@@ -12409,7 +11422,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-        # ★★ 1.7.7：开新局（「开始猜数」）—— 必须在「猜数」之前判
         if self._is_guess_start_cmd(msg_str):
             if not group_allowed(group_id, self.guess_groups):
                 GLOBAL_STATS["send"] += 1
@@ -12430,8 +11442,6 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-
-        # ---- 查询功能（QQ 用户信息）----
         async for _r in self._dispatch_qqinfo(event, msg_str, group_id):
             yield _r
         if getattr(self, "_qqinfo_handled", False):
@@ -12484,7 +11494,6 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
-        # ---- 每日系列 · 三级子菜单 ----
         if self._is_fortune_menu(msg_str):
             async for _r in self._send_content(event, self._build_fortune_menu()):
                 yield _r
@@ -12511,7 +11520,6 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 接口列表 ============
         page = self._is_list_menu(msg_str)
         if page is not None:
             if not self.meme_enable:
@@ -12537,9 +11545,7 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        # ============ 早安晚安（真实打卡逻辑，放在菜单之后） ============
         if self._is_group_feature_enable(group_id, "greeting") and self.greeting_module is not None:
-            # ★ 打卡系统群白名单（早安与晚安共用一个开关）
             greeting_group_ok = self.greeting_module.is_group_allowed(group_id)
             if (self.greeting_module.match_morning(msg_str) and greeting_group_ok):
                 try:
@@ -12562,7 +11568,6 @@ class ApixIqfkSimpleMeme(Star):
                     logger.exception("[apix-meme] 晚安处理失败")
                 return
 
-        # ---- 天气查询菜单（放在接口规则之前，避免被「天气」关键词抢走）----
         if self._is_weather_menu(msg_str):
             if group_allowed(group_id, self.meme_groups):
                 async for _r in self._send_content(
@@ -12571,20 +11576,12 @@ class ApixIqfkSimpleMeme(Star):
                 GLOBAL_STATS["send"] += 1
                 return
 
-        # ============ 接口调用 ============
-        #   后台「启用接口系统」+ 群号白名单 + 本群功能开关，三层都为开才响应
         if (self.meme_enable
                 and group_allowed(group_id, self.meme_groups)
                 and self._is_group_feature_enable(group_id, "meme")):
             async for result in self._handle_meme(event, msg_str):
                 yield result
             return
-    # ============================================================
-    # 接口调用处理
-    # ============================================================
-    # 关键词与「参数」之间允许的粘合字符：
-    #   空格 / Tab / 全角空格 / 字面 @ / 逗号
-    #   （\x00 是 @占位符的首字符，见下面 _is_join_char 特判）
     _KW_JOIN_CHARS = " \t\u3000@,"
 
     def _is_join_char(self, ch: str, s: str, pos: int) -> bool:
@@ -12598,8 +11595,6 @@ class ApixIqfkSimpleMeme(Star):
         if not ch:
             return False
         if ch == "\x00":
-            # \x00 是 @占位符（\x00AT<n>\x00）的首字符，
-            # 也可能是它的**结束**字符 —— 两种情况都算合法边界。
             return s.startswith("\x00AT", pos) or s.rfind("\x00AT", 0, pos + 1) >= 0
         return ch in self._KW_JOIN_CHARS
 
@@ -12629,7 +11624,6 @@ class ApixIqfkSimpleMeme(Star):
             t = str(raw or "").strip()
             if not t:
                 return ""
-            # 去掉「关键词：内容」这种写法里的前导冒号/逗号
             t = t.lstrip("：:，,、;；").strip()
             return t
         return _validate
@@ -12665,8 +11659,6 @@ class ApixIqfkSimpleMeme(Star):
         if not text or not kw:
             return None
 
-        # ★ 文本类参数允许任意文字；其余（QQ号 / 任意）沿用原校验
-        #   判定依据是 url_template 里的占位符（{text} -> "text"）
         if param_type == "text":
             validate = self._make_text_validator()
 
@@ -12682,16 +11674,9 @@ class ApixIqfkSimpleMeme(Star):
             ok = validate(head)
             return ok if ok else None
 
-        # ① 整条就是关键词 —— 只有「不需要参数」的规则才命中。
-        #    ★ 需要参数的规则如果只发关键词就触发，等于空参数也发图，
-        #      还会把参数自动补成发送者 QQ（用户明确要求：必须带参数）。
         if text.strip() == kw:
             return "" if not need_param else None
 
-        # ② 关键词在最后（前面是参数）
-        #    注意必须先于「关键词在最前」判断：
-        #    @人 拼出来是 "\x00AT0\x00OK"，text.startswith(kw) 为假，
-        #    但这一支能正确处理。
         if text.endswith(kw):
             head = text[: -len(kw)]
             if head and (param_type == "text"
@@ -12701,15 +11686,8 @@ class ApixIqfkSimpleMeme(Star):
                 if got is not None:
                     return got
 
-        # ③ 关键词在最前（后面是参数）
-        #    紧贴也算：摇晃114514 里「摇晃」后面直接是号码，同样触发
-        #    （用户需要这种写法；号码只会来自参数，不会误伤常规聊天）
         if text.startswith(kw):
             rest = text[len(kw):]
-            # ★ 文本类参数允许「关键词直接接文字」（中文习惯）：
-            #     外星人说你们地球人真的很没意思  -> 命中
-            #     外星人说：闭嘴                -> 命中（冒号由校验器去掉）
-            #   QQ 号类仍要求紧邻字符是数字/分隔符，避免误伤常规聊天。
             if rest and (param_type == "text"
                          or self._is_join_char(rest[0], rest, 0)
                          or rest[0].isdigit()):
@@ -12717,9 +11695,6 @@ class ApixIqfkSimpleMeme(Star):
                 if got is not None:
                     return got
 
-        # 关键词既不在开头也不在结尾 -> 走下面的「中间」分支
-
-        # ④ 关键词在中间：前后紧邻都要是合法粘合字符，且至少一侧是合法参数
         idx = text.find(kw)
         if idx > 0:
             head = text[:idx]
@@ -12742,10 +11717,6 @@ class ApixIqfkSimpleMeme(Star):
 
         raw_clean, at_map = split_text_and_ats(event)
         raw_clean = " ".join(raw_clean.split())
-        # ★ @占位符两侧补空格。
-        #   之前用 "__AT0__" 当 token，把 @ 语义弄丢了，@ 场景全不触发；
-        #   改成「@ + 占位符」又会让 validate 归一化后与 at_map 键对不上。
-        #   两侧补空格最稳：at_map 键保持原样，关键词边界检查看到空格也通过。
         token_map = {}
         text_for_match = raw_clean
         for i, ph in enumerate(list(at_map.keys())):
@@ -12761,13 +11732,6 @@ class ApixIqfkSimpleMeme(Star):
         matched_rule = None
         matched_kw = ""
         param_str = ""
-        # ★ 关键词「全局最长优先」：
-        #   把所有规则的关键词摊平，按长度倒序试。
-        #   原因有两个：
-        #     1) 同规则内「天气」/「天气预报」——短的先命中会让参数
-        #        变成「预报上海」，接口直接 404；
-        #     2) 跨规则「天气」(文本接口) /「天气图片」(图片接口)——
-        #        短的先命中会把图片指令抢成文本接口。
         _flat = []
         for _r in self.rules:
             for _k in (_r.get("keywords") or []):
@@ -12778,12 +11742,6 @@ class ApixIqfkSimpleMeme(Star):
         for _len, rule, kw in _flat:
             if not kw:
                 continue
-            # ★ 关键词必须是「完整的词」：
-            #   OK 114514 / OK@114514        -> 命中
-            #   OK啊 114514 / OK@114514啊     -> 不命中（贴了文字）
-            # 先看这条规则的参数是不是「文本」：
-            #   url_template 写 {text} -> 允许用户发任意文字
-            #   写 {qq} / {pic}        -> 只允许号码或 @人
             try:
                 _pc = int(rule.get("param_count", "1") or 0)
             except Exception:
@@ -12800,7 +11758,6 @@ class ApixIqfkSimpleMeme(Star):
                 matched_kw = kw
                 param_str = _ps
                 break
-        # 关键词匹配上了、但"其它内容不是参数"-> 明确记一条日志便于排查
         if not matched_rule:
             _maybe = [k for r in self.rules for k in r["keywords"]
                       if k and k in text_for_match]
@@ -12832,11 +11789,6 @@ class ApixIqfkSimpleMeme(Star):
         if need == 0:
             params = []
         else:
-            # ★ 允许省略「发送者QQ」类参数：
-            #   模板写 pic={qq} 时，用户直接发关键词即可，自动带上自己的 QQ
-            # 把 @占位符（\x00AT0\x00）换成对应的 QQ 号；
-            # 万一还有没匹配上的占位符，直接清掉，避免被 URL 编码进参数。
-            # ★ 用户一个参数都没给 -> 不响应（兜底，正常已在匹配阶段拦掉）
             if not str(param_str or "").strip():
                 logger.info(
                     "[apix-meme] 接口「%s」需要参数，但这条消息没带参数，已忽略",
@@ -12853,7 +11805,6 @@ class ApixIqfkSimpleMeme(Star):
                     params.append(_sender_id)
             if len(params) < need:
                 return
-            # ★ 参数里写 {qq}/{at}/{me} 时替换成发送者（或 @ 的人）的 QQ
             params = [
                 resolve_param_refs(p, _sender_id, _bot_id) for p in params
             ]
@@ -12869,12 +11820,9 @@ class ApixIqfkSimpleMeme(Star):
 
         url = build_url(matched_rule["url_template"], params)
 
-        # media_type: 规则里标注 video 则按视频发送，text 则发文本，其余按图片
         raw_media = str(matched_rule.get("media_type", "") or "").strip().lower()
-        # json_field: 接口返回 JSON 时，媒体地址/文本内容所在的字段
         json_field = str(matched_rule.get("json_field", "") or "").strip()
 
-        # ★ 文本接口：直接取文本回复（支持纯文本 / document.write / JSON 字段）
         if raw_media == "text":
             try:
                 text = await fetch_text(url, json_field=json_field)
@@ -12896,7 +11844,6 @@ class ApixIqfkSimpleMeme(Star):
             logger.warning(f"[apix-meme] 下载媒体失败: {e}")
             return
 
-        # 规则标注为视频但接口实际返回图片（或反之）时，按实际类型发送，避免发不出去
         if expect_kind and media_kind != expect_kind:
             logger.warning(
                 f"[apix-meme] 规则标注为 {expect_kind}，但接口返回 {media_kind}，按实际类型发送"

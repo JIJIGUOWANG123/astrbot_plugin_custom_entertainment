@@ -25,7 +25,7 @@ from astrbot.api import logger
 
 try:
     from .path_utils import parse_gid_list
-except Exception:  # pragma: no cover - 独立加载时的回退
+except Exception:
     try:
         from path_utils import parse_gid_list
     except Exception:
@@ -41,21 +41,13 @@ except Exception:  # pragma: no cover - 独立加载时的回退
                     out.append(p)
             return out
 
-# ★ 模块级全局锁，防止多实例并发覆盖
 _GLOBAL_PUSH_LOCK = threading.Lock()
 
-# 默认推送间隔（分钟）
 DEFAULT_INTERVAL_MIN = 60
-# 最小推送间隔（分钟），防止配置成 0 导致刷屏
 MIN_INTERVAL_MIN = 1
 
-
-# ============================================================
-# 工具
-# ============================================================
 def now_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
 
 def fmt_seconds(sec) -> str:
     """把秒数格式化成「N小时M分」，便于展示上次推送距今多久"""
@@ -70,7 +62,6 @@ def fmt_seconds(sec) -> str:
     if h > 0:
         return f"{h}小时{m}分"
     return f"{m}分"
-
 
 def parse_hhmm(raw) -> str:
     """
@@ -87,7 +78,6 @@ def parse_hhmm(raw) -> str:
     text = str(raw).strip()
     if not text:
         return ""
-    # 统一全角冒号与点号
     text = text.replace("：", ":").replace(".", ":").replace("。", ":")
     if ":" not in text:
         if text.isdigit():
@@ -106,7 +96,6 @@ def parse_hhmm(raw) -> str:
         return f"{h:02d}:{m:02d}"
     return ""
 
-
 def parse_interval_min(raw, default: int = DEFAULT_INTERVAL_MIN) -> int:
     """
     解析推送间隔（分钟）。支持 60 / "60" / "60分钟" / "1小时"。
@@ -117,7 +106,6 @@ def parse_interval_min(raw, default: int = DEFAULT_INTERVAL_MIN) -> int:
     text = str(raw).strip()
     if not text:
         return default
-    # 支持「1小时」「2h」
     lower = text.lower()
     try:
         if "小时" in lower or lower.endswith("h"):
@@ -131,7 +119,6 @@ def parse_interval_min(raw, default: int = DEFAULT_INTERVAL_MIN) -> int:
     if val < MIN_INTERVAL_MIN:
         return default
     return val
-
 
 def parse_group_specs(raw) -> dict:
     """
@@ -152,13 +139,11 @@ def parse_group_specs(raw) -> dict:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        # 只取群号：兼容误写逗号/空格分隔的情况
         gid = line.split(",")[0].split("，")[0].split()[0].strip()
         if not gid.isdigit():
             continue
         result[gid] = {}
     return result
-
 
 class StatusPushModule:
     """定时状态推送模块（按分钟间隔）"""
@@ -167,30 +152,19 @@ class StatusPushModule:
         self.plugin_dir = plugin_dir
         self.data_path = data_path
 
-        # 全局配置（由 reload 注入）
         self.enable = False
         self.default_interval = DEFAULT_INTERVAL_MIN
 
-        # 每群状态：{group_id: {"on": bool, "interval": 分钟数(0=用全局默认)}}
         self.groups = {}
-        # 上次推送记录：{group_id: {"ts": 时间戳, "at": "YYYY-MM-DD HH:MM:SS"}}
         self.last_push = {}
-        # 主动推送用：{group_id: unified_msg_origin}
         self.umos = {}
-        # 后台配置的推送群：{group_id: {}}
         self.group_specs = {}
-        # 由 main.py 注入：把「群号+是否排除」写回后台配置
         self._cfg_write = None
 
         self._load_state()
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         cfg = cfg if isinstance(cfg, dict) else {}
-        # 总开关由「电脑状态功能总开关」统一控制（main.py 通过 set_enable 注入）。
-        # 这里保留旧键兼容：只有显式配了 daily_status_push_enable 时才覆盖。
         self.enable = bool(cfg.get("daily_status_push_enable", self.enable))
 
         self.default_interval = parse_interval_min(
@@ -198,8 +172,6 @@ class StatusPushModule:
             DEFAULT_INTERVAL_MIN,
         )
 
-        # ★ 两份名单（都是白名单：填了才生效）
-        #   手动查询用 status_groups，自动推送用 daily_status_push_groups
         self.blocked_groups = parse_gid_list(cfg.get("daily_status_push_groups", ""))
         self.group_specs = {g: {} for g in self.blocked_groups}
         self.use_backend_groups = bool(self.blocked_groups)
@@ -242,7 +214,6 @@ class StatusPushModule:
                     changed = True
                 cfg.setdefault("interval", 0)
                 self.groups[gid] = cfg
-                # 首次纳入名单时开始计时，避免刚填完就立刻推一次
                 if gid not in self.last_push:
                     self.last_push[gid] = {
                         "ts": time.time(),
@@ -284,9 +255,6 @@ class StatusPushModule:
                 self._save_state()
             return changed
 
-    # ============================================================
-    # 状态持久化（加锁由调用方保证）
-    # ============================================================
     def _load_state(self):
         if not self.data_path or not os.path.exists(self.data_path):
             return
@@ -295,7 +263,6 @@ class StatusPushModule:
                 data = json.load(f) or {}
             self.groups = data.get("groups", {}) or {}
             raw_last = data.get("last_push", {}) or {}
-            # 兼容旧格式（值是字符串 "YYYY-MM-DD HH:MM"）与新格式（值是 dict）
             converted = {}
             for gid, val in raw_last.items():
                 if isinstance(val, dict):
@@ -331,16 +298,12 @@ class StatusPushModule:
         except Exception:
             logger.exception("[status_push] 保存状态失败")
 
-    # ============================================================
-    # UMO 记录
-    # ============================================================
     def record_context(self, group_id, umo: str = ""):
         """记录群最近一次可用的 UMO，供定时推送复用。"""
         gid = str(group_id or "").strip()
         umo = str(umo or "").strip()
         if not gid or not umo:
             return
-        # 快速路径：内存中已是同一个 UMO，直接返回，避免频繁加锁和写盘
         if self.umos.get(gid) == umo:
             return
         with _GLOBAL_PUSH_LOCK:
@@ -352,13 +315,9 @@ class StatusPushModule:
     def get_umo(self, group_id) -> str:
         return str(self.umos.get(str(group_id), "") or "")
 
-    # ============================================================
-    # 每群配置
-    # ============================================================
     def _group_cfg(self, group_id) -> dict:
         gid = str(group_id)
         cfg = self.groups.get(gid)
-        # 黑名单语义：未配置的群默认开启
         if not isinstance(cfg, dict):
             cfg = {"on": True, "interval": 0}
         return cfg
@@ -401,7 +360,6 @@ class StatusPushModule:
         gid = str(group_id)
         with _GLOBAL_PUSH_LOCK:
             self._load_state()
-            # 同步后台自动名单（内存）
             if on:
                 if gid not in self.blocked_groups:
                     self.blocked_groups.append(gid)
@@ -412,11 +370,9 @@ class StatusPushModule:
             cfg["on"] = bool(on)
             cfg.setdefault("interval", 0)
             self.groups[gid] = cfg
-            # 刚开启时开始计时，避免立刻推一次
             if on and gid not in self.last_push:
                 self.last_push[gid] = {"ts": time.time(), "at": now_str(), "init": True}
             self._save_state()
-        # ★ 同步写回后台配置，重启后依然生效
         try:
             if self._cfg_write:
                 self._cfg_write(gid, bool(on))
@@ -464,9 +420,6 @@ class StatusPushModule:
             })
         return sorted(out, key=lambda x: x["group_id"])
 
-    # ============================================================
-    # 到点判定 + 防重（原子）
-    # ============================================================
     def check_and_mark(self, group_id) -> bool:
         """
         在全局锁内完成：重载磁盘 -> 校验总开关 -> 校验群开关
@@ -475,11 +428,9 @@ class StatusPushModule:
         """
         with _GLOBAL_PUSH_LOCK:
             self._load_state()
-            # 总开关（电脑状态功能总开关）关闭时一律不推
             if not self.enable:
                 return False
             gid = str(group_id)
-            # ★ 白名单语义：只有后台「生效的群号」里的群才推（is_group_on 已校验）
             if not self.is_group_on(gid):
                 return False
             iv = self.get_group_interval(gid)

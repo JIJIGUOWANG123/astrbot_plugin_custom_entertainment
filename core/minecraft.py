@@ -8,16 +8,13 @@ import aiohttp
 from astrbot.api import logger
 from .path_utils import title_bar, title_foot
 
-# ★ 新增：模块级全局锁
 _GLOBAL_MC_LOCK = threading.Lock()
 
 JAVA_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
 BE_RELEASES_URL = "https://api.github.com/repos/Mojang/bedrock-samples/releases?per_page=30"
 
-
 def _now_ts() -> int:
     return int(time.time())
-
 
 def _fmt_time(ts) -> str:
     if not ts:
@@ -26,7 +23,6 @@ def _fmt_time(ts) -> str:
         return datetime.datetime.fromtimestamp(int(ts)).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return "（未知）"
-
 
 def _parse_iso(iso: str) -> int:
     if not iso:
@@ -48,7 +44,6 @@ def _parse_iso(iso: str) -> int:
             continue
     return 0
 
-
 async def _get_json(
     session: aiohttp.ClientSession,
     url: str,
@@ -62,8 +57,6 @@ async def _get_json(
     }
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    # ★★ 1.7：不再接受 `ssl=` 覆盖 —— 一律用 aiohttp 默认的
-    #   证书校验（系统受信任 CA），杜绝「为了绕开报错直接关校验」。
     kwargs = {"timeout": t, "headers": headers}
     async with session.get(url, **kwargs) as resp:
         if resp.status == 403:
@@ -72,10 +65,6 @@ async def _get_json(
             raise RuntimeError(f"HTTP {resp.status}")
         return await resp.json(content_type=None)
 
-
-# ============================================================
-# Java 版
-# ============================================================
 async def fetch_java() -> dict:
     async with aiohttp.ClientSession() as session:
         data = await _get_json(session, JAVA_MANIFEST_URL)
@@ -106,14 +95,9 @@ async def fetch_java() -> dict:
         "snapshot_time": snapshot_time,
     }
 
-
-# ============================================================
-# BE 版（手动查询时调用；自动检测不调用）
-# ============================================================
 def _is_preview_tag(tag: str) -> bool:
     t = (tag or "").lower()
     return ("preview" in t) or ("-pre" in t) or ("beta" in t)
-
 
 async def fetch_bedrock(token: str = "", retry: int = 2) -> dict:
     """
@@ -121,10 +105,6 @@ async def fetch_bedrock(token: str = "", retry: int = 2) -> dict:
     只在手动查询 MC版本 时调用，自动检测不会再触发。
     保留重试机制应对偶发 403。
     """
-    # ★★ 1.7：**这里原来关掉了证书校验**
-    #   （`check_hostname = False` + `verify_mode = CERT_NONE`）。
-    #   已恢复默认校验：`aiohttp` 不传 `ssl=` 参数时就会用系统的
-    #   受信任 CA 库验证服务器证书，和 `fetch_java` 保持一致。
     last_err = None
     for attempt in range(retry + 1):
         try:
@@ -188,10 +168,6 @@ async def fetch_bedrock(token: str = "", retry: int = 2) -> dict:
         "preview_time": preview_time,
     }
 
-
-# ============================================================
-# 模块
-# ============================================================
 class MinecraftVersionModule:
     """
     Minecraft 版本检测：
@@ -215,9 +191,6 @@ class MinecraftVersionModule:
         self.umos = {}
         self._load_state()
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         self.enable = bool(cfg.get("minecraft_enable", True))
         try:
@@ -229,9 +202,6 @@ class MinecraftVersionModule:
         self.interval = itv
         self.github_token = str(cfg.get("minecraft_github_token", "") or "").strip()
 
-    # ============================================================
-    # 状态持久化
-    # ============================================================
     def _load_state(self):
         if not os.path.exists(self.data_path):
             return
@@ -268,9 +238,6 @@ class MinecraftVersionModule:
         except Exception:
             logger.exception("[minecraft] 保存状态失败")
 
-    # ============================================================
-    # UMO
-    # ============================================================
     def record_umo(self, group_id, umo: str):
         if not group_id or not umo:
             return
@@ -287,9 +254,6 @@ class MinecraftVersionModule:
     def get_umo(self, group_id) -> str:
         return self.umos.get(str(group_id), "")
 
-    # ============================================================
-    # 群级自动检测
-    # ============================================================
     def is_group_auto(self, group_id) -> bool:
         return str(group_id) in [str(x) for x in self.auto_groups]
 
@@ -305,9 +269,6 @@ class MinecraftVersionModule:
                 self.auto_groups = [x for x in self.auto_groups if str(x) != gid]
             self._save_state()
 
-    # ============================================================
-    # 检测（区分手动 / 自动）
-    # ============================================================
     def _cache_valid(self) -> bool:
         if not self.last_check_ts:
             return False
@@ -335,7 +296,6 @@ class MinecraftVersionModule:
             "bedrock_error": "",
         }
 
-        # Java 始终拉取
         try:
             new_result["java"] = await fetch_java()
         except Exception as e:
@@ -345,7 +305,6 @@ class MinecraftVersionModule:
             if old_java:
                 new_result["java"] = old_java
 
-        # 只有手动查询才拉 BE
         if include_bedrock:
             try:
                 new_result["bedrock"] = await fetch_bedrock(token=self.github_token)
@@ -365,7 +324,6 @@ class MinecraftVersionModule:
                 if old_be:
                     new_result["bedrock"] = old_be
         else:
-            # 自动检测：保留上一次的 BE 结果，方便手动查询时展示
             old_be = (self.last_result or {}).get("bedrock") or {}
             new_result["bedrock"] = old_be
 
@@ -374,9 +332,6 @@ class MinecraftVersionModule:
         self._save_state()
         return new_result
 
-    # ============================================================
-    # 新版本通知（只比较 Java）
-    # ============================================================
     def check_new_versions(self, result: dict) -> list:
         with _GLOBAL_MC_LOCK:
             self._load_state()
@@ -426,9 +381,6 @@ class MinecraftVersionModule:
                 self._save_state()
             return msgs
 
-    # ============================================================
-    # 格式化输出
-    # ============================================================
     def format_text(self, result: dict = None, include_bedrock: bool = True) -> str:
         """
         include_bedrock=True：显示 Java + BE（手动查询用）

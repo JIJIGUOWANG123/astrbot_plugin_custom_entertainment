@@ -26,17 +26,11 @@ except Exception:
         def json_response(data, status_code=200): return data
         def error_response(msg, status_code=400): return {"ok": False, "msg": msg}
 
-
 PLUGIN_ID = "astrbot_plugin_custom_entertainment"
 PLUGIN_CONFIG_FILENAME = f"{PLUGIN_ID}_config.json"
 
-
-# ============================================================
-# 路径工具
-# ============================================================
 def _plugin_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 
 def _find_astrbot_root() -> str:
     try:
@@ -58,25 +52,18 @@ def _find_astrbot_root() -> str:
         cur = os.path.dirname(cur)
     return os.getcwd()
 
-
 def _cfg_dir() -> str:
     root = _find_astrbot_root()
     cfg_dir = os.path.join(root, "data", "config")
     os.makedirs(cfg_dir, exist_ok=True)
     return cfg_dir
 
-
 def _config_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_CONFIG_FILENAME)
-
 
 def _schema_path() -> str:
     return os.path.join(_plugin_dir(), "_conf_schema.json")
 
-
-# ============================================================
-# 文件读写
-# ============================================================
 def read_schema() -> dict:
     try:
         p = _schema_path()
@@ -88,7 +75,6 @@ def read_schema() -> dict:
         logger.exception("[web_config] read_schema 失败")
         return {}
 
-
 def read_config() -> dict:
     try:
         p = _config_path()
@@ -99,7 +85,6 @@ def read_config() -> dict:
     except Exception:
         logger.exception("[web_config] read_config 失败")
         return {}
-
 
 def write_config(data: dict) -> bool:
     try:
@@ -116,10 +101,6 @@ def write_config(data: dict) -> bool:
         logger.exception("[web_config] write_config 失败")
         return False
 
-
-# ============================================================
-# 页面渲染
-# ============================================================
 def render_page_html() -> str:
     """读取 pages/dashboard/index.html 内容，找不到返回空串"""
     base = _plugin_dir()
@@ -140,10 +121,6 @@ def render_page_html() -> str:
     logger.warning(f"[web_config] 未找到 index.html，base={base}")
     return ""
 
-
-# ============================================================
-# 注册入口（空实现，由 main.py 统一注册路由）
-# ============================================================
 def register_web_apis(context) -> bool:
     logger.info("[web_config] register_web_apis 被调用（本模块不再注册路由，路由由 main.py 统一注册）")
     return True

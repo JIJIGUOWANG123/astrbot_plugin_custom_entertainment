@@ -5,7 +5,6 @@ from astrbot.api import logger
 
 from .path_utils import nickname_data_path, clean_display as _clean_display
 
-
 class NicknameCache:
     """
     全局 QQ 昵称缓存（跨群共享）。
@@ -25,10 +24,6 @@ class NicknameCache:
         try:
             with open(path, "r", encoding="utf-8-sig") as f:
                 raw = json.load(f) or {}
-            # ★★ 1.7.8：**加载时清洗**。
-            #   适配器偶尔会把群成员 protobuf 原始字节当昵称，
-            #   脏值一旦落地就会到处显示成 `%ÃÃØ`（用户反馈「昵称上一堆乱码」）。
-            #   这里就地洗干净并回写，之后所有读取都干净。
             self._data = {}
             _fixed = 0
             for k, v in (raw.items() if isinstance(raw, dict) else []):
@@ -59,14 +54,10 @@ class NicknameCache:
         except Exception:
             logger.exception("[apix-meme] 保存昵称缓存失败")
 
-    # ============================================================
-    # 对外接口
-    # ============================================================
     def update(self, user_id: str, user_name: str):
         if not user_id or not user_name:
             return
         uid = str(user_id)
-        # ★★ 1.7.8：写之前先清洗 —— 脏值（protobuf 残留）**不入库**
         name = _clean_display(user_name)
         if not name or name.startswith("QQ"):
             return
@@ -76,7 +67,6 @@ class NicknameCache:
             self._save()
 
     def get(self, user_id: str) -> str:
-        # ★★ 1.7.8：出口再清洗一次 —— 内存里可能残留加载前的脏值
         return _clean_display(self._data.get(str(user_id), ""))
 
     def as_dict(self) -> dict:

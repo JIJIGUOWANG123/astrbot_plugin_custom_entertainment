@@ -7,11 +7,8 @@ from astrbot.api import logger
 from .path_utils import parse_gid_list as _parse_gid_list
 from .path_utils import title_bar, title_foot
 from .path_utils import fmt_num
-# ★★ 1.7.7：昵称截断（长名字用省略号，别把榜单行撑宽）
 from .path_utils import nick_display as _nick_display
-# ★★ 1.7.7：榜单行用窄档（有「 1. 」前缀和「 — 5 天」后缀）
 from .path_utils import nick_display_narrow as _nick_narrow
-# ★★ 市场版 1.1：排行名次前缀（前三名奖牌，其余「N.」）
 from .path_utils import rank_tag as _rank_tag
 
 def _parse_names(raw: str) -> list:
@@ -111,7 +108,6 @@ def get_logic_day(ts: float, day_start_hour: int) -> str:
         dt = dt - datetime.timedelta(days=1)
     return dt.strftime("%Y-%m-%d")
 
-
 DEFAULT_MORNING_MESSAGES = [
     (0, 5, "🌙 这么晚还没睡？还是刚起？注意身体啊~"),
     (5, 7, "🌅 早起的鸟儿有虫吃，早安！"),
@@ -134,7 +130,6 @@ DEFAULT_NIGHT_MESSAGES = [
 _RECORD_KEYS = (
     "morning_ts", "morning_logic_day", "night_ts", "night_logic_day",
     "morning_repeat", "night_repeat",
-    # v1.6.9 新增字段，同样用于识别"这是一条用户记录"而不是按群嵌套结构
     "day_stats", "morning_days", "night_days",
 )
 
@@ -144,10 +139,7 @@ def _looks_like_record(d) -> bool:
     for k in _RECORD_KEYS:
         if k in d:
             return True
-    # 兜底：只有次数统计、没有逻辑日的老记录（正常打卡必然会写逻辑日，
-    # 但为了兼容极端历史数据，这里也认一下）
     return "total_morning" in d or "total_night" in d
-
 
 class GreetingModule:
     def __init__(self, plugin_dir: str, data_path: str):
@@ -170,8 +162,6 @@ class GreetingModule:
         self.night_messages = self._default_messages(DEFAULT_NIGHT_MESSAGES)
         self.records = {}
 
-        # ★ 由 main.py 注入的全局昵称缓存
-        # ★★ 市场版 1.1：三条独立排行指令（天数 / 清醒 / 睡眠）
         self.rank_days_names = ["打卡天数排行", "天数排行"]
         self.rank_awake_names = ["清醒时长排行", "清醒排行"]
         self.rank_sleep_names = ["睡眠时长排行", "睡眠排行"]
@@ -193,7 +183,6 @@ class GreetingModule:
         names = _parse_names(raw)
         self.night_names = names if names else ["晚安"]
 
-        # ★★ 市场版 1.1：三条独立排行指令（后台可自定义）
         for _attr, _key, _dft in (
                 ("rank_days_names", "greeting_rank_days_names",
                  "打卡天数排行,天数排行"),
@@ -251,16 +240,12 @@ class GreetingModule:
             max_rep = 0
         self.max_repeat_remind = max_rep
 
-        # ★ 打卡系统群号黑名单：留空 = 所有群都生效；填了群号则这些群不生效
-        #   （早安与晚安共用一个开关，不分开控制）
         self.allowed_groups = _parse_gid_list(cfg.get("greeting_groups", ""))
-        # 兼容旧的两个分开开关：新键为空时回退用它们
         if not self.allowed_groups:
             legacy = (_parse_gid_list(cfg.get("greeting_morning_groups", ""))
                       + _parse_gid_list(cfg.get("greeting_night_groups", "")))
             self.allowed_groups = sorted(set(legacy))
 
-        # ★ 早安 / 晚安文案（1.7.2 起数据存在独立文件，由 main 注入 cfg）
         morning = self._parse_messages(cfg.get("greeting_morning_messages", []))
         if morning:
             self.morning_messages = morning
@@ -343,7 +328,6 @@ class GreetingModule:
                 f"[greeting] 检测到旧的按群存储格式，已迁移为全局统一记录，"
                 f"共 {len(self.records)} 个用户"
             )
-        # 再把旧记录升级到带 day_stats 的新格式
         if self._migrate_day_stats():
             changed = True
         if changed:
@@ -372,7 +356,6 @@ class GreetingModule:
             if not isinstance(stats, dict):
                 stats = {}
 
-            # 1) 补历史作息样本（仅当该日还没有任何数据时）
             morning_ts = int(rec.get("morning_ts", 0) or 0)
             night_ts = int(rec.get("night_ts", 0) or 0)
             night_day = str(rec.get("night_logic_day", "") or "")
@@ -389,7 +372,6 @@ class GreetingModule:
                         stats[night_day] = day
                         changed = True
 
-            # 2) 迁移旧格式里的清醒/睡眠时长字段（兼容可能存在的历史字段名）
             for legacy_key, kind in (("last_awake_seconds", "awake"),
                                      ("last_sleep_seconds", "sleep")):
                 sec = int(rec.get(legacy_key, 0) or 0)
@@ -410,7 +392,6 @@ class GreetingModule:
                 rec["day_stats"] = stats
                 changed = True
 
-            # 3) 补 morning_days / night_days，让完整天数与连续天数判定对旧数据生效
             if not isinstance(rec.get("morning_days"), list) and morning_day:
                 rec["morning_days"] = [morning_day]
                 changed = True
@@ -465,10 +446,6 @@ class GreetingModule:
             return False
         return repeat > self.max_repeat_remind
 
-    # ============================================================
-    # 早晚打卡日分别记录（用于判定「早晚都打卡」才算一天）
-    # morning_days / night_days 均为逻辑日字符串列表
-    # ============================================================
     def _mark_side_day(self, rec: dict, key: str, logic_day: str):
         """把逻辑日加入 morning_days 或 night_days"""
         if not logic_day:
@@ -520,9 +497,6 @@ class GreetingModule:
             cur = cur - datetime.timedelta(days=1)
         return streak
 
-    # ============================================================
-    # ★ 新增：记录历史打卡逻辑日
-    # ============================================================
     def _mark_greeting_day(self, rec: dict, logic_day: str):
         """把逻辑日加入已打卡集合，并清理过老数据，防止无限膨胀"""
         if not logic_day:
@@ -536,10 +510,6 @@ class GreetingModule:
             days = sorted(days)[-400:]
         rec["greeting_days"] = days
 
-    # ============================================================
-    # 每日时长记录（供打卡排行榜统计）
-    # day_stats 结构：{逻辑日: {"awake": 清醒秒数, "sleep": 睡眠秒数}}
-    # ============================================================
     def _mark_day_duration(self, rec: dict, logic_day: str, kind: str, seconds: int):
         """
         记录某个逻辑日的清醒/睡眠时长。
@@ -555,7 +525,6 @@ class GreetingModule:
             day = {}
         day[kind] = int(seconds)
         stats[logic_day] = day
-        # 只保留最近 400 天，防止无限膨胀
         if len(stats) > 400:
             keep = sorted(stats.keys())[-400:]
             stats = {k: stats[k] for k in keep}
@@ -580,10 +549,6 @@ class GreetingModule:
         tn = int(rec.get("total_night", 0))
         return min(tm, tn)
 
-
-    # ============================================================
-    # ★ 新增：对外提供打卡统计接口（供签到统计调用）
-    # ============================================================
     def get_greeting_stats(self, user_id: str) -> dict:
         """
         返回该用户的打卡统计：
@@ -604,18 +569,14 @@ class GreetingModule:
         total_morning = int(rec.get("total_morning", 0))
         total_night = int(rec.get("total_night", 0))
 
-        # 完整打卡天数：早晚都打卡才算一天
         complete = self._complete_days(rec)
         if complete:
             total = len(complete)
         elif isinstance(rec.get("morning_days"), list) or isinstance(rec.get("night_days"), list):
-            # 已有新字段但交集为空 -> 确实没有完整打过卡
             total = 0
         else:
-            # 旧数据既无 morning_days/night_days 也无 day_stats：用 min(早安, 晚安) 估算
             total = min(total_morning, total_night)
 
-        # 连续天数：从最近一个完整日往回数，不允许中断
         streak = self._streak_of(complete)
 
         return {
@@ -684,12 +645,9 @@ class GreetingModule:
         rec["morning_logic_day"] = logic_today
         rec["morning_repeat"] = 0
         rec["total_morning"] = int(rec.get("total_morning", 0)) + 1
-        # ★ 记下"早安打过"的日期（判定完整天用）
         self._mark_side_day(rec, "morning_days", logic_today)
-        # ★ 睡眠时长记到「上一个逻辑日」名下（那晚的睡眠）
         if sleep_seconds:
             self._mark_day_duration(rec, last_night_logic_day, "sleep", sleep_seconds)
-        # ★ 记录已打卡逻辑日
         self._mark_greeting_day(rec, logic_today)
         self._save_records()
 
@@ -780,12 +738,9 @@ class GreetingModule:
         rec["night_logic_day"] = logic_today
         rec["night_repeat"] = 0
         rec["total_night"] = int(rec.get("total_night", 0)) + 1
-        # ★ 记下"晚安打过"的日期（判定完整天用）
         self._mark_side_day(rec, "night_days", logic_today)
-        # ★ 清醒时长记到当前逻辑日名下（今天从早安到晚安）
         if awake_seconds:
             self._mark_day_duration(rec, logic_today, "awake", awake_seconds)
-        # ★ 记录已打卡逻辑日
         self._mark_greeting_day(rec, logic_today)
         self._save_records()
 
@@ -801,9 +756,6 @@ class GreetingModule:
             lines.append(msg)
         return "\n".join(lines)
 
-    # ============================================================
-    # 个人打卡统计
-    # ============================================================
     def build_stats_text(self, user_id: str, user_name: str = "") -> str:
         """
         构建个人打卡统计文本。
@@ -822,7 +774,6 @@ class GreetingModule:
             name = self.nickname_cache.get(uid, "") if self.nickname_cache else ""
         name = name or f"QQ{uid}"
 
-        # ---- 清醒 / 睡眠时长统计（累计 + 当天）----
         day_stats = rec.get("day_stats")
         if not isinstance(day_stats, dict):
             day_stats = {}
@@ -834,7 +785,6 @@ class GreetingModule:
             awake_total += int(item.get("awake", 0) or 0)
             sleep_total += int(item.get("sleep", 0) or 0)
 
-        # 当天按「逻辑日」口径（与打卡一致，day_start_hour 之前算前一天）
         today_key = get_logic_day(time.time(), self.day_start_hour)
         today_item = day_stats.get(today_key)
         today_item = today_item if isinstance(today_item, dict) else {}
@@ -876,9 +826,6 @@ class GreetingModule:
         lines.append("💡 打卡记录跨群共享，统计的是你在所有群的总打卡数据")
         lines.append("━" * 12)
         return "\n".join(lines)
-    # ============================================================
-    # 打卡查询（★ 三种榜单，各自一条指令，格式对齐「签到排行」）
-    # ============================================================
     def _rank_items(self) -> list:
         """
         榜单公共数据源。

@@ -19,7 +19,6 @@ import threading
 import time
 
 from astrbot.api import logger
-# 词库为空时的兜底文案（用户没填词也不会「戳了没反应」）
 DEFAULT_WORDS = (
     "别戳啦，痒～",
     "在的在的，什么事？",
@@ -28,29 +27,20 @@ DEFAULT_WORDS = (
     "嗯？找我吗",
 )
 
-
 class PokeReplyModule:
     """戳一戳回复：词库 + 全局限频"""
 
     def __init__(self):
         self.enable = True
-        # 限频：窗口秒数 / 窗口内最多回几次（所有群一起算）
         self.window_sec = 60
         self.max_per_window = 5
-        # 词库 [{word: "..."}]
         self.words = []
-        # 只在戳「机器人自己」时回复（关掉则任何人戳任何人都回）
         self.only_self = True
-        # 群号黑名单（留空 = 所有群生效）
         self.groups = []
-        # ---- 限频状态 ----
         self._lock = threading.RLock()
-        self._hits = []              # 命中时间戳列表（滑动窗口）
-        self._batch = 0              # 被限频吞掉了几次（给日志用）
+        self._hits = []
+        self._batch = 0
 
-    # ------------------------------------------------------------
-    # 配置
-    # ------------------------------------------------------------
     def reload(self, cfg: dict, words=None):
         """从后台配置刷新（words 是数据集合的行，另行注入）"""
         cfg = cfg if isinstance(cfg, dict) else {}
@@ -92,9 +82,6 @@ class PokeReplyModule:
                 out.append({"word": w})
         self.words = out
 
-    # ------------------------------------------------------------
-    # 限频
-    # ------------------------------------------------------------
     def _prune(self, now: float):
         """丢掉窗口外的时间戳"""
         cut = now - float(self.window_sec)
@@ -141,9 +128,6 @@ class PokeReplyModule:
             self._hits = []
             self._batch = 0
 
-    # ------------------------------------------------------------
-    # 取词
-    # ------------------------------------------------------------
     def pick(self) -> str:
         """随机抽一句；没配词就用兜底"""
         pool = [w.get("word", "") for w in (self.words or [])]
@@ -155,9 +139,6 @@ class PokeReplyModule:
         except Exception:
             return DEFAULT_WORDS[0]
 
-    # ------------------------------------------------------------
-    # 事件判断
-    # ------------------------------------------------------------
     @staticmethod
     def is_poke(raw) -> bool:
         """
@@ -190,16 +171,12 @@ class PokeReplyModule:
             return {}
         gid = str(raw.get("group_id") or "")
         sender = str(raw.get("user_id") or "")
-        # ★ NapCat 的戳一戳字段：target_id = 被戳的人，
-        #   有的实现用 user_id 表示被戳对象，所以两个都看。
         target = str(raw.get("target_id")
                      or raw.get("target")
                      or raw.get("user_id") or "")
-        # 机器人被戳：target == bot
         if self.only_self:
             if not bot_id or target != str(bot_id):
                 return {}
-        # 群黑名单：填了就排除这些群
         if gid and self.groups and gid in self.groups:
             return {}
         if not self.allow():

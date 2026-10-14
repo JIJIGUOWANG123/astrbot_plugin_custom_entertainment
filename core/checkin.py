@@ -1,10 +1,6 @@
 import os
 import re as _re
 
-# ★ AstrBot 会把 @ 编译进 message_str，格式是「@昵称(QQ号)」，
-#   例：加积分 @铁剑娘(1142479412) 100000000
-#   以前的正则抓不到这种写法里的 QQ，
-#   导致「@某人 数量」永远解析不出目标 -> 静默失败。
 _AT_INLINE_RE = _re.compile(r"@[^\s()\u3000]*[\(（](\d{5,12})[\)）]")
 import json
 import time
@@ -17,27 +13,20 @@ from .path_utils import title_bar, title_foot
 from .path_utils import cmd_arg, register_cmd_names as _register_cmd_names_impl
 from .path_utils import fmt_num
 from .path_utils import nick_display as _nick_display
-# ★★ 1.3.0：昵称统一清洗（识别 protobuf 二进制垃圾）
 from .path_utils import clean_display as _clean_display
-# ★★ 1.7.7：榜单行（带「 1. 」前缀 / 名次列）用**窄档**宽度预算
 from .path_utils import nick_display_narrow as _nick_narrow
-# ★★ 1.7.7：榜单名次前缀（前三名奖牌 + 两空格列分隔 -> 渲染端对齐）
 from .path_utils import rank_tag as _rank_tag
-# ★★ 1.7.7：取消息里的 @ 列表（「清空财富 @某人」用）
 try:
     from .event_helpers import get_ats_from_msg as _get_ats_from_msg
-except Exception:  # pragma: no cover
+except Exception:
     def _get_ats_from_msg(event):
         return []
-
 
 def _today_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d")
 
-
 def _month_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m")
-
 
 def get_group_id(event) -> str:
     try:
@@ -56,7 +45,6 @@ def get_group_id(event) -> str:
         pass
     return ""
 
-
 def get_user_id(event) -> str:
     try:
         uid = event.get_sender_id() or ""
@@ -71,7 +59,6 @@ def get_user_id(event) -> str:
     except Exception:
         pass
     return "unknown"
-
 
 def get_user_name(event) -> str:
     """
@@ -111,7 +98,6 @@ def get_user_name(event) -> str:
                         return _s
             sender = getattr(mo, "sender", None)
             if sender is not None:
-                # ★ 群名片（card）优先于个人昵称
                 for attr in ("card", "nickname", "name"):
                     v = getattr(sender, attr, None)
                     if v:
@@ -122,13 +108,11 @@ def get_user_name(event) -> str:
         pass
     return ""
 
-
 def _fmt_time(ts: float) -> str:
     try:
         return datetime.datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return "（未知）"
-
 
 class CheckinModule:
     def __init__(self, plugin_dir: str, data_path: str):
@@ -136,26 +120,20 @@ class CheckinModule:
         self.data_path = data_path
         self.enable = True
         self.trigger_names = ["签到"]
-        # ★ 1.7.6：旧「签到排行」指令已删除（拆成三种排行），
-        #   这里保留属性只为兼容旧配置，不再参与匹配。
         self.rank_trigger_names = ["签到排行"]
-        # ★ 1.7.6：三种独立排行（次数 / 总财富 / 负债），指令后台可自定义
         self.rank_count_names = ["签到次数排行", "次数排行"]
         self.rank_wealth_names = ["总财富排行", "财富排行"]
         self.rank_debt_names = ["负债排行", "欠款排行"]
         self.info_trigger_names = ["签到统计", "我的签到", "查询签到"]
 
-        # ★ 积分显示名称（后台可改，如「金币」）；默认「积分」
         self.score_name = "积分"
-        self.score_min = 1        # 签到随机积分下限（后台可改）
-        self.score_max = 1000     # 签到随机积分上限（后台可改）
+        self.score_min = 1
+        self.score_max = 1000
 
         self.steal_enable = True
         self.steal_trigger_names = ["偷积分", "偷分"]
-        # ★ 作弊指令（管理员专用）：加积分 / 减积分
         self.score_add_trigger_names = ["加积分", "增加积分"]
         self.score_sub_trigger_names = ["减积分", "减少积分"]
-        # ★★ 1.7.7：清空某群员全部财富（管理员，不可撤销）
         self.wipe_wealth_trigger_names = ["清空财富", "清零财富"]
         self.steal_min = 1
         self.steal_max = 100
@@ -171,21 +149,11 @@ class CheckinModule:
         self.bank_interest_rate = 0.01
         self.bank_interest_hour = 0
 
-        # ============ 银行借款（1.7.6 新增）============
-        # ★ 借款产生的负债单独记在 u["loan"]（本金 + 已计利息），
-        #   不动 u["total_score"]，这样历史消费/偷取记录不会被覆盖。
-        #   净值 = total_score - loan；总资产 = total_score + bank - loan。
         self.loan_enable = True
         self.loan_trigger_names = ["借款", "贷款", "借钱"]
         self.loan_repay_names = ["还款", "还钱", "还债"]
-        self.loan_max = 10000            # 单次借款上限（可负数？不允许）
-        # ★ 还款利息：默认偏高，显得银行不是好人
+        self.loan_max = 10000
         self.loan_interest_rate = 0.30
-        # ★ 1.7.6：逾期利息（老赖）
-        #   · loan_due_days           借款后多少天算逾期（0 = 不设期限）
-        #   · loan_overdue_step_hours 每隔多少小时加一次逾期利息（默认 24）
-        #   · loan_overdue_rate       每期加收多少（按**本金**算，默认 5%）
-        #   · loan_deadbeat_days      逾期多少天开始挂「老赖」标签（0 = 一逾期就挂）
         self.loan_due_days = 7
         self.loan_overdue_step_hours = 24
         self.loan_overdue_rate = 0.05
@@ -193,132 +161,72 @@ class CheckinModule:
         self.loan_deadbeat_tag = "🐍 老赖"
         self.loan_overdue_notice = True
         self.loan_info_names = ["借款信息", "我的借款", "欠款"]
-        # ★ 1.7.6：花钱时钱包不够，是否自动从银行扣（默认开）
         self.use_bank_pay = True
 
-        # ============ 抢银行（1.7.6 新增，银行子功能）============
-        # ★ 每天一次、**没有参数**：
-        #   成功 -> 抢到别人的钱进自己钱包
-        #   失败 -> 银行账户冻结若干天 + 扣掉一半财产（钱包+银行 的一半）
         self.rob_enable = True
         self.rob_trigger_names = ["抢银行", "抢劫银行", "打劫银行"]
-        self.rob_success_rate = 5        # 成功概率（%），默认很低
-        self.rob_min = 1                 # 抢到的钱下限
-        self.rob_max = 10000             # 抢到的钱上限
-        self.rob_freeze_days = 3         # 失败冻结天数
-        self.rob_fail_penalty_rate = 0.5  # 失败扣一半财产
+        self.rob_success_rate = 5
+        self.rob_min = 1
+        self.rob_max = 10000
+        self.rob_freeze_days = 3
+        self.rob_fail_penalty_rate = 0.5
 
-        # ============ 签到商店（1.7.6 新增）============
-        # ★ 卖两类东西：
-        #   ① 保险箱（kind=vault）：买了以后
-        #      · 「签到统计」里会多显示保险箱余额
-        #      · 可以把钱**存进保险箱**（存进去的钱**偷不走**）
-        #      · 降低**别人偷你**的成功率
-        #   ② 武器（kind=weapon，默认）：
-        #      · 提高**你偷别人**的成功率
-        #      · 部分还能降低**别人偷你**的成功率（防御）
         self.shop_enable = True
         self.shop_trigger_names = ["签到商店", "积分商店", "商店"]
         self.shop_buy_trigger_names = ["购买商品", "买商品"]
-        # ★ 1.7.6：**不占用「存钱/取钱」** —— 那是银行功能的指令，
-        #   用了会冲突。保险箱只用「存入保险箱 / 取出保险箱」。
         self.shop_save_trigger_names = ["存入保险箱"]
         self.shop_take_trigger_names = ["取出保险箱"]
-        # ★★ 1.7.7：**武器必须装备才生效** —— 买了不等于生效。
-        #   装备后的武器加成算在「偷积分 / 防御 / 抢银行」上；
-        #   没装备的只是收藏（加成不生效）。
-        #   ★ 指令名默认「启用武器」（用户定的），旧名「装备武器」仍认。
         self.shop_equip_trigger_names = ["启用武器", "装备武器"]
-        # 武器「抢银行」加成上限（%）—— 和偷取加成一样，防止堆太高
         self.shop_rob_bonus_cap = 20.0
-        # ★★ 1.7.7：「我的装备」查询指令
         self.my_equip_trigger_names = ["我的装备", "我的武器"]
-        # ★ 保险箱能降低多少「被偷概率」—— 每 1 件减免的百分点，
-        #   以及减免上限（防止堆到无人可偷）
-        self.vault_steal_reduce = 15.0     # 有保险箱时被偷概率 -15%
-        self.shop_defense_cap = 60.0       # 被偷概率最多降 60%
-        # ★★ 1.7.7：武器**破保险箱**规则
-        #   · vault_break_rate   —— 全局默认破箱概率（%），武器可单独覆盖
-        #   · vault_break_ratio  —— 破箱后夺走保险箱里多少比例（1.0 = 全部）
-        #   · vault_break_destroy—— 破箱时是否把保险箱**砸毁**（需重新购买）
+        self.vault_steal_reduce = 15.0
+        self.shop_defense_cap = 60.0
         self.vault_break_rate = 0.0
         self.vault_break_ratio = 1.0
         self.vault_break_destroy = False
-        self.shop_list = []                # 商店条目（独立数据文件里维护）
+        self.shop_list = []
 
-        # ============ 银行理财（1.7.6 新增，银行子功能）============
-        # ★ 玩法：把钱**买入理财**，之后**每天随机盈亏**一次
-        #   · 盈利：直接加到买入金额上
-        #   · 亏损：从买入金额里扣；**不够扣就从自己资产（钱包+银行）补**
-        #   · 可以**随时取出**，取出的钱回**银行账户**
-        # ★ 盈亏在**每天第一次查看/操作理财时结算一次**
         self.fund_enable = True
         self.fund_trigger_names = ["理财", "我的理财"]
         self.fund_buy_names = ["购买理财", "买入理财", "买理财"]
         self.fund_sell_names = ["取出理财", "卖出理财", "赎回理财"]
-        # ★ 每天随机盈亏幅度（%）；正负号决定方向
-        self.fund_profit_max = 8.0      # 单日最多 +8%
-        self.fund_loss_max = 6.0        # 单日最多 -6%
+        self.fund_profit_max = 8.0
+        self.fund_loss_max = 6.0
 
-        # ============ 抽奖（1.7.6 新增，接在签到最后）============
-        # ★ 指令**不带参数**：每次固定花 lottery_cost，奖品在 0~lottery_prize_max 之间随机。
-        #   下限固定为 0（允许空手而归），后台只能调「每次花多少」和「上限多少」。
         self.lottery_enable = True
         self.lottery_trigger_names = ["开始抽奖", "抽奖"]
-        # ★★ 1.7.6：「全部抽奖」—— 一个指令把当天剩余机会全抽完
         self.lottery_all_trigger_names = ["全部抽奖", "一键抽奖"]
-        self.lottery_cost = 100          # 每次抽奖固定花多少
-        self.lottery_prize_max = 500     # 奖品上限（下限固定 0）
-        # ★ 1.7.6：每天最多抽几次（0 = 不限次数）
+        self.lottery_cost = 100
+        self.lottery_prize_max = 500
         self.lottery_daily_limit = 10
 
-        # ============ 奖池（1.7.6 新增）============
-        # ★ 入门费**归系统**；奖池的钱由后台配置的「每日随机区间」决定（系统出钱）。
-        #   名额满 -> 立刻开奖：奖池金额**全额随机分给所有参与者**，
-        #   随机额度直接进各自钱包。每人每天只能参与一次。
         self.pool_enable = True
         self.pool_trigger_names = ["参与抽奖", "参与奖池", "加入奖池"]
         self.pool_info_names = ["奖池", "今日奖池", "奖池信息"]
-        self.pool_fee = 500              # 入门费（归系统）
-        self.pool_slots = 10             # 参与名额
-        self.pool_min = 1000             # 奖池每日随机下限
-        self.pool_max = 10000            # 奖池每日随机上限
-        # ★ 1.7.6：名额没满时，多久自动开奖（小时，0 = 不自动开）
+        self.pool_fee = 500
+        self.pool_slots = 10
+        self.pool_min = 1000
+        self.pool_max = 10000
         self.pool_timeout_hours = 1
-        # ★ 1.7.6：每人每天最多参与几轮（0 = 不限）
         self.pool_per_day = 1
 
-        # ============ 打工配置 ============
         self.job_enable = True
         self.job_trigger_names = ["打工", "干活"]
         self.job_info_trigger_names = ["打工列表", "工作列表", "工种"]
-        # ★★ 1.7.6：「全部打工」触发词（后台可自定义）
         self.job_all_trigger_names = ["全部打工", "一键打工"]
-        self.job_list = []  # [{"name": "", "duration_hours": 1, "reward_min": 10, "reward_max": 100}]
+        self.job_list = []
         self.cmd_job_add_names = ["添加工种", "新增工种"]
         self.cmd_job_del_names = ["删除工种", "删工种"]
 
-        # ============ ★★ 1.7.7：体力系统 ============
         self.stamina_enable = True
-        self.stamina_max = 100            # 每人每天体力上限
-        # 每个工种随机消耗的体力区间（工种条目可用 stamina_min/max 覆盖）
+        self.stamina_max = 100
         self.job_stamina_min = 1
         self.job_stamina_max = 5
-        # 食物默认恢复多少体力（条目字段 stamina_restore 可覆盖）
         self.stamina_food_restore = 30
-        # 加班：清 1 小时冷却要多少体力 + 最低消费
         self.stamina_refill_per_hour = 10
         self.stamina_refill_min = 5
-        # 指令名（后台可自定义）
         self.stamina_view_trigger_names = ["我的体力", "体力"]
         self.food_eat_trigger_names = ["吃食物", "吃东西"]
-        # ★★ 1.7.7：加班拆成「主菜单 / 状态 / 单个 / 全部」四件事，
-        #   四个名字各自独立配置（**默认全部不重名**）：
-        #     · 加班功能  -> 输出下级菜单
-        #     · 加班      -> **不带参数时**输出加班状态
-        #     · 加班 工种 -> 单独加班这一个工种
-        #     · 全部加班  -> 加班所有工种
-        #   ★ 曾经把菜单入口名和执行指令名共用一key，导致撞名、指令失效。
         self.stamina_refill_menu_names = ["加班功能"]
         self.stamina_refill_trigger_names = ["加班", "一键冷却"]
         self.stamina_refill_status_names = ["加班状态"]
@@ -331,12 +239,9 @@ class CheckinModule:
         self.mount_buy_trigger_names = ["购买坐骑", "买坐骑"]
         self.cmd_mount_add_names = ["添加坐骑", "新增坐骑"]
         self.cmd_mount_del_names = ["删除坐骑", "删坐骑"]
-        # ★ 1.7.6：装备坐骑 / 坐骑查看（带参数）
         self.mount_equip_names = ["装备坐骑", "骑乘坐骑"]
         self.mount_view_names = ["坐骑查看", "查看坐骑"]
-        # ★★ 市场版：坐骑图片素材目录已移除（不再插入坐骑图片）
         self.mount_img_dir = ""
-        # ★ 1.7.6：每天群里第一句话的「闪亮登场」提示
         self.mount_greet_enable = True
         self.mount_greet_text = "🌟 $name 骑着「$mount」闪亮登场！"
 
@@ -344,24 +249,18 @@ class CheckinModule:
         self.feature_groups = {}
         self.group_whitelist = []
         self.group_blacklist = []
-        # 全局群白名单（不填 = 不限制群聊）
         self.allowed_groups = []
 
         self.users = {}
         self.daily = {}
         self.speaks = {}
-        # ★ 1.7.6：抢银行的「每天一次」记录（与签到日限制分开算）
         self.robs = {}
-        # ★ 1.7.6：抽奖的「每天次数」记录
         self.lotteries = {}
-        # ★ 1.7.6：奖池记录（按天，开奖后保留供查询）
         self.pools = {}
-        # ★ 1.7.6：坐骑「每天登场只提示一次」记录
         self.mount_greet = {}
         self.last_interest_date = ""
         self._need_save = False
 
-        # ★ 由 main.py 注入的全局昵称缓存
         self.nickname_cache = {}
 
         self._load()
@@ -432,8 +331,6 @@ class CheckinModule:
             _img = str(item.get("img", "") or "").strip()
             if _img:
                 _row["img"] = _img
-            # ★★ 1.7.6：坐骑附加 BUFF 的**后台覆盖值**要保留，
-            #   否则后台填了也会被这里丢掉（只剩按价格算的默认值）。
             for _bk in ("steal_bonus", "rob_bonus"):
                 _bv = item.get(_bk)
                 if _bv not in (None, ""):
@@ -474,10 +371,6 @@ class CheckinModule:
                 "kind": str(it.get("kind", "") or "weapon").strip()
                 or "weapon",
             }
-            # ★★ 白名单：这些字段要原样带过去，否则会被静默丢弃
-            #   · steal_bonus / defense_bonus  —— 武器加成
-            #   · vault_break_rate            —— 破保险箱概率（1.7.7）
-            #   · stamina_restore             —— 食物恢复体力（1.7.7）
             for _bk in ("steal_bonus", "defense_bonus",
                         "vault_break_rate", "stamina_restore"):
                 _bv = it.get(_bk)
@@ -490,8 +383,6 @@ class CheckinModule:
         self.shop_list = out
 
     def reload(self, cfg: dict):
-        # ★ 统一布尔解析：后台/文本配置常把布尔写成字符串，
-        #   bool("false") 会得到 True（非空字符串），开关就失效了。
         def _bool_cfg(key, default=True):
             v = cfg.get(key, default)
             if isinstance(v, bool):
@@ -508,7 +399,6 @@ class CheckinModule:
 
         self.enable = _bool_cfg("checkin_enable", True)
 
-        # ★ 签到随机积分范围（后台可改；默认 1~1000 保持原行为）
         try:
             self.score_min = max(1, int(str(
                 cfg.get("checkin_score_min", "1")).strip() or "1"))
@@ -526,10 +416,8 @@ class CheckinModule:
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.trigger_names = names if names else ["签到"]
 
-        # ★ 1.7.6：旧「签到排行」指令已删除，不再读配置（保留属性兼容旧调用）
         self.rank_trigger_names = ["签到排行"]
 
-        # ★ 1.7.6：三种独立排行指令（后台可自定义）
         for _attr, _key, _dft in (
                 ("rank_count_names", "checkin_rank_count_names",
                  "签到次数排行,次数排行"),
@@ -551,7 +439,6 @@ class CheckinModule:
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.steal_trigger_names = names if names else ["偷积分"]
 
-        # ★ 作弊指令：管理员加/减积分（多个用英文逗号分隔）
         raw = str(cfg.get("score_add_trigger_names", "加积分,增加积分") or "").strip()
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.score_add_trigger_names = names if names else ["加积分"]
@@ -610,7 +497,6 @@ class CheckinModule:
         except Exception:
             self.bank_interest_hour = 0
 
-        # ---------- 银行借款（1.7.6）----------
         self.loan_enable = _bool_cfg("loan_enable", True)
         raw = str(cfg.get("loan_trigger_names", "借款,贷款,借钱") or "").strip()
         names = [x.strip() for x in raw.split(",") if x.strip()]
@@ -626,7 +512,6 @@ class CheckinModule:
                                     or "10000"))
         except Exception:
             self.loan_max = 10000
-        # ★ 还款利息率：默认 0.30（三成，银行不是好人）
         try:
             self.loan_interest_rate = float(
                 str(cfg.get("loan_interest_rate", "0.30")).strip() or "0.30")
@@ -635,8 +520,6 @@ class CheckinModule:
         if self.loan_interest_rate < 0:
             self.loan_interest_rate = 0
 
-        # ---------- 逾期利息 / 老赖（1.7.6）----------
-        #   ★ 注意：_num_cfg 定义在下面，这里用等价的内联解析
         def _n(key, default, lo=None, cast=int):
             try:
                 v = cast(str(cfg.get(key, str(default))).strip() or str(default))
@@ -659,10 +542,8 @@ class CheckinModule:
         _tag = str(cfg.get("loan_deadbeat_tag", "") or "").strip()
         self.loan_deadbeat_tag = _tag or "🐍 老赖"
         self.loan_overdue_notice = _bool_cfg("loan_overdue_notice", True)
-        # ★ 1.7.6：钱包不够时自动从银行扣
         self.use_bank_pay = _bool_cfg("use_bank_pay", True)
 
-        # ---------- 抢银行（1.7.6）----------
         self.rob_enable = _bool_cfg("rob_enable", True)
         raw = str(cfg.get("rob_trigger_names", "抢银行,抢劫银行,打劫银行")
                   or "").strip()
@@ -687,13 +568,11 @@ class CheckinModule:
         self.rob_fail_penalty_rate = _num_cfg(
             "rob_fail_penalty_rate", 0.5, lo=0.0, hi=1.0, cast=float)
 
-        # ---------- 签到商店（1.7.6）----------
         self.shop_enable = _bool_cfg("shop_enable", True)
         for _k, _dft in (("shop_trigger_names", "签到商店,积分商店,商店"),
                          ("shop_buy_trigger_names", "购买商品,买商品"),
                          ("shop_save_trigger_names", "存入保险箱"),
                          ("shop_take_trigger_names", "取出保险箱"),
-                         # ★★ 1.7.7：武器必须装备才生效
                          ("shop_equip_trigger_names", "启用武器,装备武器"),
                          ("my_equip_trigger_names", "我的装备,我的武器")):
             _raw = str(cfg.get(_k, _dft) or "").strip()
@@ -703,13 +582,11 @@ class CheckinModule:
             "vault_steal_reduce", 15.0, lo=0.0, hi=100.0, cast=float)
         self.shop_defense_cap = _num_cfg(
             "shop_defense_cap", 60.0, lo=0.0, hi=100.0, cast=float)
-        # ★★ 1.7.7：武器破保险箱
         self.vault_break_rate = _num_cfg(
             "vault_break_rate", 0.0, lo=0.0, hi=100.0, cast=float)
         self.vault_break_ratio = _num_cfg(
             "vault_break_ratio", 1.0, lo=0.0, hi=1.0, cast=float)
         self.vault_break_destroy = _bool_cfg("vault_break_destroy", False)
-        # ★ 商店条目：从独立数据文件读（配置里的同名键可能只是只读摘要）
         self.shop_list = []
         _shop_raw = cfg.get("shop_list", [])
         if isinstance(_shop_raw, list):
@@ -730,12 +607,6 @@ class CheckinModule:
                     "kind": str(_it.get("kind", "") or "weapon").strip()
                     or "weapon",
                 }
-                # ★★ 白名单：这些字段要原样带过去，否则会被静默丢弃。
-                #   ★ 这里和 `_load_shop_from_store()` 里的白名单**必须一致** ——
-                #     生产环境 main.py 会把 collections 灌进 cfg，于是走的是
-                #     **这一条**路径，漏了字段就会出现「数据文件里有、
-                #     运行时不生效」的怪现象（vault_break_rate /
-                #     stamina_restore 都踩过这个坑）。
                 for _bk in ("steal_bonus", "defense_bonus",
                             "vault_break_rate", "stamina_restore"):
                     _bv = _it.get(_bk)
@@ -745,13 +616,11 @@ class CheckinModule:
                 if _img:
                     _row["img"] = _img
                 self.shop_list.append(_row)
-        # ★ 配置里的 shop_list 通常只是只读摘要 -> 从独立数据文件读真实数据
         if not self.shop_list:
             self._load_shop_from_store()
         if self.shop_list:
             logger.info(f"[checkin] 签到商店已加载：{len(self.shop_list)} 件商品")
 
-        # ---------- 银行理财（1.7.6）----------
         self.fund_enable = _bool_cfg("fund_enable", True)
         for _k, _dft in (("fund_trigger_names", "理财,我的理财"),
                          ("fund_buy_names", "购买理财,买入理财,买理财"),
@@ -764,12 +633,10 @@ class CheckinModule:
         self.fund_loss_max = _num_cfg(
             "fund_loss_max", 6.0, lo=0.0, hi=100.0, cast=float)
 
-        # ---------- 抽奖（1.7.6）----------
         self.lottery_enable = _bool_cfg("lottery_enable", True)
         raw = str(cfg.get("lottery_trigger_names", "开始抽奖,抽奖") or "").strip()
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.lottery_trigger_names = names if names else ["开始抽奖"]
-        # ★★ 1.7.6：「全部抽奖」触发词（后台可自定义）
         _alr = str(cfg.get("lottery_all_trigger_names",
                            "全部抽奖,一键抽奖") or "").strip()
         _aln = [x.strip() for x in _alr.split(",") if x.strip()]
@@ -786,22 +653,17 @@ class CheckinModule:
                 v = min(hi, v)
             return v
 
-        # ★ 1.7.6：指令**不带参数**，每次固定花 lottery_cost，
-        #   奖品 0 ~ lottery_prize_max（下限固定 0，后台不用填）
         self.lottery_cost = _int_cfg("lottery_cost", 100, lo=1)
         self.lottery_prize_max = _int_cfg("lottery_prize_max", 500, lo=0)
         self.lottery_win_rate = _int_cfg("lottery_win_rate", 30, lo=0, hi=100)
         self.lottery_prize_min = 0
-        # ★ 每日次数上限（0 = 不限）
         self.lottery_daily_limit = _int_cfg("lottery_daily_limit", 10, lo=0)
 
-        # ---------- 奖池（1.7.6）----------
         self.pool_enable = _bool_cfg("lottery_pool_enable", True)
         _pr = str(cfg.get("lottery_pool_trigger_names", "参与抽奖,参与奖池")
                   or "").strip()
         _pn = [x.strip() for x in _pr.split(",") if x.strip()]
         self.pool_trigger_names = _pn if _pn else ["参与抽奖"]
-        # ★★ 1.7.6：「全部抽奖」—— 一个指令把当天剩余机会全抽完
         _al = str(cfg.get("lottery_all_trigger_names", "全部抽奖,一键抽奖")
                   or "").strip()
         _an = [x.strip() for x in _al.split(",") if x.strip()]
@@ -816,7 +678,6 @@ class CheckinModule:
         self.pool_max = _int_cfg("lottery_pool_max", 10000, lo=self.pool_min)
         self.pool_timeout_hours = _num_cfg("lottery_pool_timeout_hours", 1.0,
                                            lo=0.0, cast=float)
-        # ★ 每人每天参与轮数（0 = 不限）
         self.pool_per_day = _int_cfg("lottery_pool_per_day", 1, lo=0)
 
         self.group_mode = str(cfg.get("checkin_group_mode", "off") or "off").strip().lower()
@@ -825,9 +686,6 @@ class CheckinModule:
         self.group_whitelist = self._parse_lines(cfg.get("checkin_group_whitelist", ""))
         self.group_blacklist = self._parse_lines(cfg.get("checkin_group_blacklist", ""))
 
-        # ★ 签到系统的群号黑名单：留空 = 所有群都生效；填了则这些群不生效
-        #   统一为一个名单（作用于整个签到系统）。旧的 checkin_global_groups
-        #   仍兼容读取，两个键的值会合并，避免升级丢配置。
         self.allowed_groups = _parse_gid_list(cfg.get("checkin_groups", ""))
         legacy_global = _parse_gid_list(cfg.get("checkin_global_groups", ""))
         if legacy_global:
@@ -837,13 +695,11 @@ class CheckinModule:
                     merged.append(g)
             self.allowed_groups = merged
 
-        # 子功能「单独群开关」：填了群号则只有这些群能用该子功能；留空 = 不限群
         self.feature_groups = {}
         for feat, key in self._FEATURE_GROUP_KEYS.items():
             raw = cfg.get(key, "")
             self.feature_groups[feat] = _parse_gid_list(raw)
 
-        # ============ 坐骑配置 ============
         self.mount_enable = _bool_cfg("mount_enable", True)
 
         raw = str(cfg.get("mount_trigger_names", "坐骑,我的坐骑") or "").strip()
@@ -860,11 +716,6 @@ class CheckinModule:
 
         mount_list_raw = cfg.get("mount_list", [])
         self.mount_list = []
-        # ★ 1.7.6：后台配置里的 `mount_list` 可能只是**只读摘要文本**
-        #   （旧版本会把「共 28 个坐骑」写进这个同名键），
-        #   所以：
-        #     ① 配置里是真数组 -> 用配置
-        #     ② 配置里不是数组 / 解析不出东西 -> 回落**独立数据文件**
         if isinstance(mount_list_raw, list):
             for item in mount_list_raw:
                 if not isinstance(item, dict):
@@ -884,7 +735,6 @@ class CheckinModule:
                     _img = str(item.get("img", "") or "").strip()
                     if _img:
                         _row["img"] = _img
-                    # ★★ 1.7.6：保留后台的坐骑 BUFF 覆盖值
                     for _bk in ("steal_bonus", "rob_bonus"):
                         _bv = item.get(_bk)
                         if _bv not in (None, ""):
@@ -897,7 +747,6 @@ class CheckinModule:
         else:
             logger.warning("[checkin] 坐骑列表为空（配置与数据文件里都没有）")
 
-        # ============ 打工配置 ============
         self.job_enable = _bool_cfg("job_enable", True)
 
         raw = str(cfg.get("job_trigger_names", "打工,干活") or "").strip()
@@ -908,7 +757,6 @@ class CheckinModule:
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.job_info_trigger_names = names if names else ["打工列表"]
 
-        # ★★ 1.7.6：「全部打工」触发词（一次把所有工种都打了）
         raw = str(cfg.get("job_all_trigger_names", "全部打工,一键打工") or "").strip()
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.job_all_trigger_names = names if names else ["全部打工"]
@@ -939,7 +787,6 @@ class CheckinModule:
                 if rmax < rmin:
                     rmax = rmin
                 if name:
-                    # ★★ 1.7.7：工种可**单独覆盖**体力消耗（留空用全局）
                     _smin, _smax = None, None
                     for _k, _set in (("stamina_min", "min"),
                                      ("stamina_max", "max")):
@@ -974,7 +821,6 @@ class CheckinModule:
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.cmd_job_del_names = names if names else ["删除工种"]
 
-        # ============ ★★ 1.7.7：体力系统 ============
         self.stamina_enable = _bool_cfg("stamina_enable", True)
         self.stamina_max = max(0, int(_num_cfg(
             "stamina_max", 100, lo=0, hi=100000, cast=int)))
@@ -991,8 +837,6 @@ class CheckinModule:
             "stamina_refill_per_hour", 10, lo=0, hi=100000, cast=int)))
         self.stamina_refill_min = max(0, int(_num_cfg(
             "stamina_refill_min", 5, lo=0, hi=100000, cast=int)))
-        # 触发词本来就定义在模块函数里（见 `stamina_view_trigger_names`），
-        # 热刷新时按同样的取法即可。
         for _k, _dft in (("stamina_view_trigger_names", "我的体力,体力"),
                          ("food_eat_trigger_names", "吃食物,吃东西"),
                          ("stamina_refill_menu_names", "加班功能"),
@@ -1011,7 +855,6 @@ class CheckinModule:
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.cmd_mount_del_names = names if names else ["删除坐骑"]
 
-        # ★ 1.7.6：装备坐骑 / 坐骑查看（都是「指令 + 坐骑名」）
         raw = str(cfg.get("mount_equip_names", "装备坐骑,骑乘坐骑")
                   or "").strip()
         names = [x.strip() for x in raw.split(",") if x.strip()]
@@ -1022,15 +865,12 @@ class CheckinModule:
         names = [x.strip() for x in raw.split(",") if x.strip()]
         self.mount_view_names = names if names else ["坐骑查看"]
 
-        # ★★ 市场版：坐骑图片素材目录已移除
         self.mount_img_dir = ""
 
-        # ★ 1.7.6：每天第一句话的登场提示
         self.mount_greet_enable = _bool_cfg("mount_greet_enable", True)
         _gt = str(cfg.get("mount_greet_text", "") or "")
         self.mount_greet_text = (_gt.strip()
                                  or "🌟 $name 骑着「$mount」闪亮登场！")
-        # ★ 1.7.6：reload 后指令名可能变了，重新登记一遍
         self._register_cmd_names()
 
     @staticmethod
@@ -1064,20 +904,15 @@ class CheckinModule:
                         out.append(item)
         return out
 
-    # 子功能标识 -> 后台「单独群开关」配置键
     _FEATURE_GROUP_KEYS = {
         "checkin": "checkin_groups",
         "steal": "steal_groups",
         "bank": "bank_groups",
         "mount": "mount_groups",
         "job": "job_groups",
-        # ★ 1.7.6：抽奖功能（黑名单：填了群号 = 该群不触发）
         "lottery": "lottery_groups",
-        # ★ 1.7.6：抢银行（黑名单：填了群号 = 该群不触发）
         "rob": "rob_groups",
-        # ★ 1.7.6：奖池（黑名单：填了群号 = 该群不触发）
         "lottery_pool": "lottery_pool_groups",
-        # ★ 1.7.6：签到商店（黑名单：填了群号 = 该群不触发）
         "shop": "shop_groups",
     }
 
@@ -1092,7 +927,6 @@ class CheckinModule:
         if not group_id:
             return True
         gid = str(group_id)
-        # ① 全局群号黑名单
         if self.allowed_groups:
             if gid in self.allowed_groups:
                 return False
@@ -1102,7 +936,6 @@ class CheckinModule:
         elif self.group_mode == "blacklist":
             if gid in self.group_blacklist:
                 return False
-        # ② 子功能群号黑名单（配了才生效）
         if feature:
             gids = self.feature_groups.get(feature)
             if gids and gid in gids:
@@ -1127,12 +960,6 @@ class CheckinModule:
         except Exception:
             logger.exception("[checkin] 读取失败")
 
-    # ============================================================
-    # 按群隔离（★ 排行榜/积分/银行等全部每群独立）
-    #   数据结构：users = {群号: {用户号: 记录}}
-    #            daily = {群号: {日期: {用户号: 记录}}}
-    #   旧数据（扁平结构）自动迁移到「默认群」下，不丢数据
-    # ============================================================
     DEFAULT_GROUP = "__default__"
 
     @staticmethod
@@ -1153,19 +980,15 @@ class CheckinModule:
         if self.daily and not self._looks_nested(self.daily):
             self.daily = {self.DEFAULT_GROUP: self.daily}
             self._need_save = True
-        # robs 与 daily 同构：{群号: {日期: {用户: {...}}}}
         if self.robs and not self._looks_nested(self.robs):
             self.robs = {self.DEFAULT_GROUP: self.robs}
             self._need_save = True
-        # lotteries 同构
         if self.lotteries and not self._looks_nested(self.lotteries):
             self.lotteries = {self.DEFAULT_GROUP: self.lotteries}
             self._need_save = True
-        # pools 同构
         if self.pools and not self._looks_nested(self.pools):
             self.pools = {self.DEFAULT_GROUP: self.pools}
             self._need_save = True
-        # speaks 旧结构：{日期: {用户: 次数}} -> {群号: {日期: {用户: 次数}}}
         if self.speaks:
             first_key = next(iter(self.speaks.keys()), "")
             is_day_key = bool(_re.match(r"^\d{4}-\d{2}-\d{2}$", str(first_key)))
@@ -1184,7 +1007,6 @@ class CheckinModule:
         bucket = self.users.get(gid)
         if not isinstance(bucket, dict):
             bucket = {}
-            # 旧数据尚未迁移时（首群创建），把已迁移的默认群留住
             self.users.setdefault(gid, bucket)
             bucket = self.users[gid]
         return bucket
@@ -1252,7 +1074,6 @@ class CheckinModule:
         users = self.users.get(gid)
         if not isinstance(users, dict) or not users:
             return []
-        # 安全阀：名单太短就放弃（可能是残缺名单）
         if len(_keep) * 3 < len(users):
             logger.warning(
                 "[checkin] 群 %s 名单只有 %d 人、记录却有 %d 条，"
@@ -1267,7 +1088,6 @@ class CheckinModule:
                 users.pop(u, None)
             except Exception:
                 pass
-        # 子表一并清（都是 {群: {日期/键: {用户: ...}}} 同构）
         for _name in ("daily", "speaks", "robs", "lotteries", "mount_greet"):
             _tbl = getattr(self, _name, None)
             if not isinstance(_tbl, dict):
@@ -1279,7 +1099,6 @@ class CheckinModule:
                 if isinstance(_v, dict):
                     for _u in _gone_s:
                         _v.pop(_u, None)
-        # pools（奖池）结构可能不同，单独小心处理
         try:
             _pool = self.pools.get(gid) if isinstance(self.pools, dict) else None
             if isinstance(_pool, dict):
@@ -1333,7 +1152,6 @@ class CheckinModule:
                     "robs": self.robs,
                     "lotteries": self.lotteries,
                     "pools": self.pools,
-                    # ★ 1.7.6：每天「坐骑登场」只提示一次 -> 记录当天是否已提示
                     "mount_greet": getattr(self, "mount_greet", {}) or {},
                     "last_interest_date": self.last_interest_date,
                 }, f, ensure_ascii=False, indent=2)
@@ -1341,7 +1159,6 @@ class CheckinModule:
             self._need_save = False
         except Exception:
             logger.exception("[checkin] 保存失败")
-
 
     def match_trigger(self, text: str) -> bool:
         if not self.enable:
@@ -1407,12 +1224,6 @@ class CheckinModule:
                     return ("self",)
         return None
 
-
-    # ---------- 作弊指令：加积分 / 减积分（管理员专用）----------
-    # ★ 指令名后面允许「直接粘参数」：AstrBot 拼接消息段时会吃掉空格，
-    #   例：加积分 10000   -> msg_str 变成 '加积分10000'
-    #       加积分 @某人 100 -> '加积分@铁剑娘(1142479412)100'
-    #   以前只认「名称 + 空格」，导致粘连写法完全不触发。
     _SCORE_SUFFIX_RE = _re.compile(r"^(\d|@|\[At:|\uff08|\()")
 
     def _match_score_cmd(self, text: str, names):
@@ -1429,11 +1240,9 @@ class CheckinModule:
                 continue
             if t == name or t == f"/{name}":
                 return ("help", "")
-            # ① 标准写法：名称 + 空格 + 参数
             for pref in (name + " ", f"/{name} "):
                 if t.startswith(pref):
                     return ("target", t[len(pref):].strip())
-            # ② 粘连写法：名称后面直接跟数字 / @ / [At: / 括号
             for pref in (name, f"/{name}"):
                 if not t.startswith(pref):
                     continue
@@ -1448,9 +1257,6 @@ class CheckinModule:
     def match_score_sub(self, text: str):
         return self._match_score_cmd(text, self.score_sub_trigger_names)
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.7：清空群员财富（管理员）
-    # ------------------------------------------------------------
     def match_wipe_wealth(self, text: str):
         """
         「清空财富 @某人」/「清空财富 QQ号」—— 命中返回参数字符串，
@@ -1496,7 +1302,6 @@ class CheckinModule:
         _cmd = (getattr(self, "wipe_wealth_trigger_names", None)
                 or ["清空财富"])[0]
 
-        # ① 定位目标：优先参数里的 QQ / @，其次消息里的 @
         qq = ""
         _raw = str(arg or "").strip()
         try:
@@ -1511,7 +1316,6 @@ class CheckinModule:
                     qq = str(_ats[0])
             except Exception:
                 pass
-        # 参数里直接给纯数字 QQ
         if not qq:
             _m = _re.search(r"\d{5,12}", _raw)
             if _m:
@@ -1530,8 +1334,6 @@ class CheckinModule:
                 f"⚠️ QQ {qq} 在本群没有签到记录",
             ])
 
-        # ★★ 1.7.7：显示名统一过 `_nick_display`（长名字用省略号，
-        #   别把回执行撑宽 —— 和排行榜同一个口径）
         _nick = u.get("name") or self._nick_of(group_id, qq)
         try:
             _nick = _nick_display(str(_nick))
@@ -1553,7 +1355,6 @@ class CheckinModule:
         except Exception:
             logger.debug("[checkin] 清理财失败", exc_info=True)
 
-        # ② 清零
         u["total_score"] = 0
         u["bank"] = 0
         u["vault_money"] = 0
@@ -1609,8 +1410,6 @@ class CheckinModule:
         if not text:
             return "", None, ""
 
-        # ① 先摘掉「@昵称(QQ号)」这类 @ 写法，取出 QQ，
-        #    剩下的部分再找数量（避免把 QQ 当数量、或把数量当 QQ）
         qq = ""
         body = text
         m_at = _AT_INLINE_RE.search(body)
@@ -1618,12 +1417,10 @@ class CheckinModule:
             qq = m_at.group(1)
             body = (body[:m_at.start()] + " " + body[m_at.end():]).strip()
 
-        # ② 剩下的部分里抓数字
         nums = [m.group(0) for m in _re.finditer(r"\d+", body)]
 
         amount = None
         if qq:
-            # 目标已确定：数量取最后一个数字
             if nums:
                 try:
                     amount = int(nums[-1])
@@ -1632,12 +1429,10 @@ class CheckinModule:
             return qq, amount, "" if amount is not None else "no_number"
 
         if not nums:
-            # 只有 @、没有数字
             if m_at:
                 return qq, None, "no_number"
             return "", None, "no_number"
 
-        # ③ 没有「@昵称(QQ)」写法：按原来规则区分 QQ 号与数量
         for i, val in enumerate(nums):
             is_qq_len = 5 <= len(val) <= 12
             if is_qq_len and i < len(nums) - 1 and not qq:
@@ -1683,7 +1478,6 @@ class CheckinModule:
             sign = f"+{amt}"
             verb = "增加"
         else:
-            # ★ 1.7.6：允许扣成负数（负债），不再截断到 0
             after = before - amt
             sign = f"-{amt}"
             verb = "减少"
@@ -1707,12 +1501,6 @@ class CheckinModule:
             lines.append(f"🔧 操作者：{operator}")
         return "\n".join(lines)
 
-    # ------------------------------------------------------------
-    # 积分直接增减（供其它玩法调用，如猜拳）
-    # ------------------------------------------------------------
-    # ------------------------------------------------------------
-    # 积分显示名称
-    # ------------------------------------------------------------
     def _sn(self) -> str:
         """当前积分显示名（内部快捷方式，避免到处写 self.score_label()）"""
         return self.score_label()
@@ -1778,9 +1566,6 @@ class CheckinModule:
             logger.exception("[checkin] add_score 失败")
             return 0
 
-    # ------------------------------------------------------------
-    # 负债 / 借款（1.7.6）
-    # ------------------------------------------------------------
     def _loan_of(self, u) -> int:
         """某人的欠款（本金 + 已计利息），不存在返回 0"""
         try:
@@ -1887,17 +1672,14 @@ class CheckinModule:
         from_bank = 0
         rest = need
         if _use_bank:
-            # ① 先扣钱包（能出多少出多少）
             take_w = min(max(0, wallet), rest)
             from_wallet = take_w
             rest -= take_w
-            # ② 再从银行扣
             if rest > 0:
                 take_b = min(max(0, bank), rest)
                 from_bank = take_b
                 rest -= take_b
         else:
-            # 没开自动用银行：只动钱包（可以扣成负数 = 负债）
             from_wallet = rest
             rest = 0
         ok = (rest <= 0)
@@ -2014,9 +1796,6 @@ class CheckinModule:
                 return True
         return False
 
-    # ------------------------------------------------------------
-    # 抽奖（1.7.6）
-    # ------------------------------------------------------------
     def match_lottery_trigger(self, text: str):
         """
         「开始抽奖」——**不带参数**。
@@ -2067,9 +1846,6 @@ class CheckinModule:
                 return ("amount", "")
         return None
 
-    # ============================================================
-    # 发言统计
-    # ============================================================
     def match_withdraw_trigger(self, text: str):
         if not self.enable or not self.bank_enable:
             return None
@@ -2082,9 +1858,6 @@ class CheckinModule:
                 return ("amount", "")
         return None
 
-    # ============================================================
-    # 坐骑匹配
-    # ============================================================
     def match_mount_trigger(self, text: str):
         """
         「我的坐骑」：只列**已拥有**的坐骑（1.7.6 起支持翻页）。
@@ -2101,13 +1874,9 @@ class CheckinModule:
         if not self.enable or not self.mount_enable:
             return None
         t = str(text or "").strip()
-        # ① 纯指令名（含前导 /）—— 必须优先，否则会被参数规则吃掉
         for name in self.mount_trigger_names:
             if t == name or t == f"/{name}":
                 return ("info", 1)
-        # ② 带参数：**只认纯页码**（"2" / "第2页" / "p2"）。
-        #    非法参数（如 `坐骑功能` 的 "功能"、`坐骑列表` 的 "列表"）
-        #    直接不命中 —— 否则会把别的指令吃掉。
         _carg = cmd_arg(t, self.mount_trigger_names)
         if _carg is not None and self._is_page_arg(_carg):
             return ("info", self._parse_page(_carg))
@@ -2194,9 +1963,6 @@ class CheckinModule:
             return _carg
         return None
 
-    # ============================================================
-    # 打工匹配
-    # ============================================================
     def match_job_trigger(self, text: str):
         if not self.enable or not self.job_enable:
             return None
@@ -2236,11 +2002,6 @@ class CheckinModule:
                 return True
         return False
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.6：签到商店匹配
-    #   ★ 必须在**银行**的「存钱 / 取钱」之前判断，
-    #     否则商店的存钱取钱会被银行吃掉（两边指令名不同，但顺序上仍要稳）。
-    # ------------------------------------------------------------
     def match_shop_trigger(self, text: str):
         """
         「签到商店 [页码]」—— 未命中 None；命中返回**参数字符串**（可能为 ""）。
@@ -2260,7 +2021,6 @@ class CheckinModule:
                 continue
             if t == name or t == f"/{name}":
                 return ""
-            # ★ 带页码（「签到商店 2」），也容忍无空格（「签到商店2」）
             if t.startswith(name):
                 _rest = t[len(name):].strip()
                 if _rest.isdigit():
@@ -2307,7 +2067,6 @@ class CheckinModule:
         r = cmd_arg(t, names)
         if r is not None:
             return r
-        # ★ 兜底：自己剥前缀，参数是真实商品名（或纯序号）就放行
         for _n in names:
             _n = str(_n or "").strip()
             if not _n or not t.startswith(_n):
@@ -2353,7 +2112,6 @@ class CheckinModule:
         r = cmd_arg(t, names)
         if r is not None:
             return r
-        # ★ 兜底：剥掉前缀后是纯序号 / 已有武器名就放行
         for _n in names:
             _n = str(_n or "").strip()
             if not _n or not t.startswith(_n):
@@ -2373,9 +2131,6 @@ class CheckinModule:
         return True if s in [str(n).strip() for n in names if str(n).strip()] \
             else None
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.7：体力 / 吃食物 / 加班
-    # ------------------------------------------------------------
     def _match_exact_names(self, text: str, attr: str, dflt: list) -> bool:
         """指令名**完全相等**才算命中（避免「体力」吃掉「体力xx」）"""
         s = str(text or "").strip().lstrip("/").strip()
@@ -2408,7 +2163,6 @@ class CheckinModule:
         r = cmd_arg(s, names)
         if r is not None:
             return r
-        # 无空格写法兜底（「吃食物面包」）
         for n in names:
             n = str(n or "").strip()
             if n and s.startswith(n):
@@ -2433,20 +2187,17 @@ class CheckinModule:
             return None
         names = (getattr(self, "stamina_refill_trigger_names", None)
                  or ["加班"])
-        # ★ 护栏 1：菜单入口名（「加班功能」）不能被当成「加班」+「功能」
         _menu_ns = {str(n).strip() for n in
                     (getattr(self, "stamina_refill_menu_names", None)
                      or ["加班功能"]) if str(n).strip()}
         for n in _menu_ns:
             if s in (n, f"/{n}"):
                 return None
-        # ★ 护栏 2：状态指令名（「加班状态」）有独立分支
         for _sn in (getattr(self, "stamina_refill_status_names", None)
                     or ["加班状态"]):
             _sn = str(_sn or "").strip()
             if _sn and s in (_sn, f"/{_sn}"):
                 return None
-        # ★ 护栏 3：全部加班名（「全部加班」/「加班全部」）要走 all 分支
         for _an in (getattr(self, "stamina_refill_all_names", None)
                     or ["全部加班"]):
             _an = str(_an or "").strip()
@@ -2455,10 +2206,6 @@ class CheckinModule:
         r = cmd_arg(s, names)
         if r is not None:
             return r
-        # ★ 别名**带参数**的写法（「一键冷却 发传单」）：
-        #   `cmd_arg` 对「一键冷却」会返回 None（它和菜单入口名同形），
-        #   所以这里再补一遍「前缀 + 参数」。但要跳过菜单入口名本身，
-        #   否则「加班功能」又会被吃成「加班」+「功能」。
         for n in names:
             n = str(n or "").strip()
             if not n or n in _menu_ns or s == n or s == f"/{n}":
@@ -2509,11 +2256,6 @@ class CheckinModule:
                 return True
         return False
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.6：银行理财匹配
-    #   ★ 必须在银行「存钱 / 取钱」之前判断（见 main.py 分发顺序），
-    #     否则「购买理财 / 取出理财」会被「取钱」吃掉。
-    # ------------------------------------------------------------
     def match_fund_trigger(self, text: str) -> bool:
         """「理财」—— 查看自己的理财亏盈"""
         if not self.enable or not getattr(self, "fund_enable", True):
@@ -2565,7 +2307,6 @@ class CheckinModule:
                     return ""
         return None
 
-
     def record_speak(self, user_id: str, group_id: str = ""):
         if not user_id:
             return
@@ -2582,16 +2323,6 @@ class CheckinModule:
         today = _today_str()
         return int(self._gspeaks(group_id).get(today, {}).get(str(user_id), 0))
 
-    # ============================================================
-    # 借款逾期利息 / 老赖（1.7.6）
-    # ------------------------------------------------------------
-    # 规则：
-    #   · 借款时记下 `loan_due`（到期时间戳 = 借款时间 + loan_due_days 天）
-    #   · 过了到期时间，每 loan_overdue_step_hours 小时加一次逾期利息
-    #     每期金额 = 本金 × loan_overdue_rate（按**本金**算，越拖越多）
-    #   · 逾期满 loan_deadbeat_days 天 -> 挂「老赖」标签
-    #   · 每次借/还/查询前先结算，保证「欠多少」随时都是准的
-    # ============================================================
     def loan_due_ts(self, u) -> float:
         """借款到期时间戳；0 = 没有欠款或没设期限"""
         try:
@@ -2666,7 +2397,6 @@ class CheckinModule:
             return ""
         per = self.loan_overdue_periods(u)
         if per <= 0:
-            # 已过期但还没到第一个计息周期
             left = max(0, int(due + self.loan_overdue_step_hours * 3600
                               - time.time()))
             h = left // 3600
@@ -2768,7 +2498,6 @@ class CheckinModule:
         if changed:
             self._save()
             logger.info(f"[checkin] {today} 银行利息已结算")
-        # ★ 1.7.6：顺带结算借款逾期罚息
         self.settle_all_overdue()
 
     def do_checkin(self, event) -> str:
@@ -2805,7 +2534,6 @@ class CheckinModule:
             return "\n".join(_lines)
 
         rank = len(day_map) + 1
-        # ★ 随机范围由后台配置决定（默认 1~1000）
         score = random.randint(
             max(1, int(getattr(self, "score_min", 1))),
             max(1, int(getattr(self, "score_max", 1000))))
@@ -2865,19 +2593,14 @@ class CheckinModule:
             f"🎁 今日获得：{score} {self._sn()}",
             f"💰 钱包余额：{fmt_num(u['total_score'])}",
         ]
-        # ★ 负债时把欠款/净值也列出来，心里有数
         _loan = self._loan_of(u)
         if _loan > 0:
             out.append(f"📉 欠款：{fmt_num(_loan)}　💎 净值：{fmt_num(u['total_score'] - _loan)}")
-        # ★ 末尾抽奖入口
         _lot = self._lottery_menu_line()
         if _lot:
             out += ["", _lot]
         return "\n".join(out)
 
-    # ============================================================
-    # 排行榜（★ 每群独立统计；昵称仍走全局缓存）
-    # ============================================================
     def _nick_of(self, group_id, uid) -> str:
         """
         取显示名。
@@ -2895,7 +2618,6 @@ class CheckinModule:
           ③ 脱敏 QQ 号
         """
         uid_str = str(uid)
-        # ① 本群昵称优先（只在给了群号时）
         if group_id:
             try:
                 u = self._guser(group_id, uid_str)
@@ -2904,12 +2626,10 @@ class CheckinModule:
                     return _nick_narrow(name)
             except Exception:
                 logger.debug("[checkin] 读本群昵称失败", exc_info=True)
-        # ② 全局缓存
         if uid_str in self.nickname_cache:
             nm = str(self.nickname_cache.get(uid_str) or "").strip()
             if nm:
                 return _nick_narrow(nm)
-        # ③ 本群记录兜底（缓存里也没有时）
         if group_id:
             try:
                 u = self._guser(group_id, uid_str)
@@ -2930,10 +2650,6 @@ class CheckinModule:
                 _w = int(u.get("total_score", 0))
                 _b = int(u.get("bank", 0) or 0)
                 _ln = self._loan_of(u)
-                # ★★ 1.7.7：**总财富要把保险箱也算进去**（用户要求）。
-                #   · 保险箱余额：只有买了保险箱的人才有（`vault_money_of`
-                #     已经处理了「没买 = 0」），所以直接读原始字段更快，
-                #     但仍然过一遍 `user_has_vault` 防止老数据残留。
                 _v = 0
                 try:
                     if self.user_has_vault(group_id, uid):
@@ -2948,7 +2664,6 @@ class CheckinModule:
                     "loan": _ln,
                     "streak": int(u.get("streak", 0)),
                     "total": int(u.get("total_checkin", 0)),
-                    # ★ 总财富 = 钱包 + 银行 + 保险箱 − 欠款
                     "wealth": _w + _b + _v - _ln,
                 })
             except Exception:
@@ -2985,9 +2700,6 @@ class CheckinModule:
             return "\n".join(lines)
         top = sorted(items, key=lambda x: (-x["wealth"], x["uid"]))[:10]
         for i, it in enumerate(top, start=1):
-            # ★★ 1.7.7：**只显示总数** —— 不再单独列出保险箱数额
-            #   （用户要求：总数里已经含保险箱，单独再列一遍是重复信息）
-            #   ★ 名次前缀统一 `_rank_tag`（前三名奖牌 + 两空格分列对齐）
             lines.append(f"{_rank_tag(i)}"
                          f"{self._nick_of(group_id, it['uid'])}"
                          f" — {fmt_num(it['wealth'])}")
@@ -2997,7 +2709,6 @@ class CheckinModule:
 
     def build_rank_by_debt(self, group_id="") -> str:
         """【排行榜 3】负债排行（欠得越多越靠前；逾期挂「老赖」标签）"""
-        # ★ 1.7.6：先结算逾期罚息，排名才是当前真实欠款
         try:
             for _uid in list(self._gusers(group_id).keys()):
                 self.apply_overdue_interest(group_id, _uid, save=False)
@@ -3035,20 +2746,16 @@ class CheckinModule:
             base = [
                 f"{title_bar('签到统计')}",
                 f"👤 {_name_show}",
-                # ★★ 市场版 1.1：**不再显示 QQ 号**
                 "📊 累计签到：0 次",
                 f"💰 钱包余额：0",
-                # ★★ 1.7.7：体力（关掉就不显示）
                 *(["⚡ 体力：0 / " + str(max(0, int(
                     getattr(self, "stamina_max", 100) or 0)))]
                   if getattr(self, "stamina_enable", True) else []),
                 "🏦 银行余额：0",
-                # ★★ 1.7.7：银行状态（没记录的人也可能是被冻过的号）
                 f"🏦 银行状态：{self.bank_status_text(group_id, target_uid)}",
                 "📉 欠款：0",
                 "💎 净值：0",
                 "📊 总资产：0",
-                # ★★ 市场版 1.1：今日状态**只报是否签到**
                 "📌 今日状态：❌ 今天还没签到",
             ]
             return "\n".join(base)
@@ -3062,7 +2769,6 @@ class CheckinModule:
         bank = int(u.get("bank", 0))
         loan = self._loan_of(u)
 
-        # ★★ 1.7.7：体力（体力系统关掉就整行不显示）
         _show_stamina = bool(getattr(self, "stamina_enable", True))
         _st_cur = 0
         _st_max = max(0, int(getattr(self, "stamina_max", 100) or 0))
@@ -3074,20 +2780,15 @@ class CheckinModule:
                 logger.debug("[checkin] 读体力失败", exc_info=True)
 
         today_rec = self._gdaily(group_id).get(today, {}).get(target_uid)
-        # ★★ 市场版 1.1：今日状态**只显示「签到 / 没签到」**
-        #   （去掉名次、加分、签到时间）
         today_state = "✅ 已签到" if today_rec else "❌ 今天还没签到"
 
         lines = [
             f"{title_bar('签到统计')}",
             f"👤 {_name_show}",
-            # ★★ 市场版 1.1：**不再显示 QQ 号**
             f"📊 累计签到：{total_checkin} 次",
             f"💰 钱包余额：{fmt_num(total_score)}",
-            # ★★ 1.7.7：当前体力（体力系统关掉就不显示）
             *([f"⚡ 体力：{_st_cur} / {_st_max}"] if _show_stamina else []),
             f"🏦 银行余额：{fmt_num(bank)}",
-            # ★★ 1.7.7：银行状态（未冻结 / 解冻时间）
             f"🏦 银行状态：{self.bank_status_text(group_id, target_uid)}",
             f"📉 欠款：{fmt_num(loan)}",
             f"💎 净值：{fmt_num(total_score - loan)}",
@@ -3095,14 +2796,10 @@ class CheckinModule:
             f"🔥 连续签到：{streak} 天",
             f"📅 本月签到：{month_count} 天",
         ]
-        # ★★ 1.7.6：买了保险箱才显示保险箱余额
         if self.user_has_vault(group_id, target_uid):
             _vm = self.vault_money_of(group_id, target_uid)
-            # ★★ 1.7.7：去掉后面的「（别人偷不走）」括号提示
             lines.append(f"🧰 保险箱：{fmt_num(_vm)}")
-        # ★★ 市场版 1.1：今日状态收成**一行**、只报是否签到
         lines += [f"📌 今日状态：{today_state}"]
-        # ★★ 1.7.7：装备状态（坐骑 + 武器）+ 所有 BUFF 分行列出
         lines += self._equip_buff_lines(group_id, target_uid)
         return "\n".join(lines)
 
@@ -3130,13 +2827,11 @@ class CheckinModule:
             has_vault = self.user_has_vault(group_id, uid)
             vault_def = (float(getattr(self, "vault_steal_reduce", 15.0) or 0)
                          if has_vault else 0.0)
-            # 合计（防御要过上限，和实际生效值一致）
             _cap = float(getattr(self, "shop_defense_cap", 60.0) or 60.0)
             steal = m_steal + w_steal
             defense = min(w_def + vault_def, _cap)
             rob = min(m_rob + w_rob,
                       float(getattr(self, "shop_rob_bonus_cap", 20.0) or 20.0))
-            # ★★ 市场版 1.1：赛车也算「装备」，有车就显示这一块
             race = ""
             try:
                 _rm = getattr(getattr(self, "_plugin", None),
@@ -3151,17 +2846,13 @@ class CheckinModule:
                 logger.debug("[checkin] 读赛车失败", exc_info=True)
             if not (mount or weapon or has_vault or race):
                 return []
-            # ★★ 市场版 1.1：去掉块前空行
             out = ["── 装备 ──"]
             if mount:
-                # ★★ 1.7.7：统计里**不显示坐骑图**（用户要求），只显示名字
                 out.append(f"🐴 坐骑：{mount}")
             else:
                 out.append("🐴 坐骑：未装备")
             out.append(f"⚔️ 武器：{weapon}" if weapon else "⚔️ 武器：未启用")
-            # ★★ 市场版 1.1：当前装备的赛车
             out.append(f"🏎️ 赛车：{race}" if race else "🏎️ 赛车：未拥有")
-            # ★★ 1.7.7：「保险箱：已拥有」这行不再显示（余额行在上面已经有了）
             out += ["✨ 加成"]
             _any = False
             if steal > 0:
@@ -3175,16 +2866,11 @@ class CheckinModule:
                 _any = True
             if not _any:
                 out.append("　 （暂无加成）")
-            # ★★ 1.7.7：**不再在统计里给「装备坐骑 / 启用武器」的提示**
-            #   （用户要求精简）—— 想知道怎么装备去看「我的装备」。
             return out
         except Exception:
             logger.debug("[checkin] 装备加成行渲染失败", exc_info=True)
             return []
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.7：武器破保险箱
-    # ------------------------------------------------------------
     def weapon_vault_break_rate(self, group_id, user_id) -> float:
         """
         攻击方**当前启用武器**的破保险箱概率（%）。
@@ -3230,7 +2916,6 @@ class CheckinModule:
         attacker["total_score"] = int(attacker.get("total_score", 0)) + take
         _destroy = bool(getattr(self, "vault_break_destroy", False))
         if _destroy:
-            # 砸箱：从已购列表里移掉保险箱，余额也清零
             try:
                 bought = target.get("shop_bought")
                 if isinstance(bought, list):
@@ -3284,19 +2969,12 @@ class CheckinModule:
         target_score = int(target.get("total_score", 0))
         target_bank = int(target.get("bank", 0) or 0)
 
-        # ★★ 1.7.7：偷取顺序 —— **钱包 → 银行**，有武器才有概率再动保险箱。
-        #   为什么不再「提前摇破箱」：
-        #     用户要的是**依次**拿钱，不是并行两件事。所以先看钱包，
-        #     钱包不够看银行，**只有前两处都掏空**、且攻击方带了武器，
-        #     才去摇保险箱那一档。
-        #   能偷到的总额上限 = 随机额度 或 对方三处总额（谁小取谁）
         _roll_amount = random.randint(self.steal_min, self.steal_max)
         _target_vault = 0
         try:
             _target_vault = int(self.vault_money_of(group_id, target_id) or 0)
         except Exception:
             _target_vault = 0
-        # 攻击方有没有破箱能力（没武器 = 0）
         _break_rate = self.weapon_vault_break_rate(group_id, attacker_id)
         _total_avail = target_score + target_bank
         if _break_rate > 0:
@@ -3306,11 +2984,6 @@ class CheckinModule:
 
         amount = min(_roll_amount, _total_avail)
 
-        # ★★ 1.7.6：成功率 = 基础 + 攻击方加成 − 防守方防御，最后夹在 0~100
-        #   攻击方：① 骑乘坐骑（按价格）② **已启用**的武器
-        #   防守方：① **已启用**武器的防御 ② 保险箱（买了就生效）
-        #   ★ 变量名是 attacker_id（不是 user_id），写错会直接 NameError
-        #   ★★ 1.7.7：`shop_bonus_of_user` 现在返回 3 元组（多了抢银行加成）
         _sb, _ = self.mount_bonus_of_user(group_id, attacker_id)
         _ssb, _, _ = self.shop_bonus_of_user(group_id, attacker_id)
         _, _tdef, _ = self.shop_bonus_of_user(group_id, target_id)
@@ -3318,10 +2991,6 @@ class CheckinModule:
         _rate = max(0, min(100, _rate))
         roll = random.randint(1, 100)
         if roll <= _rate:
-            # ---- 依次取钱：钱包 → 银行 → 保险箱（需武器 + 概率）----
-            #   ★ 先把「能拿到的上限」和「随机额度」比较，取小的那个作为目标额。
-            #     保险箱只有**带了有破箱能力的武器**时才计入上限 ——
-            #     摇不破的箱子不算可偷财产。
             _avail = max(0, target_score) + max(0, target_bank)
             if _break_rate > 0 and _target_vault > 0:
                 _avail += _target_vault
@@ -3333,7 +3002,6 @@ class CheckinModule:
             rest -= take_b
             take_v = 0
             _break_txt = ""
-            # ★ 钱包+银行都掏空后还差钱（rest > 0）才去撬保险箱
             if rest > 0 and _break_rate > 0 and _target_vault > 0:
                 if random.randint(1, 100) <= _break_rate:
                     try:
@@ -3357,9 +3025,6 @@ class CheckinModule:
                 return f"⚠️ QQ {target_id} 身上没有{self._sn()}可以偷"
             target["total_score"] = target_score - take_w
             target["bank"] = target_bank - take_b
-            # ★★ 1.7.7 修正：`_do_vault_break()` 内部**已经**把保险箱那笔
-            #   钱加给攻击者了，这里只补钱包 + 银行那部分 —— 否则保险箱
-            #   那份会被加两次（文案写 +500、实际到手 800）。
             _settle = take_w + take_b
             attacker["total_score"] = int(attacker.get("total_score", 0)) + _settle
             self._save()
@@ -3370,7 +3035,6 @@ class CheckinModule:
                 "✅ 偷取成功！",
                 f"💰 获得{self._sn()}：+{got}",
             ]
-            # 钱从哪来的（多于一档时才列明细）
             if (take_w > 0) + (take_b > 0) + (take_v > 0) > 1:
                 _src = []
                 if take_w > 0:
@@ -3388,14 +3052,10 @@ class CheckinModule:
         punish_roll = random.randint(1, 100)
         if punish_roll <= self.steal_fail_punish_rate:
             punish = random.randint(self.steal_punish_min, self.steal_punish_max)
-            # ★★ 1.7.7：没偷到要**赔付对方**，扣款顺序 钱包 → 银行。
-            #   ★ 这里**不掏保险箱** —— 保险箱只有「偷成功时的目标池」
-            #     才用得上（见上面成功分支），赔付不碰它。
             _pr = self.pay(group_id, attacker_id, punish)
             _paid = (int(_pr.get("from_wallet", 0) or 0)
                      + int(_pr.get("from_bank", 0) or 0))
             if _paid > 0:
-                # 赔付的钱给受害人
                 target["total_score"] = target_score + _paid
                 self._save()
                 _lines = [
@@ -3405,7 +3065,6 @@ class CheckinModule:
                     "❌ 偷取失败，被发现了！",
                     f"💸 赔付对方：-{_paid}",
                 ]
-                # ★ 扣款明细（钱包 / 银行）
                 _parts = []
                 for _k, _lbl in (("from_wallet", "钱包"),
                                  ("from_bank", "银行")):
@@ -3442,7 +3101,6 @@ class CheckinModule:
         group_id = get_group_id(event)
         if not self._is_group_allowed(group_id, "bank"):
             return ""
-        # ★ 1.7.6：银行冻结中则拒绝一切操作
         _fz = self.bank_frozen_msg(group_id, get_user_id(event))
         if _fz:
             return _fz
@@ -3495,16 +3153,6 @@ class CheckinModule:
             return -1
         return n
 
-    # ============================================================
-    # ★★ 1.7.6：银行理财（银行子功能）
-    # ------------------------------------------------------------
-    # 玩法：把钱**买入理财** -> 之后**每天随机盈亏**一次
-    #   · 盈利：直接加到买入金额上
-    #   · 亏损：从买入金额里扣；**不够扣就从自己资产（钱包+银行）补**
-    #   · 随时可取：取出的钱回**银行账户**
-    # ★ 结算时机：每天第一次调用理财相关功能时结算一次（惰性结算，
-    #   不依赖定时任务，重启也不会漏）。
-    # ============================================================
     def _fund_of(self, u: dict) -> dict:
         """取用户理财数据（自动补默认字段）"""
         if not isinstance(u, dict):
@@ -3547,15 +3195,14 @@ class CheckinModule:
         today = _today_str()
         last = str(f.get("last_date") or "")
         if last == today:
-            return res          # 今天已经结过
-        # ★ 计算要补几天：上次到现在跨了几天（首次买入当天不结算）
+            return res
         days = 1
         if last:
             try:
                 import datetime as _dt
                 d1 = _dt.date.fromisoformat(last)
                 d2 = _dt.date.fromisoformat(today)
-                days = max(1, min(30, (d2 - d1).days))   # 最多补 30 天
+                days = max(1, min(30, (d2 - d1).days))
             except Exception:
                 days = 1
         pmax = float(getattr(self, "fund_profit_max", 8.0) or 0)
@@ -3574,10 +3221,8 @@ class CheckinModule:
                 delta = 1 if rate > 0 else -1
             principal += delta
             if principal < 0:
-                # ★ 亏超过本金 -> 从自己资产（钱包 -> 银行）补扣
                 _need = -principal
                 _got = self.pay(group_id, user_id, _need)
-                # pay() 会返回「实际扣到的金额」（可能不足）
                 _got = int(_got if isinstance(_got, (int, float)) else _need)
                 deducted += _got
                 principal = 0
@@ -3611,7 +3256,6 @@ class CheckinModule:
         if not getattr(self, "fund_enable", True):
             return "⚠️ 理财功能未开启"
         user_id = get_user_id(event)
-        # ★★ 1.7.6：理财算**银行功能**的一部分 —— 银行冻结时也不能用
         _fz = self.bank_frozen_msg(group_id, user_id)
         if _fz:
             return _fz
@@ -3619,7 +3263,6 @@ class CheckinModule:
         u = self._guser(group_id, user_id)
         if not isinstance(u, dict):
             return "⚠️ 你还没有签到记录，先去签到吧"
-        # ★ 先结算今天的盈亏
         self.fund_settle(group_id, user_id)
         u = self._guser(group_id, user_id) or {}
         f = self._fund_of(u)
@@ -3663,7 +3306,6 @@ class CheckinModule:
         if not getattr(self, "fund_enable", True):
             return "⚠️ 理财功能未开启"
         user_id = get_user_id(event)
-        # ★★ 1.7.6：理财算**银行功能**的一部分 —— 银行冻结时也不能用
         _fz = self.bank_frozen_msg(group_id, user_id)
         if _fz:
             return _fz
@@ -3673,7 +3315,6 @@ class CheckinModule:
             "streak": 0, "month_map": {}, "bank": 0,
         })
         u["name"] = user_name
-        # ★ 先结算已有的（避免把今天的盈亏算到新本金上）
         self.fund_settle(group_id, user_id)
         u = self._guser(group_id, user_id) or u
         f = self._fund_of(u)
@@ -3697,8 +3338,6 @@ class CheckinModule:
                     f"💡 想全买就发「{cmd} all」")
         u["total_score"] = wallet - amount
         f["principal"] = int(f.get("principal", 0) or 0) + amount
-        # ★ 首次买入：把 last_date 设为今天，**今天不结算**
-        #   （否则刚买完一次查看就立刻盈亏，体验很差）
         if not str(f.get("last_date") or ""):
             f["last_date"] = _today_str()
         self._save()
@@ -3724,7 +3363,6 @@ class CheckinModule:
         if not getattr(self, "fund_enable", True):
             return "⚠️ 理财功能未开启"
         user_id = get_user_id(event)
-        # ★★ 1.7.6：理财算**银行功能**的一部分 —— 银行冻结时也不能用
         _fz = self.bank_frozen_msg(group_id, user_id)
         if _fz:
             return _fz
@@ -3732,7 +3370,6 @@ class CheckinModule:
         u = self._guser(group_id, user_id)
         if not isinstance(u, dict):
             return "⚠️ 你还没有签到记录，先去签到吧"
-        # ★ 先结算，才拿到最新本金
         self.fund_settle(group_id, user_id)
         u = self._guser(group_id, user_id) or u
         f = self._fund_of(u)
@@ -3744,7 +3381,7 @@ class CheckinModule:
 
         s = str(arg or "").strip().lower()
         if not s or s in ("all", "全部", "所有"):
-            amount = principal          # 默认全部取出
+            amount = principal
         elif s.isdigit() and int(s) > 0:
             amount = min(int(s), principal)
         else:
@@ -3753,7 +3390,6 @@ class CheckinModule:
         u["bank"] = int(u.get("bank", 0) or 0) + amount
         f["principal"] = principal - amount
         if f["principal"] <= 0:
-            # 清盘：重置记录，下次买入重新开始
             f["principal"] = 0
             f["last_date"] = ""
             f["total_pnl"] = 0
@@ -3776,7 +3412,6 @@ class CheckinModule:
         group_id = get_group_id(event)
         if not self._is_group_allowed(group_id, "bank"):
             return ""
-        # ★ 1.7.6：银行冻结中则拒绝一切操作
         _fz = self.bank_frozen_msg(group_id, get_user_id(event))
         if _fz:
             return _fz
@@ -3819,7 +3454,6 @@ class CheckinModule:
         group_id = get_group_id(event)
         if not self._is_group_allowed(group_id, "bank"):
             return ""
-        # ★ 1.7.6：银行冻结中则拒绝一切操作
         _fz = self.bank_frozen_msg(group_id, get_user_id(event))
         if _fz:
             return _fz
@@ -3856,9 +3490,6 @@ class CheckinModule:
             f"💳 钱包余额：{fmt_num(u['total_score'])}",
         ])
 
-    # ------------------------------------------------------------
-    # 银行冻结（抢银行失败惩罚，1.7.6）
-    # ------------------------------------------------------------
     def frozen_until(self, group_id, uid) -> int:
         """银行解冻时间戳（0 = 没被冻结）"""
         try:
@@ -3893,7 +3524,7 @@ class CheckinModule:
                     until = int(u.get("bank_frozen_until", 0) or 0)
                 except Exception:
                     until = 0
-                if until <= now:          # 没冻结 / 已过期
+                if until <= now:
                     continue
                 nm = str(u.get("name") or "").strip() or f"QQ{uid}"
                 out.append({
@@ -4012,7 +3643,6 @@ class CheckinModule:
             return ""
         left = until - int(time.time())
         if left <= 0:
-            # 已过期：顺手清掉标记
             try:
                 u = self._guser(group_id, str(uid))
                 if isinstance(u, dict) and u.get("bank_frozen_until"):
@@ -4122,8 +3752,6 @@ class CheckinModule:
         g = self._gpool(group_id)
         day = g.get(key)
         if not isinstance(day, dict) or "rounds" not in day:
-            # ★ 兼容旧结构（老记录直接就是一期）：
-            #   有旧数据时保留它的 pot，别重新随机
             old = day if isinstance(day, dict) else {}
             lo = max(0, int(getattr(self, "pool_min", 0) or 0))
             hi = max(lo, int(getattr(self, "pool_max", lo) or lo))
@@ -4135,14 +3763,12 @@ class CheckinModule:
             except Exception:
                 pot = 0
             day = {
-                # ★ 当天固定金额
                 "pot": pot,
                 "fee": max(0, int(getattr(self, "pool_fee", 0) or 0)),
                 "slots": max(1, int(getattr(self, "pool_slots", 1) or 1)),
                 "hours": float(getattr(self, "pool_timeout_hours", 0) or 0),
                 "rounds": [],
             }
-            # 迁移旧的一期数据（如果有人参与过）
             _om = [str(x) for x in (old.get("members") or [])]
             if _om or old.get("opened"):
                 _r = {
@@ -4156,7 +3782,6 @@ class CheckinModule:
                         (_r["opened"] or {}).get("ts") or 0)
                 day["rounds"].append(_r)
             g[key] = day
-            # 只留最近 7 天
             if len(g) > 7:
                 for _k in sorted(g.keys())[:-7]:
                     g.pop(_k, None)
@@ -4166,18 +3791,15 @@ class CheckinModule:
             rounds = []
             day["rounds"] = rounds
 
-        # ★ 清理：已开奖且**开奖已满 auto_new_hours 小时**的期（或跨越到新的一期时）
         opened_rs = [r for r in rounds
                      if isinstance(r, dict) and r.get("opened")]
         unopened = [r for r in rounds
                     if isinstance(r, dict) and not r.get("opened")]
         if opened_rs:
-            # 如果已经有一期在跑（未开奖），就不再保留历史已开奖期
             keep_opened = [] if unopened else opened_rs[-1:]
             day["rounds"] = keep_opened + unopened
             rounds = day["rounds"]
 
-        # 当前这一期 = 最后一期未开奖的；没有就新建
         for r in rounds:
             if isinstance(r, dict) and not r.get("opened"):
                 return r
@@ -4240,7 +3862,6 @@ class CheckinModule:
             return [0] * n
         if n == 1:
             return [total]
-        # 保底：每人至少 floor(total/n * 0.15)，但不超过均分
         avg = total // n
         base = max(0, min(avg, (avg * 15) // 100))
         rest = total - base * n
@@ -4248,11 +3869,9 @@ class CheckinModule:
             out = [avg] * n
             out[0] += total - sum(out)
             return out
-        # 用随机权重切分 rest（Dirichlet 思路：指数分布归一化）
         w = [_random.random() + 1e-9 for _ in range(n)]
         s = sum(w)
         shares = [int(rest * (x / s)) for x in w]
-        # 零头补给随机的人，保证总和精确
         left = total - (base * n + sum(shares))
         idx = list(range(n))
         _random.shuffle(idx)
@@ -4317,7 +3936,6 @@ class CheckinModule:
         except Exception:
             first = 0
         if first <= 0:
-            # ★ 兼容：老数据只有 ts；仅当**已经有人参与**时才认它
             if not [x for x in (cur.get("members") or []) if str(x).strip()]:
                 return 0.0
             try:
@@ -4371,7 +3989,6 @@ class CheckinModule:
                        key=lambda x: -x[1])
         for i, (uid, amt) in enumerate(order, start=1):
             try:
-                # ★ 1.7.6：必须传 group_id，否则会显示别的群的昵称
                 nm = self._nick_of(group_id, uid)
             except Exception:
                 nm = f"QQ{uid}"
@@ -4401,7 +4018,6 @@ class CheckinModule:
             rounds = [r for r in (day.get("rounds") or [])
                       if isinstance(r, dict)]
             opened = [r for r in rounds if r.get("opened")]
-            # 未开奖的期丢掉；只留最后一期已开奖的
             day["rounds"] = opened[-1:] if opened else []
             g[str(self._day_start())] = day
         except Exception:
@@ -4429,32 +4045,24 @@ class CheckinModule:
         if not cur or cur.get("opened"):
             return []
         members = [str(x) for x in (cur.get("members") or [])]
-        # ★ 没人参与 -> 什么都不做（不自动开奖、不重置、不播报）
         if not members:
             return []
         if not self._pool_expired(cur):
             return []
         results = self._pool_open(group_id, cur)
         txt = self._pool_open_text(group_id, "", cur, results, joined=False)
-        # ★ 结果已经在这条消息里了，直接开新一期（金额不变，仍是当天的数）
         self._pool_reset(group_id)
         self._save()
         txt = txt.replace(f"{title_bar('🎊 奖池开奖 🎊')}",
                           "⏰ 名额没满，**到时间自动开奖**了！", 1)
         return [txt]
 
-    # ------------------------------------------------------------
-    # 「每人每天一轮」记录（天级）：
-    #   pools[群][天]["draws"] = {用户号: 今天已参与的轮数}
-    #   ★ 单独记在「天」上，而不是记在「期」上 ——
-    #     否则开奖后开了新一期，同一个人又能再参与一次。
-    # ------------------------------------------------------------
     def _pday(self, group_id) -> dict:
         try:
             g = self._gpool(group_id)
             day = g.get(str(self._day_start()))
             if isinstance(day, dict):
-                self._pool_today(group_id)      # 确保结构升级完成
+                self._pool_today(group_id)
                 g = self._gpool(group_id)
                 day = g.get(str(self._day_start())) or {}
                 d = day.get("draws")
@@ -4550,7 +4158,6 @@ class CheckinModule:
         user_name = get_user_name(event) or f"QQ{user_id}"
         cmd = (self.pool_trigger_names or ["参与抽奖"])[0]
 
-        # ---- ① 先结算上一期（超时未开奖的）----
         _settled, _did = self._pool_settle(group_id)
         if _did:
             self._pool_reset(group_id)
@@ -4558,12 +4165,10 @@ class CheckinModule:
 
         cur = self._pool_today(group_id)
         members = [str(x) for x in (cur.get("members") or [])]
-        # ★ 名额 / 入门费 / 金额都存在「天」层级（当天固定）
         slots = self.pool_slots_today(group_id)
         fee = self.pool_fee_today(group_id)
         pot = self.pool_pot_today(group_id)
 
-        # ---- ② 每人每天一轮 ----
         if self.pday_left(group_id, user_id) == 0:
             lines = [f"{title_bar('参与抽奖')}",
                      f"👤 {user_name}",
@@ -4574,7 +4179,6 @@ class CheckinModule:
             lines.append("💡 明天再来")
             return "\n".join(lines)
 
-        # ---- ③ 本期内重复参与 -> 拦住 ----
         if str(user_id) in members:
             return "\n".join([
                 f"{title_bar('参与抽奖')}",
@@ -4583,14 +4187,12 @@ class CheckinModule:
                 f"👥 名额：{len(members)} / {slots}",
             ])
 
-        # ---- ④ 钱够不够 ----
         _avail = (self.avail_funds(group_id, user_id)
                   if getattr(self, "use_bank_pay", True)
                   else int(self.get_score(group_id, user_id)))
         if fee > 0 and _avail < fee:
             return self.short_hint(group_id, user_id, fee)
 
-        # ---- ⑤ 扣入门费（归系统，先钱包再银行）----
         _pay = {"from_wallet": 0, "from_bank": 0}
         if fee > 0:
             _pay = self.pay(group_id, user_id, fee,
@@ -4600,9 +4202,6 @@ class CheckinModule:
 
         members.append(str(user_id))
         cur["members"] = members
-        # ★★ 1.7.7：**第一个人参与时才开始倒计时** ——
-        #   记下首位参与者的时间，`_pool_deadline` 用它做起点。
-        #   （以前用创建时间，奖池一被创建就开跑，没人参与也会自动开奖。）
         try:
             if not int(cur.get("first_ts", 0) or 0):
                 cur["first_ts"] = int(time.time())
@@ -4616,7 +4215,6 @@ class CheckinModule:
             pass
         self._save()
 
-        # ---- ⑥ 名额满 -> 立刻开奖 ----
         if len(members) >= slots:
             results = self._pool_open(group_id, cur)
             _txt = self._pool_open_text(group_id, user_name, cur, results,
@@ -4627,14 +4225,12 @@ class CheckinModule:
                 return _settled + "\n\n" + "─" * 20 + "\n\n" + _txt
             return _txt
 
-        # ---- ⑦ 还没满：通报进度 ----
         lines = [
             f"{title_bar('参与抽奖')}",
             f"👤 {user_name}",
             f"🎫 已交入门费：-{fee} {self._sn()}",
         ]
         if fee > 0 and (_pay.get("from_bank") or 0) > 0:
-            # ★ 1.7.7：这里的 pay() **不掏保险箱**，所以明细只有钱包/银行
             lines.append(f"　 （钱包 -{_pay.get('from_wallet', 0)}，"
                          f"银行 -{_pay.get('from_bank', 0)}）")
         lines += [
@@ -4678,7 +4274,6 @@ class CheckinModule:
             f"👥 参与人数：{len(results)}",
             "",
         ]
-        # 按金额从多到少列（同额按名次）
         order = sorted(results, key=lambda x: -x[1])
         for i, (uid, amt) in enumerate(order, start=1):
             tag = " 🏆" if i == 1 and amt > 0 else ""
@@ -4706,7 +4301,6 @@ class CheckinModule:
         members = [str(x) for x in (cur.get("members") or [])]
         slots = self.pool_slots_today(group_id)
         fee = self.pool_fee_today(group_id)
-        # ★ 当日金额（当天固定，跨天才变）
         pot = self.pool_pot_today(group_id)
         cmd = (self.pool_trigger_names or ["参与抽奖"])[0]
         lines = [
@@ -4723,7 +4317,6 @@ class CheckinModule:
             lines.append(_tt)
             lines.append("　 （倒计时从**第一个人参与**开始算）")
         else:
-            # ★★ 1.7.7：没人参与时不开奖，所以这里明确说明
             lines.append("⏳ 还没人参与，**参与后才开始倒计时**")
         _lf = self.pday_left(group_id, user_id)
         if _lf < 0:
@@ -4808,7 +4401,6 @@ class CheckinModule:
         u.setdefault("bank", 0)
         u["name"] = user_name
 
-        # ---- 每天一次 ----
         day_start = self._rob_day_start()
         today_key = str(day_start)
         rob_day = self._grob(group_id).setdefault(today_key, {})
@@ -4822,8 +4414,6 @@ class CheckinModule:
                 f"📋 今日结果：{'✅ 抢到 ' + str(rec.get('amount', 0)) if _res else '❌ 失败被抓'}",
             ])
 
-        # ★★ 1.7.7：**冻结中不许抢银行** —— 冻着就不能继续抢，解冻后才能再抢。
-        #   （放在「今天已经抢过」之后：先把今天的战果告诉用户，再说冻结。）
         _fz = self.bank_frozen_msg(group_id, user_id)
         if _fz:
             return "\n".join([
@@ -4835,7 +4425,6 @@ class CheckinModule:
             ])
 
         cmd = self.rob_trigger_names[0]
-        # ★★ 1.7.6：坐骑附加 BUFF —— 当前骑乘的坐骑按价格加成功率
         _, _rb = self.mount_bonus_of_user(group_id, user_id)
         _rob_rate = self.rob_success_rate + _rb
         ok = _random.randint(1, 100) <= _rob_rate
@@ -4843,10 +4432,8 @@ class CheckinModule:
         bank = int(u.get("bank", 0) or 0)
 
         if not ok:
-            # ---- 失败：冻结 + 扣一半财产 ----
             penalty = int((max(0, wallet) + max(0, bank))
                           * self.rob_fail_penalty_rate)
-            # 一半财产按比例从钱包/银行扣（先钱包后银行）
             _p = self.pay(group_id, user_id, penalty)
             frozen_until = (int(time.time()) + self.rob_freeze_days * 86400
                             if self.rob_freeze_days > 0 else 0)
@@ -4864,7 +4451,6 @@ class CheckinModule:
             ]
             if penalty > 0:
                 lines.append(f"💸 没收一半财产：-{penalty} {self._sn()}")
-                # ★ 1.7.7：抢银行的 pay() **不掏保险箱**，明细只有钱包/银行
                 lines.append(f"　 （钱包 -{_p.get('from_wallet', 0)}，"
                              f"银行 -{_p.get('from_bank', 0)}）")
             else:
@@ -4881,12 +4467,10 @@ class CheckinModule:
                 ]
             return "\n".join(lines)
 
-        # ---- 成功：从本群银行总余额里抢钱 ----
         want = _random.randint(self.rob_min, max(self.rob_min, self.rob_max))
         pool = self._rob_pool(group_id)
         got = min(want, pool)
         if got > 0:
-            # 从别人的银行余额里按顺序扣（自己除外）
             left = got
             for _uid, _u2 in self._all_group_users(group_id):
                 if left <= 0:
@@ -4921,9 +4505,6 @@ class CheckinModule:
         ]
         return "\n".join(lines)
 
-    # ============================================================
-    # 坐骑系统
-    # ============================================================
     def do_loan(self, event, arg: str) -> str:
         """
         借款：把「本金」记进 u['loan']（不动 total_score）。
@@ -4934,7 +4515,6 @@ class CheckinModule:
         group_id = get_group_id(event)
         if not self._is_group_allowed(group_id, "bank"):
             return ""
-        # ★ 1.7.6：银行冻结中则拒绝一切操作
         _fz = self.bank_frozen_msg(group_id, get_user_id(event))
         if _fz:
             return _fz
@@ -4950,12 +4530,11 @@ class CheckinModule:
         u.setdefault("bank", 0)
         u.setdefault("loan", 0)
         u["name"] = user_name
-        # ★ 先结算旧的逾期罚息，免得新借款把旧账「洗白」
         self.apply_overdue_interest(group_id, user_id, save=False)
 
         amount = self._parse_amount(arg, self.loan_max)
         if amount == 0:
-            amount = self.loan_max          # 不带参数 = 借上限
+            amount = self.loan_max
         if amount == -1:
             return (f"⚠️ 借款数量无效\n"
                     f"用法：「{self.loan_trigger_names[0]} 1000」"
@@ -4969,15 +4548,12 @@ class CheckinModule:
         total_due = amount + interest
         u["loan"] = loan + total_due
         u["loan_count"] = int(u.get("loan_count", 0) or 0) + 1
-        # ★ 1.7.6：记下到期时间（0 天 = 不设期限）
         _due_days = max(0, int(getattr(self, "loan_due_days", 0) or 0))
         if _due_days > 0:
             u["loan_due"] = int(time.time() + _due_days * 86400)
         else:
             u["loan_due"] = 0
-        # ★ 借新账后重新起算逾期周期
         u["loan_extra"] = 0
-        # ★ 借到的钱直接进钱包
         u["total_score"] = int(u.get("total_score", 0)) + amount
         self._save()
 
@@ -5017,7 +4593,6 @@ class CheckinModule:
         group_id = get_group_id(event)
         if not self._is_group_allowed(group_id, "bank"):
             return ""
-        # ★ 1.7.6：银行冻结中则拒绝一切操作
         _fz = self.bank_frozen_msg(group_id, get_user_id(event))
         if _fz:
             return _fz
@@ -5030,7 +4605,6 @@ class CheckinModule:
         if not isinstance(u, dict):
             return "⚠️ 你还没有签到记录"
         u["name"] = user_name
-        # ★ 1.7.6：还款前先结算逾期罚息
         self.apply_overdue_interest(group_id, user_id, save=False)
         loan = self._loan_of(u)
         if loan <= 0:
@@ -5044,12 +4618,11 @@ class CheckinModule:
 
         amount = self._parse_amount(arg, min(loan, wallet))
         if amount == 0:
-            amount = min(loan, wallet)      # 不带参数 = 能还多少还多少
+            amount = min(loan, wallet)
         if amount == -1:
             return (f"⚠️ 还款数量无效\n"
                     f"用法：「{self.loan_repay_names[0]} 500」"
                     f"或「{self.loan_repay_names[0]} all」")
-        # 手里钱不够就按手里有的还
         if amount > wallet:
             amount = wallet
         if amount > loan:
@@ -5059,12 +4632,9 @@ class CheckinModule:
         u["loan"] = loan - amount
         if u["loan"] <= 0:
             u["loan"] = 0
-            # ★ 还清了：清掉到期时间与累计罚息，老赖标签自然消失
             u["loan_due"] = 0
             u["loan_extra"] = 0
         else:
-            # ★ 还了一部分：按「当前欠款」重新起算到期时间，
-            #   否则剩一点点也会一直被追罚
             _due_days = max(0, int(getattr(self, "loan_due_days", 0) or 0))
             if _due_days > 0 and self.loan_overdue_periods(u) <= 0:
                 u["loan_due"] = int(time.time() + _due_days * 86400)
@@ -5099,7 +4669,6 @@ class CheckinModule:
         group_id = get_group_id(event)
         if not self._is_group_allowed(group_id, "bank"):
             return ""
-        # ★ 1.7.6：银行冻结中则拒绝一切操作
         _fz = self.bank_frozen_msg(group_id, get_user_id(event))
         if _fz:
             return _fz
@@ -5111,7 +4680,6 @@ class CheckinModule:
                     f"👤 {user_name}\n"
                     f"✅ 没有欠款\n"
                     f"💡 先签到再看看吧~")
-        # ★ 1.7.6：查询前先结算逾期罚息，保证数字是准的
         if self.apply_overdue_interest(group_id, user_id, save=False):
             self._save()
         wallet = int(u.get("total_score", 0))
@@ -5154,9 +4722,6 @@ class CheckinModule:
             lines.append(f"💡 用「{self.loan_repay_names[0]} 数量」还钱")
         return "\n".join(lines)
 
-    # ============================================================
-    # 抽奖（接在签到最后）
-    # ============================================================
     def _lottery_menu_line(self) -> str:
         """签到输出末尾那行提示文案"""
         if not self.lottery_enable:
@@ -5179,7 +4744,6 @@ class CheckinModule:
         """
         import random as _random
         group_id = get_group_id(event)
-        # ★ 抽奖是签到系统下的子功能，受「签到系统」+「抽奖功能」两层开关限制
         if not self._is_group_allowed(group_id, "checkin"):
             return ""
         if not self._is_group_allowed(group_id, "lottery"):
@@ -5189,7 +4753,6 @@ class CheckinModule:
         user_id = get_user_id(event)
         user_name = get_user_name(event) or f"QQ{user_id}"
 
-        # ★ 每日次数上限（0 = 不限）
         _lim = int(getattr(self, "lottery_daily_limit", 0) or 0)
         _used = self.lottery_used_today(group_id, user_id)
         if _lim > 0 and _used >= _lim:
@@ -5208,11 +4771,8 @@ class CheckinModule:
         u.setdefault("bank", 0)
         u["name"] = user_name
 
-        # ★ 固定花费，不接受参数（后台可改「每次花多少」）
         cost = max(1, int(getattr(self, "lottery_cost", 100) or 100))
 
-        # ★★ 1.7.6：抽一次的核心逻辑抽成 `_lottery_draw_once`，
-        #   和「全部抽奖」共用（避免两份实现走偏）。
         _r = self._lottery_draw_once(group_id, user_id, u)
         if not _r.get("ok"):
             return str(_r.get("msg") or
@@ -5239,7 +4799,6 @@ class CheckinModule:
         else:
             lines.append(f"🎉 中奖！获得 +{prize} {self._sn()}")
         lines.append("")
-        # ★ 钱从哪扣的说清楚（钱包/银行）
         if _fb > 0 and _fw > 0:
             lines.append(f"💳 扣款：钱包 -{_fw}，银行 -{_fb}")
         elif _fb > 0:
@@ -5247,7 +4806,6 @@ class CheckinModule:
         lines.append(
             f"💰 钱包：{fmt_num(before_wallet)} → {fmt_num(int(u.get('total_score', 0)))}"
             f"　🏦 银行：{before_bank} → {int(u.get('bank', 0))}")
-        # ★ 显示今日剩余次数
         if _lim > 0:
             _left = max(0, _lim - (_used + 1))
             lines.append(f"🎯 今日次数：{_used + 1} / {_lim}"
@@ -5255,8 +4813,6 @@ class CheckinModule:
         loan = self._loan_of(u)
         if loan > 0:
             lines.append(f"📉 欠款：{fmt_num(loan)}　💎 净值：{fmt_num(after - loan)}")
-        # ★ 用净值判断，而不是单看钱包：
-        #   钱包空了但银行还有钱（或干脆就是银行扣的）不算负债
         if self.net_worth(group_id, user_id) < 0:
             lines.append("")
             lines.append("⚠️ 你已经负债了")
@@ -5278,7 +4834,6 @@ class CheckinModule:
         """
         import random as _random
         cost = max(1, int(getattr(self, "lottery_cost", 100) or 100))
-        # ★ 可用资金口径：开 use_bank_pay = 钱包+银行，关掉 = 只看钱包
         _avail = (self.avail_funds(group_id, user_id)
                   if getattr(self, "use_bank_pay", True)
                   else int(self.get_score(group_id, user_id)))
@@ -5288,10 +4843,8 @@ class CheckinModule:
         win = _random.randint(1, 100) <= self.lottery_win_rate
         prize = 0
         if win:
-            # ★ 下限固定 0：可能中奖但空手而归
             pmax = max(0, int(self.lottery_prize_max or 0))
             prize = _random.randint(0, pmax) if pmax > 0 else 0
-        # ★ 扣花费：先扣钱包、钱包不够自动扣银行
         _pay = self.pay(group_id, user_id, cost,
                         allow_bank=getattr(self, "use_bank_pay", True))
         if not _pay.get("ok"):
@@ -5305,7 +4858,6 @@ class CheckinModule:
                 u["lottery_win"] = int(u.get("lottery_win", 0) or 0) + 1
         except Exception:
             pass
-        # ★ 记一次「今日已抽」
         try:
             _tk = str(self._day_start())
             _g = self._glottery(group_id)
@@ -5343,7 +4895,6 @@ class CheckinModule:
         _title = (getattr(self, "lottery_all_trigger_names", None)
                   or ["全部抽奖"])[0]
 
-        # ★ 不限次数时不能「全部」抽，否则死循环
         if _lim <= 0:
             return "\n".join([
                 f"{title_bar(_title)}",
@@ -5373,8 +4924,8 @@ class CheckinModule:
         _before_wallet = int(u.get("total_score", 0))
         _before_bank = int(u.get("bank", 0))
 
-        draws = []          # 每次结果
-        _stop = ""          # 提前终止原因
+        draws = []
+        _stop = ""
         for _i in range(_left):
             r = self._lottery_draw_once(group_id, user_id, u)
             if not r.get("ok"):
@@ -5400,7 +4951,6 @@ class CheckinModule:
             f"（每次 {fmt_num(cost)} {self._sn()}）",
             "",
         ]
-        # ★ 逐次结果（太多就折叠）
         _show = draws if len(draws) <= 12 else draws[:12]
         for _i, r in enumerate(_show, 1):
             if not r.get("win"):
@@ -5463,11 +5013,6 @@ class CheckinModule:
                     return arg or None
         return None
 
-    # ------------------------------------------------------------
-    # 坐骑图片（**市场版已弃用**）
-    #   · 图片标记 `[[img:...]]` 已从所有输出里移除
-    #   · 这里只保留查找函数，供历史代码路径调用时不报错
-    # ------------------------------------------------------------
     def mount_image(self, mount_name: str) -> str:
         """按坐骑名找图片；找不到返回空串"""
         nm = str(mount_name or "").strip()
@@ -5480,7 +5025,6 @@ class CheckinModule:
                 from core.path_utils import mount_image_path
             except Exception:
                 return ""
-        # 后台可给每个坐骑单独指定图片名（mount_list 里加 img 字段）
         for m in (self.mount_list or []):
             if str(m.get("name") or "") == nm:
                 _img = str(m.get("img") or "").strip()
@@ -5491,9 +5035,6 @@ class CheckinModule:
                 break
         return mount_image_path(nm, self.mount_img_dir)
 
-    # ------------------------------------------------------------
-    # 「每天群里第一句话 -> 谁骑着什么坐骑闪亮登场」
-    # ------------------------------------------------------------
     def _mount_greet_day(self, group_id) -> str:
         try:
             g = self._gmountg(group_id)
@@ -5532,7 +5073,6 @@ class CheckinModule:
         row = self._gmountg(gid)
         if str(row.get("day") or "") == today:
             return ""
-        # 当天第一次 -> 记下来（哪怕他没坐骑，也算「今天已经开过场」）
         row["day"] = today
         row["by"] = str(user_id)
         try:
@@ -5543,8 +5083,6 @@ class CheckinModule:
         self._need_save = True
         if not str(_m).strip():
             return ""
-        # ★★ 1.7.6：登场提示的昵称也走**统一清理+截断**
-        #   （以前直接用原始昵称，脏字符/超长会把卡片排版搞乱）
         nm = _nick_display(user_name) or f"QQ{user_id}"
         tpl = str(self.mount_greet_text or "").strip() or \
             "🌟 $name 骑着「$mount」闪亮登场！"
@@ -5562,9 +5100,6 @@ class CheckinModule:
         else:
             _txt = (tpl.replace("$name", nm).replace("$user", nm)
                     .replace("$mount", str(_m)).replace("$group", gid))
-        # ★★ 1.7.6：**登场提示不带坐骑图** ——
-        #   用户要求：这里只出文字，坐骑图只在「坐骑查看 / 装备坐骑」里出。
-        #   （以前会往后面拼一行 `[[img:...]]`，在图片模式里会多插一张图。）
         return _txt
 
     def do_mount_equip(self, event, mount_name: str) -> str:
@@ -5584,7 +5119,6 @@ class CheckinModule:
         })
         u.setdefault("mounts", [])
         u.setdefault("current_mount", "")
-        # ★ 先解析（名字或序号），再判断是否已拥有
         _cmd = self.mount_equip_names[0]
         _r = self.resolve_owned_mount(group_id, user_id, mount_name)
         if not _r["ok"]:
@@ -5604,8 +5138,6 @@ class CheckinModule:
             f"💰 钱包余额：{int(u.get('total_score', 0))}",
             "",
         ]
-        # ★★ 市场版：**不再插入坐骑图片**（`[[img:...]]` 标记已移除）。
-        #   坐骑功能本身完整保留，只是改为纯文字显示。
         lines += [
             f"🐴 坐骑：{mount_name}",
             "",
@@ -5643,21 +5175,17 @@ class CheckinModule:
         if not raw:
             return {"ok": False, "name": "", "item": None, "owned": owned,
                     "reason": "empty"}
-        # ① 名字
         _r = self.resolve_mount(raw)
         if _r["ok"]:
             return {"ok": True, "name": _r["name"], "item": _r["item"],
                     "owned": owned, "reason": "found"}
-        # ②③ 纯数字
         if raw.isdigit():
             idx = int(raw)
             lst = list(self.mount_list or [])
-            # ② 商店绝对编号（和「坐骑商店」显示的一致）
             if 1 <= idx <= len(lst):
                 nm = str(lst[idx - 1].get("name") or "")
                 return {"ok": True, "name": nm, "item": lst[idx - 1],
                         "owned": owned, "reason": "found"}
-            # ③ 已拥有编号兜底（坐骑被下架时仍能查）
             if 1 <= idx <= len(owned):
                 nm = owned[idx - 1]
                 return {"ok": True, "name": nm,
@@ -5689,10 +5217,7 @@ class CheckinModule:
         _resolved = bool(_r["ok"])
         mount_name = str(_r.get("name") or "") if _resolved else ""
         _owned_list = [str(x) for x in (_r.get("owned") or [])]
-        # ★ 注意：解析成功 ≠ 已拥有。商店里存在但有没买，仍要提示「还没有坐骑」
         _own_ok = _resolved and mount_name in _owned_list
-        # ★ 传的是数字、但两个列表都超范围 -> 明确提示
-        #   （否则会走到「你还没有坐骑『999』」这种误导人的说法）
         if not _resolved and str(_r.get("name") or "").strip().isdigit():
             _n_own = len(_owned_list)
             _n_shop = len(self.mount_list or [])
@@ -5705,8 +5230,6 @@ class CheckinModule:
                 f"💡 也可以直接用坐骑名，例如「{_cmd} 赤兔」",
             ])
 
-        # 名字有效且在商店里 -> 展示价格 / 描述
-        # ★★ 市场版：不再查坐骑图片（`[[img:...]]` 已移除）
         _entry = self._mount_entry(mount_name) if mount_name else {}
         _price = _entry.get("price", "?")
         _desc = str(_entry.get("desc") or "")
@@ -5715,13 +5238,11 @@ class CheckinModule:
             f"{title_bar('坐骑查看')}",
             f"👤 {user_name}",
         ]
-        # ★ 没拥有：先给一行「你还没有坐骑」（有具体名字就带上名字）
         if not _own_ok:
             if _resolved and mount_name:
                 lines.append(f"⚠️ 你还没有坐骑「{mount_name}」")
             elif str(_r.get("name") or "").strip():
                 lines.append(f"⚠️ 你还没有坐骑「{_r.get('name')}」")
-        # 名字 / 价格 / 描述（买了没买都显示）
         if mount_name and _entry:
             lines.append(f"🐴 坐骑：{mount_name}")
             lines.append(f"💰 价格：{_price} {self._sn()}")
@@ -5734,23 +5255,14 @@ class CheckinModule:
             lines.append(f"⭐ 当前骑乘：{'是' if _cur == mount_name else '否'}")
         if mount_name and not _img:
             lines.append(f"🖼 提示：素材目录里没找到「{mount_name}」的图片")
-        # 已拥有：★ 1.7.6 只显示**只数**，不列名字。
-        #   用户要求：列出全部名字会超宽折行，反而看不出到底有几只。
-        #   （要看名单用「我的坐骑」；要用序号装备，序号以「我的坐骑」为准）
         if _owned_list:
             lines.append(f"📋 已拥有：{len(_owned_list)} 只")
         else:
             lines.append("📋 已拥有：暂无，先去购买")
-        # ★★ 1.7.6：坐骑附加 BUFF —— **只在坐骑查看里显示**
-        #   ★ 图标用**不带性别**的 `\U0001F9B8`：带性别的写法是
-        #     `\U0001F9B8\u200D\u2642\uFE0F`（ZWJ 序列），渲染服务的
-        #     emoji 字体 seguiemj.ttf **不支持这个组合**，会被拆成
-        #     「人物 + 艺术字 ♂ + 豆腐块」。裸符号能正常画成彩色。
         _sb, _rb = self.mount_bonus_of(mount_name)
         if _sb > 0 or _rb > 0:
             lines.append("✨ 骑乘加成：")
             if _sb > 0:
-                # ★ 图标与文字之间用**一个半角空格**（用户指定）
                 lines.append(f"　 🦸 偷积分成功率 +{self.fmt_bonus(_sb)}%")
             if _rb > 0:
                 lines.append(f"　 🏦 抢银行成功率 +{self.fmt_bonus(_rb)}%")
@@ -5832,7 +5344,6 @@ class CheckinModule:
             lines.append("🐴 暂无已拥有坐骑")
             return "\n".join(lines)
 
-        # ★ 每页 10 只
         start, end, p, pages = self._page_slice(len(mounts), page, 10)
         lines.append(f"🐴 已拥有坐骑（共 {len(mounts)} 只）")
         lines.append("")
@@ -5840,7 +5351,6 @@ class CheckinModule:
             nm = mounts[i]
             tag = "  ⭐当前骑乘" if nm == current else ""
             lines.append(f"  {i + 1}. {nm}{tag}")
-        # 只有多页时才显示翻页提示
         _nav = self._page_nav(_cmd, p, pages)
         if _nav:
             lines.append("")
@@ -5871,11 +5381,6 @@ class CheckinModule:
         lines.append(f"💡 用「{self.mount_buy_trigger_names[0]} 序号」购买")
         return "\n".join(lines)
 
-    # ------------------------------------------------------------
-    # 坐骑「名字 / 序号」解析（1.7.6）
-    #   · 购买 / 查看 / 装备 都同时支持两种写法
-    #   · 序号 = 「坐骑列表」里显示的编号（从 1 开始）
-    # ------------------------------------------------------------
     def resolve_mount(self, arg) -> dict:
         """
         把用户输入解析成一个坐骑条目。
@@ -5890,13 +5395,11 @@ class CheckinModule:
         if not raw:
             return {"ok": False, "name": "", "item": None, "reason": "empty"}
         lst = list(self.mount_list or [])
-        # ① 名字优先（精确匹配，去掉首尾空格，大小写不敏感）
         _low = raw.lower()
         for m in lst:
             if str(m.get("name") or "").strip().lower() == _low:
                 return {"ok": True, "name": str(m["name"]), "item": m,
                         "reason": "found"}
-        # ② 纯数字 -> 当序号（从 1 开始）
         if raw.isdigit():
             idx = int(raw) - 1
             if 0 <= idx < len(lst):
@@ -5964,29 +5467,12 @@ class CheckinModule:
             return "（暂无，先去购买）"
         return "　".join(f"{i}.{nm}" for i, nm in enumerate(owned, start=1))
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.6：坐骑附加 BUFF（偷积分成功率 / 抢银行成功率）
-    # ------------------------------------------------------------
-    # 设计：
-    #   · **按坐骑价格**自动算默认加成 —— 越贵加成越高，但**都很克制**
-    #   · 后台可在「坐骑列表」里给每只**单独覆盖**（字段 mount_list 的
-    #     `steal_bonus` / `rob_bonus`，填 0 就是不额外加成）
-    #   · **只在「坐骑查看」里显示**，别的输出一概不提
-    #
-    # 默认公式（价格 p，用**次方曲线**而不是线性）：
-    #     偷积分加成 = min(5.0, (p / 4000000) ** 0.65 * 5)
-    #     抢银行加成 = min(2.5, (p / 4000000) ** 0.65 * 2.5)
-    #   为什么用次方：线性算出来便宜坐骑全是 0.0%，
-    #   买了「田园小驴」的人看不到任何加成、感觉白买。
-    #   次方曲线让**每只坐骑都有一点**可感知的加成（最便宜约 0.1%），
-    #   同时最贵的封顶在 5% / 2.5% —— 相对基础值（50% / 5%）
-    #   只是「锦上添花」，不会一买就无敌。
-    MOUNT_STEAL_BONUS_CAP = 5.0        # 偷积分加成上限（%）
-    MOUNT_ROB_BONUS_CAP = 2.5          # 抢银行加成上限（%）
-    MOUNT_STEAL_BONUS_MIN = 0.1        # 偷积分加成下限（保证便宜坐骑也有感）
-    MOUNT_ROB_BONUS_MIN = 0.1          # 抢银行加成下限
-    MOUNT_BONUS_REF_PRICE = 4000000.0  # 参考价：到这个价就吃满上限
-    MOUNT_BONUS_CURVE = 0.65           # 曲线指数（<1 = 便宜段抬起来）
+    MOUNT_STEAL_BONUS_CAP = 5.0
+    MOUNT_ROB_BONUS_CAP = 2.5
+    MOUNT_STEAL_BONUS_MIN = 0.1
+    MOUNT_ROB_BONUS_MIN = 0.1
+    MOUNT_BONUS_REF_PRICE = 4000000.0
+    MOUNT_BONUS_CURVE = 0.65
 
     def mount_bonus_of(self, mount_name) -> tuple:
         """
@@ -6001,7 +5487,6 @@ class CheckinModule:
         for m in (self.mount_list or []):
             if str(m.get("name") or "") != nm:
                 continue
-            # ① 后台覆盖
             _sb = m.get("steal_bonus")
             _rb = m.get("rob_bonus")
             if _sb is not None or _rb is not None:
@@ -6021,7 +5506,6 @@ class CheckinModule:
                         rb = _dr
                 return (max(0.0, min(100.0, sb)),
                         max(0.0, min(100.0, rb)))
-            # ② 按价格算默认
             return self._mount_bonus_by_price(m)
         return (0.0, 0.0)
 
@@ -6033,17 +5517,12 @@ class CheckinModule:
             p = 0.0
         if p <= 0:
             return (0.0, 0.0)
-        # 归一化到 0~1，再按曲线抬起来
         ratio = min(1.0, p / self.MOUNT_BONUS_REF_PRICE)
         curve = ratio ** self.MOUNT_BONUS_CURVE
         sb = min(self.MOUNT_STEAL_BONUS_CAP, curve * self.MOUNT_STEAL_BONUS_CAP)
         rb = min(self.MOUNT_ROB_BONUS_CAP, curve * self.MOUNT_ROB_BONUS_CAP)
-        # ★ 最小值：最便宜的坐骑（2000）曲线算出来只有 0.03，
-        #   四舍五入成 0.0 就等于「白买、一点加成都没有」。
-        #   给个下限，保证**每一只**坐骑都有可感知的提升。
         sb = max(self.MOUNT_STEAL_BONUS_MIN, sb)
         rb = max(self.MOUNT_ROB_BONUS_MIN, rb)
-        # 保留一位小数（够用又好看）
         return (round(sb, 1), round(rb, 1))
 
     def mount_bonus_of_user(self, group_id, user_id) -> tuple:
@@ -6064,12 +5543,8 @@ class CheckinModule:
             return str(int(round(f)))
         return f"{f:g}"
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.6：签到商店（保险箱 / 武器）
-    # ------------------------------------------------------------
-    SHOP_KIND_VAULT = "vault"      # 保险箱
-    SHOP_KIND_WEAPON = "weapon"    # 武器（默认）
-    # ★★ 1.7.7：食物 —— 消耗品，可重复购买，吃了解恢复体力
+    SHOP_KIND_VAULT = "vault"
+    SHOP_KIND_WEAPON = "weapon"
     SHOP_KIND_FOOD = "food"
 
     def shop_item_of(self, name) -> dict:
@@ -6104,10 +5579,6 @@ class CheckinModule:
         except Exception:
             return 0.0
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.7：武器**装备**机制
-    #   买了不等于生效 —— 只有「装备武器」选中的那把才加 BUFF。
-    # ------------------------------------------------------------
     @staticmethod
     def _is_weapon(it: dict) -> bool:
         """该商店条目是不是武器（保险箱、食物都不是）"""
@@ -6141,7 +5612,6 @@ class CheckinModule:
         cur = str(u.get("current_weapon") or "").strip()
         if not cur:
             return ""
-        # 装备的东西必须还在「已拥有武器」里，否则算没装备
         return cur if cur in self.owned_weapons_of(group_id, user_id) else ""
 
     def resolve_owned_weapon(self, group_id, user_id, arg) -> dict:
@@ -6162,7 +5632,6 @@ class CheckinModule:
                         "owned": owned}
             return {"ok": False, "name": raw, "reason": "bad_index",
                     "owned": owned}
-        # 没买过但商店里存在 -> 提示要买
         if self.shop_item_of(raw) and self._is_weapon(self.shop_item_of(raw)):
             return {"ok": False, "name": raw, "reason": "not_bought",
                     "owned": owned}
@@ -6215,12 +5684,10 @@ class CheckinModule:
         steal = 0.0
         defense = 0.0
         rob = 0.0
-        # ① 已装备的武器
         s, d, r = self.weapon_bonus_of_user(group_id, user_id)
         steal += s
         defense += d
         rob += r
-        # ② 保险箱（买了就生效，不看装备）
         if self.user_has_vault(group_id, user_id):
             defense += float(getattr(self, "vault_steal_reduce", 15.0) or 0)
         cap = float(getattr(self, "shop_defense_cap", 60.0) or 60.0)
@@ -6257,7 +5724,6 @@ class CheckinModule:
             return ""
         user_id = get_user_id(event)
         user_name = get_user_name(event) or f"QQ{user_id}"
-        # ★ 1.7.6：支持「坐骑名」或「序号」
         _r = self.resolve_mount(mount_name)
         if not _r["ok"]:
             return self.resolve_mount_msg(_r, self.mount_buy_trigger_names[0])
@@ -6276,7 +5742,6 @@ class CheckinModule:
             return f"⚠️ 你已经拥有坐骑「{mount_name}」了"
 
         price = int(target["price"])
-        # ★ 1.7.6：先扣钱包，钱包不够自动从银行扣
         _pay = self.pay(group_id, user_id, price)
         if not _pay["ok"]:
             return self.short_hint(group_id, user_id, price)
@@ -6362,12 +5827,6 @@ class CheckinModule:
             f"💡 请在 WebUI 点击「保存全部」以持久化"
         )
 
-    # ============================================================
-    # 打工系统
-    # ============================================================
-    # ============================================================
-    # ★★ 1.7.7：体力系统
-    # ============================================================
     def stamina_of(self, group_id, uid) -> dict:
         """
         取某人的体力记录，**按天自动重置**（跨天回满，不累加）。
@@ -6516,7 +5975,6 @@ class CheckinModule:
         st = self.stamina_of(group_id, user_id)
         raw = str(arg or "").strip()
 
-        # 没参数 -> 展示背包
         if not raw:
             lines = [f"{title_bar('吃食物')}", f"👤 {user_name}",
                      f"⚡ 当前体力：{st['cur']} / {st['max']}", "",
@@ -6530,9 +5988,6 @@ class CheckinModule:
                       f"💡 一次吃完：「{_cmd} 全部」"]
             return "\n".join(lines)
 
-        # ---- 解析「要吃哪种」和「吃几个」 ----
-        #   ★ 最后一个纯数字 = 数量；剩下的当名字/序号。
-        #     只有**一个 token 且是数字**时，它是**序号**（不是数量）。
         _eat_all = raw in ("全部", "all", "都吃")
         _qty = 1
         _target_raw = raw
@@ -6570,7 +6025,6 @@ class CheckinModule:
                 ])
             want = [one]
 
-        # 逐样吃，体力满了就停
         healed = 0
         ate = []
         for nm in want:
@@ -6581,7 +6035,6 @@ class CheckinModule:
             qty = int(bag.get(nm, 0))
             if gain_unit <= 0 or qty <= 0:
                 continue
-            # ★ 指定单个 -> 最多吃 `_qty` 个；「全部」-> 吃够为止
             _limit = qty if _eat_all else min(qty, _qty)
             used = 0
             for _ in range(_limit):
@@ -6629,7 +6082,7 @@ class CheckinModule:
         if not getattr(self, "stamina_enable", True):
             return "⚠️ 体力系统未开启"
         st = self.stamina_of(group_id, user_id)
-        self._save()          # 跨天重置要落盘
+        self._save()
         lines = [
             f"{title_bar('我的体力')}",
             f"👤 {user_name}",
@@ -6637,7 +6090,6 @@ class CheckinModule:
             f"🔋 当前体力：{st['cur']} / {st['max']}",
             f"📅 每日上限：{st['max']}（每天 0 点回满，不累积）",
         ]
-        # 背包食物
         bag = self.owned_foods_of(group_id, user_id)
         if bag:
             _parts = []
@@ -6649,7 +6101,6 @@ class CheckinModule:
         else:
             lines += ["", "🎒 背包食物：暂无",
                       f"　 💡 去「{self.shop_trigger_names[0]}」买食物"]
-        # 打工消耗说明
         if getattr(self, "job_enable", True) and self.job_list:
             lines += ["",
                       f"⚒ 打工消耗：每个工种随机 "
@@ -6691,7 +6142,6 @@ class CheckinModule:
         now = time.time()
         _cmd = self.stamina_refill_trigger_names[0]
 
-        # 找出还在冷却的工种
         cooling = []
         for j in self.job_list:
             jn = str(j.get("name") or "")
@@ -6705,10 +6155,6 @@ class CheckinModule:
 
         raw = str(arg or "").strip()
         if not raw:
-            # ★★ 1.7.7：**加班状态** —— 用户要求「只输出当前可加班工种
-            #   和不可加班工种即可」，所以这里只分两类、列名字 +
-            #   加班所需体力，不再夹带指令说明（那部分移到「加班功能」
-            #   下级菜单里）。
             _st_now = self.stamina_cur(group_id, user_id)
             _can, _cant = [], []
             for j in self.job_list:
@@ -6735,7 +6181,6 @@ class CheckinModule:
                 return [f"　 · {x}" for x in items]
 
             lines = [
-                # ★ 标题用**状态指令名**（默认「加班」—— 裸指令也走这里）
                 f"{title_bar(_status_cmd)}",
                 f"👤 {user_name}",
                 f"🔋 当前体力：{_st_now} / {self.stamina_max}",
@@ -6754,11 +6199,6 @@ class CheckinModule:
             ]
             return "\n".join(lines)
 
-        # ★★ 1.7.7：全清支持后台自定义名（默认「全部加班」等），
-        #   同时保留 全部/all 等口语写法。
-        #   ★ `"__all__"` 是 main.py 分发「全部加班」指令时传进来的
-        #     **内部哨兵**（因为那四个名字已经被分开匹配，走到这里时
-        #     参数可能是空串，没法靠字面判断）。
         _all_names = {str(n).strip().lower() for n in
                       (getattr(self, "stamina_refill_all_names", None)
                        or ["全部加班"]) if str(n).strip()}
@@ -6770,10 +6210,6 @@ class CheckinModule:
         else:
             todo = [raw] if any(jn == raw for jn, _l in cooling) else []
         if not todo:
-            # ★★ 1.7.7：**两种失败要分开说** ——
-            #   以前「加班全部」在没有工种冷却时也报
-            #   「「加班全部」不在冷却中（或工种名不存在）」，
-            #   像是在说「加班全部」是个工种名（用户反馈的文案 bug）。
             _status_cmd = (getattr(self, "stamina_refill_status_names", None)
                            or ["加班状态"])[0]
             if _is_all:
@@ -6792,22 +6228,18 @@ class CheckinModule:
                 f"💡 发「{_status_cmd}」看看哪些工种在冷却",
             ])
 
-        # 逐个结算（体力不够就停）
         done = []
         for jn in todo:
             left = dict(cooling).get(jn, 0)
             cost = self.stamina_refill_cost(left)
             if not self.stamina_cost(group_id, user_id, cost):
                 break
-            # 清冷却：把上次时间往前推，使「已过时间」正好等于冷却时长
             need_sec = next((int(j.get("duration_hours", 1) or 1) * 3600
                              for j in self.job_list
                              if str(j.get("name") or "") == jn), 3600)
             cd[jn] = now - need_sec
             done.append(f"{jn}（-{cost} 体力）")
         if not done:
-            # ★★ 1.7.7：说清楚**卡在哪个工种 / 要多少 / 还差多少**
-            #   （以前只给「至少需要 N 体力」，看不出是哪个工种不够）
             _todo_costs = sorted(
                 ((jn, self.stamina_refill_cost(_l))
                  for jn, _l in cooling if jn in todo),
@@ -6834,8 +6266,6 @@ class CheckinModule:
         lines = [
             f"{title_bar('加班')}",
             f"👤 {user_name}",
-            # ★★ 1.7.7：没清完就别说「清空」了（以前只补一行小字，
-            #   标题却已经宣布「冷却已清空」，容易误会）
             ("⚡ 加班完成（体力不够，只清了一部分）" if _partial
              else "✅ 加班完成，冷却已清空！"),
             "",
@@ -6861,7 +6291,7 @@ class CheckinModule:
             left = 0
         per_hour = max(0, int(getattr(self, "stamina_refill_per_hour", 10) or 0))
         _min = max(0, int(getattr(self, "stamina_refill_min", 5) or 0))
-        hours = max(1, int((left + 3599) // 3600))   # 不足 1 小时按 1 小时
+        hours = max(1, int((left + 3599) // 3600))
         return max(_min, per_hour * hours)
 
     def job_stamina_cost_of(self, job: dict) -> tuple:
@@ -6903,10 +6333,6 @@ class CheckinModule:
         return (random.randint(lo, hi), lo, hi)
 
     def do_job_list(self) -> str:
-        # ★★ 1.7.7 修正：`lines` 必须**先初始化** —— 之前加「体力消耗」
-        #   那行时把 `lines = [title_bar(...)]` 误删了，于是这个函数
-        #   一被调用就 `NameError: name 'lines' is not defined`，
-        #   表现为用户发「打工列表」收到「❌ 查询失败」。
         lines = [f"{title_bar('打工列表')}"]
         if not self.job_list:
             lines.append("")
@@ -6927,7 +6353,6 @@ class CheckinModule:
             )
         lines.append("")
         lines.append(f"💡 用「{self.job_trigger_names[0]} 工种」开始打工")
-        # ★★ 1.7.6：顺手提示「全部打工」，否则用户不知道有这条指令
         _all = (getattr(self, "job_all_trigger_names", None)
                 or ["全部打工"])[0]
         lines.append(f"💡 发「{_all}」可一次把所有工种各打一遍")
@@ -6981,7 +6406,6 @@ class CheckinModule:
             )
 
         reward = random.randint(target["reward_min"], target["reward_max"])
-        # ★★ 1.7.7：打工消耗体力 —— 不够就不能干
         _cost, _smin, _smax = self.job_stamina_roll(target)
         if _cost > 0 and not self.stamina_cost(group_id, user_id, _cost):
             return "\n".join([
@@ -7050,10 +6474,10 @@ class CheckinModule:
         cd = u["job_cd"]
         now = time.time()
 
-        done = []        # [(工种名, 赚到的钱, 冷却小时)]  —— 全部（含省略的）
-        cooling = []     # [工种名] 冷却中跳过
-        no_stamina = []  # 体力不够跳过的工种
-        drank_total = 0  # 本次总共消耗的体力
+        done = []
+        cooling = []
+        no_stamina = []
+        drank_total = 0
         for j in self.job_list:
             jn = str(j.get("name") or "")
             if not jn:
@@ -7068,12 +6492,10 @@ class CheckinModule:
             if rmax < rmin:
                 rmin, rmax = rmax, rmin
             reward = random.randint(rmin, rmax) if rmax > rmin else rmin
-            # ★★ 1.7.7：先扣体力 —— 不够就停（后面的工种也不做了）
             _cost_j, _sj_min, _sj_max = self.job_stamina_roll(j)
             if _cost_j > 0 and not self.stamina_cost(group_id, user_id, _cost_j):
                 no_stamina.append(jn)
                 break
-            # ★ 真的结算：钱和冷却都写进去（即使不显示）
             u["total_score"] = int(u.get("total_score", 0)) + reward
             cd[jn] = now
             drank_total += _cost_j
@@ -7090,14 +6512,12 @@ class CheckinModule:
                   or ["全部打工"])[0]
 
         if not done:
-            # 全都在冷却
             lines = [
                 f"{title_bar(_title)}",
                 f"👤 {user_name}",
                 "",
                 f"⚠️ 全部 {len(cooling)} 个工种都在冷却中，暂时没法打工",
             ]
-            # 挑最短的剩余时间告诉用户
             _next = None
             for j in self.job_list:
                 jn = str(j.get("name") or "")
@@ -7123,12 +6543,10 @@ class CheckinModule:
         for i, (jn, reward, hrs) in enumerate(done[:SHOW], start=1):
             lines.append(f"{i}. {jn} —— +{reward} {self._sn()}")
         if len(done) > SHOW:
-            # ★ 多余的只**不显示**，钱照样给了（这里明确告诉用户数量）
             lines.append(
                 f"…… 还有 {len(done) - SHOW} 个工种已结算（未逐个列出）")
         lines.append("")
         lines.append(f"💵 本次共赚：+{total} {self._sn()}")
-        # ★★ 1.7.7：体力消耗汇总
         if drank_total > 0:
             lines.append(f"⚡ 消耗体力：-{drank_total}"
                          f"（剩 {self.stamina_cur(group_id, user_id)}"
@@ -7146,10 +6564,7 @@ class CheckinModule:
             f"💡 共 {len(done)} 个工种结算完成（显示前 {min(SHOW, len(done))} 个）")
         return "\n".join(lines)
 
-    # ============================================================
-    # ★★ 1.7.6：签到商店（保险箱 / 武器）
-    # ============================================================
-    SHOP_PAGE_SIZE = 10    # ★★ 1.7.7：签到商店每页 10 个商品
+    SHOP_PAGE_SIZE = 10
 
     def do_shop_list(self, event=None, group_id="", page=1) -> str:
         """
@@ -7173,14 +6588,9 @@ class CheckinModule:
 
         _uid = get_user_id(event) if event is not None else ""
         _bought = self.user_shop_bought(group_id, _uid) if _uid else []
-        # ★★ 1.7.7：当前启用的武器（列表里要标出来，让人知道哪把在生效）
         _cur_w = self.current_weapon_of(group_id, _uid) if _uid else ""
-        # ★★ 1.7.7：背包食物（列表里显示数量）
         _bag = self.owned_foods_of(group_id, _uid) if _uid else {}
 
-        # ★★ 1.7.7：**按三类分组显示**（保险箱 → 武器 → 食物），
-        #   每类加个小标题，比混在一堆里好找（用户要求「优化种类物品」）。
-        #   ★ 序号仍是**绝对编号**（原始位置），所以「购买商品 12」不变。
         _groups = [(self.SHOP_KIND_VAULT, "🧰 保险箱"),
                    (self.SHOP_KIND_WEAPON, "⚔️ 武器"),
                    (self.SHOP_KIND_FOOD, "🍖 食物")]
@@ -7188,7 +6598,6 @@ class CheckinModule:
         for _idx, _it in enumerate(self.shop_list):
             _k = str(_it.get("kind") or self.SHOP_KIND_WEAPON)
             _by_kind.setdefault(_k, []).append(_idx)
-        # 未知 kind 兜底到武器组
         for _k in list(_by_kind.keys()):
             if _k not in [g[0] for g in _groups]:
                 _by_kind.setdefault(self.SHOP_KIND_WEAPON, []).extend(
@@ -7207,12 +6616,10 @@ class CheckinModule:
                         else "🍖" if kind == self.SHOP_KIND_FOOD else "⚔️")
                 _own = ""
                 if kind == self.SHOP_KIND_FOOD:
-                    # ★★ 1.7.7：食物显示背包数量（消耗品，可反复买）
                     _n = int((_bag or {}).get(nm, 0) or 0)
                     _own = f"　🎒×{_n}" if _n > 0 else ""
                 elif nm in _bought:
                     _own = ("　⭐已启用" if nm == _cur_w else "　✅已拥有")
-                # ★ 序号用**绝对编号**（i 是 0 基，所以 +1）
                 lines.append(f"{_tag} {i + 1}. {nm} —— {it.get('price', 0)} "
                              f"{self._sn()}{_own}")
                 if it.get("desc"):
@@ -7220,7 +6627,6 @@ class CheckinModule:
                 s, d = self.shop_item_bonus(it)
                 r = self.shop_item_rob_bonus(it)
                 if kind == self.SHOP_KIND_FOOD:
-                    # ★★ 1.7.7：食物 —— 恢复量 + 可批量买
                     lines.append(
                         f"　　⚡ 恢复体力 +{self.food_restore_of(it)}"
                         "　+ 可重复买（「购买商品 "
@@ -7239,7 +6645,6 @@ class CheckinModule:
                         _eff.append(f"抢银行成功率 +{self.fmt_bonus(r)}%")
                     if _eff:
                         lines.append("　　" + "　".join(_eff))
-                    # ★★ 1.7.7：破保险箱能力（武器可单独覆盖，留空用全局）
                     _br = 0.0
                     try:
                         _v = it.get("vault_break_rate")
@@ -7257,11 +6662,6 @@ class CheckinModule:
             lines.append("")
         if not _shown_any:
             lines.append("暂无商品，请联系管理员添加")
-        # ★★ 1.7.7：用户要求「签到商店只显示商品，其余移除」——
-        #   购买 / 启用武器 / 我的装备 / 体力 / 保险箱余额等提示全部去掉
-        #   （那些都写在「商店帮助」菜单里）。
-        #   ★ 也不再分页：改成**按三类分组**后，12 件商品一屏看得完，
-        #     分组比翻页更直观（用户要求「优化种类物品」）。
         return "\n".join(lines)
 
     def do_shop_buy(self, event, item_raw: str = "") -> str:
@@ -7279,10 +6679,6 @@ class CheckinModule:
         if not raw:
             return self.do_shop_list(event=event)
 
-        # ★★ 1.7.7：**先解析数量，再解析商品** ——
-        #   「面包 3」如果先丢给 resolve_shop_item 会整体匹配失败。
-        #   规则：最后一个纯数字是数量（长度 ≥2 的 token 序列）；
-        #   单个纯数字仍是**序号**。
         _qty = 1
         _toks = raw.replace("，", " ").split()
         if len(_toks) >= 2 and _toks[-1].rstrip("个").isdigit():
@@ -7297,7 +6693,6 @@ class CheckinModule:
         nm = str(target.get("name") or "")
         price = int(target.get("price", 0) or 0)
         kind = str(target.get("kind") or self.SHOP_KIND_WEAPON)
-        # ★ 只有食物支持买多个（其他是买一次就够的东西）
         if kind != self.SHOP_KIND_FOOD:
             _qty = 1
 
@@ -7309,18 +6704,13 @@ class CheckinModule:
         u.setdefault("shop_bought", [])
         u.setdefault("food_bag", {})
 
-        # ★★ 1.7.7：食物是**消耗品** —— 可以反复买，进背包；其他商品买一次
         if kind == self.SHOP_KIND_FOOD:
             if nm in [str(x) for x in u["shop_bought"]]:
-                # 以前误把食物当装备买过 -> 允许继续买，只是不再记 shop_bought
                 pass
         elif nm in [str(x) for x in u["shop_bought"]]:
             return (f"⚠️ 你已经买过「{nm}」了\n"
                     f"💡 每样只需要买一次")
 
-        # ★★ 1.7.7：数量已在上面解析好了（`_qty`），这里只算总价。
-        #   ★ 不要再重复解析一遍 —— 之前留了个旧块把 `_qty` 重置成 1，
-        #     导致「买 3 个」只买到 1 个。
         _total = price * max(1, _qty)
 
         wallet = int(u.get("total_score", 0) or 0)
@@ -7339,7 +6729,6 @@ class CheckinModule:
         u["total_score"] = wallet - _total
         _bag_n = 0
         if kind == self.SHOP_KIND_FOOD:
-            # ★ 食物进背包（数量 += _qty），不写 shop_bought
             _bag = u["food_bag"]
             _bag[nm] = int(_bag.get(nm, 0) or 0) + _qty
             _bag_n = _bag[nm]
@@ -7359,7 +6748,6 @@ class CheckinModule:
         ]
         s, d = self.shop_item_bonus(target)
         if kind == self.SHOP_KIND_FOOD:
-            # ★★ 1.7.7：食物 —— 报背包数量 + 怎么吃
             lines += [
                 "",
                 f"🍖 已放入背包：{nm} ×{_bag_n}",
@@ -7391,17 +6779,14 @@ class CheckinModule:
         s = str(raw or "").strip()
         if not s:
             return {}
-        # ① 序号
         if s.isdigit():
             i = int(s)
             if 1 <= i <= len(self.shop_list):
                 return self.shop_list[i - 1]
             return {}
-        # ② 名字（精确）
         for it in self.shop_list:
             if str(it.get("name") or "") == s:
                 return it
-        # ③ 名字（大小写/空格不敏感）
         low = s.lower().replace(" ", "")
         for it in self.shop_list:
             if str(it.get("name") or "").lower().replace(" ", "") == low:
@@ -7522,9 +6907,6 @@ class CheckinModule:
             "⚠️ 取出来的钱又会被别人偷了",
         ])
 
-    # ------------------------------------------------------------
-    # ★★ 1.7.7：启用武器（武器只有装备了才加 BUFF）
-    # ------------------------------------------------------------
     def do_shop_equip(self, event, arg: str = "") -> str:
         """
         「启用武器 名字/序号」—— 装备一把已购买的武器。
@@ -7545,7 +6927,6 @@ class CheckinModule:
         _cmd = self.shop_equip_trigger_names[0]
         _owned = self.owned_weapons_of(group_id, user_id)
 
-        # ① 没参数：列出已拥有武器 + 当前装备
         if not str(arg or "").strip():
             lines = [f"{title_bar('启用武器')}", f"👤 {user_name}", ""]
             if not _owned:
@@ -7564,7 +6945,6 @@ class CheckinModule:
                       f"💡 看完整装备发「{self.my_equip_trigger_names[0]}」"]
             return "\n".join(lines)
 
-        # ② 解析
         _r = self.resolve_owned_weapon(group_id, user_id, arg)
         if not _r["ok"]:
             why = _r.get("reason")
@@ -7646,7 +7026,6 @@ class CheckinModule:
 
         lines = [f"{title_bar('我的装备')}", f"👤 {user_name}", "",
                  "── 当前装备 ──"]
-        # ★★ 市场版：不再插入坐骑图片（`[[img:...]]` 已移除）
         lines.append(f"🐴 坐骑：{mount}" if mount else "🐴 坐骑：未装备")
         lines.append(f"⚔️ 武器：{weapon}" if weapon else "⚔️ 武器：未启用")
         if has_vault:
@@ -7682,7 +7061,6 @@ class CheckinModule:
         if steal <= 0 and defense <= 0 and rob <= 0:
             lines.append("（暂无加成 —— 装备坐骑或启用武器后就有了）")
 
-        # 已拥有但没启用的
         _mounts = self._owned_mounts_of(group_id, user_id)
         _weapons = self.owned_weapons_of(group_id, user_id)
         _idle_w = [x for x in _weapons if x != weapon]
@@ -7707,9 +7085,6 @@ class CheckinModule:
             return "（暂无）"
         return "　".join(f"{i}.{nm}" for i, nm in enumerate(owned, start=1))
 
-    # ============================================================
-    # 管理员工种管理
-    # ============================================================
     def do_job_add(self, arg: str) -> str:
         arg = str(arg or "").strip()
         if not arg:

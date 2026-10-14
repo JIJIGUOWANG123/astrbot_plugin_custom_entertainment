@@ -1,47 +1,19 @@
-# ============================================================
-# 菜单渲染辅助
-# 标题栏统一为 ━━━ 标题 ━━━（每侧 3 个 ━），页脚为等宽色条。
-#
-# 关于对齐：emoji 在 QQ 等客户端里通常按双宽渲染，因此下面用「emoji + 全角空格」
-# 来对齐命令名。不同客户端字体对 emoji 宽度处理可能不同，若某处不齐属正常现象。
-# ============================================================
 
-# ★★ 市场版：音乐模块已移除。
-#   但 core/music.py 已删除，所以这里改成**本地兜底实现**
-#   （避免 import 失败，也避免 try 块变空导致语法错误）。
 def source_label(code):
     """音源代码 -> 中文名（音乐功能已移除，这里只做原样返回）"""
     return str(code or "")
 
+BAR_N = 8
+BAR_CH = "─"
+FOOT_CH = "━"
+FOOT_W = 22
+TITLE_BAR_W = 12
 
-# ── 菜单排版参数（照参考图）──
-BAR_N = 8              # 标题两侧横线段数
-BAR_CH = "─"           # 标题横线（细）
-FOOT_CH = "━"          # 收尾横线（粗）
-# ★★ 1.3.0：收尾横线宽度 —— 从 36 缩到 22。
-#   为什么：`━` 是**全角**字符，36 个 = **72 半角宽**，
-#   而手机上 QQ 聊天窗一行通常只放得下约 38~44 半角，
-#   于是这条横线**必然折成 2 行**，看起来很难看。
-#   （旧值 36 是按图片模式的卡片宽度定的，文本模式不适用。）
-#   22 个 = 44 半角宽，和「正文中位数 46」基本齐平，手机一行放得下。
-FOOT_W = 22            # 收尾横线半角宽度
-# ★ 标题下面那条分隔线：12 个 = 24 半角，比收尾线短，作层次区分
-TITLE_BAR_W = 12       # 标题分隔线半角宽度
-
-
-# ============================================================
-# 图标与文字之间补一个空格（1.7.6）
-# ------------------------------------------------------------
-# 以前菜单写成 `🐦今日小鸟`，图标和文字挤在一起。
-# 这里统一做一遍后处理，所有菜单（包括后台可自定义文案）都会生效，
-# 不用去改几十处 f-string。
-# ============================================================
 def _icon_space_line(line: str) -> str:
     """行首图标后补一个半角空格（已经有空格 / 没有图标则原样返回）"""
     s = str(line or "")
     if not s:
         return s
-    # 保留原来的前导空白
     _i = 0
     while _i < len(s) and s[_i] in " \t\u3000":
         _i += 1
@@ -53,19 +25,12 @@ def _icon_space_line(line: str) -> str:
         import unicodedata as _ud
     except Exception:
         return s
-    # 吃掉行首的「图标 + 修饰符 + 已有空格」
-    # ★★ 1.7.7 修正：以前只吃 So/Sk/Cf，**漏了变体选择符** ——
-    #   `⚔️` = U+2694 (So) + U+FE0F (Mn)，`️` 不是 So/Sk/Cf 于是循环
-    #   在它前面就停了，空格被插进 `⚔` 和 `️` 中间 ->
-    #   渲染成「⚔ ️启用武器…」（用户看到的断字）。
-    #   现在把变体选择符 / 零宽连接符 / 组合记号一起算作图标的一部分。
     _MOD = ("\ufe0e", "\ufe0f", "\u200d", "\u200b")
     _p = 0
     _saw = False
     while _p < len(rest):
         ch = rest[_p]
         if ch in " \t\u3000":
-            # 图标后面已经有空格 -> 不用补
             return s
         if ch in _MOD or _ud.category(ch) in ("So", "Sk", "Cf", "Mn", "Me"):
             _saw = True
@@ -74,22 +39,18 @@ def _icon_space_line(line: str) -> str:
         break
     if not _saw or _p >= len(rest):
         return s
-    # ★ 结尾若落在修饰符上，说明图标还没接完（防「⚔ + 空格 + ️」）
     while _p < len(rest) and rest[_p - 1] in _MOD \
             and _ud.category(rest[_p]) in ("So", "Sk", "Mn", "Me"):
         _p += 1
     return _lead + rest[:_p] + " " + rest[_p:]
 
-
 def _icon_space_rows(rows):
     """对一批行做「图标后补空格」"""
     return [_icon_space_line(x) for x in (rows or [])]
 
-
 def _icon_space_text(text: str) -> str:
     """对整段多行文本做「图标后补空格」"""
     return "\n".join(_icon_space_line(x) for x in str(text or "").split("\n"))
-
 
 def _sn(plugin) -> str:
     """积分显示名（后台可自定义，如「金币」）；默认「积分」"""
@@ -103,9 +64,6 @@ def _sn(plugin) -> str:
     nm = str(getattr(plugin, "score_name", "") or "").strip()
     return nm or "积分"
 
-
-# ★★ 1.7.6：标题前缀由后台「菜单指令 → 全局标题前缀」统一控制，
-#   这里**动态取**（不要用模块级常量快照，否则改了前缀菜单不跟着变）。
 try:
     from .path_utils import TITLE_PREFIX as _TITLE_PREFIX_FALLBACK
 except Exception:
@@ -113,7 +71,6 @@ except Exception:
         from path_utils import TITLE_PREFIX as _TITLE_PREFIX_FALLBACK
     except Exception:
         _TITLE_PREFIX_FALLBACK = "铁剑娘系统："
-
 
 def _current_title_prefix() -> str:
     """取**当前**统一标题前缀（后台可改；空串 = 不要前缀）"""
@@ -126,10 +83,7 @@ def _current_title_prefix() -> str:
             return _TITLE_PREFIX_FALLBACK
     return getattr(_pu, "TITLE_PREFIX", _TITLE_PREFIX_FALLBACK)
 
-
-# 兼容旧引用（已不再作为唯一来源，仅兜底）
 BAR_PREFIX = _TITLE_PREFIX_FALLBACK
-
 
 def _ck_score_min(plugin) -> int:
     """签到随机积分下限（后台 checkin_score_min）"""
@@ -139,7 +93,6 @@ def _ck_score_min(plugin) -> int:
     except Exception:
         return 1
 
-
 def _ck_score_max(plugin) -> int:
     """签到随机积分上限（后台 checkin_score_max）"""
     mod = getattr(plugin, "checkin_module", None)
@@ -148,10 +101,7 @@ def _ck_score_max(plugin) -> int:
     except Exception:
         return 1000
 
-
-# ★★ 1.7.7：商店帮助每页多少条（用户要求分页）
 SHOP_HELP_PAGE_SIZE = 10
-
 
 def _pg(page) -> int:
     """把页码参数转成合法页码（非法值一律当第 1 页）"""
@@ -160,7 +110,6 @@ def _pg(page) -> int:
     except Exception:
         return 1
 
-
 def _fmt(v) -> str:
     """数值显示：15.0 -> 15 ；7.5 -> 7.5（和坐骑加成一致的风格）"""
     try:
@@ -168,7 +117,6 @@ def _fmt(v) -> str:
     except Exception:
         return str(v)
     return str(int(round(f))) if abs(f - round(f)) < 1e-9 else f"{f:g}"
-
 
 def _bar(title: str) -> str:
     """
@@ -188,17 +136,10 @@ def _bar(title: str) -> str:
       所以这里动态取，不用模块级常量快照。
     """
     t = str(title or "").strip()
-    # ★ 动态取当前前缀（后台可改；空串 = 不要前缀）
     _pfx = _current_title_prefix()
     if _pfx and not t.startswith(_pfx):
         t = f"{_pfx}{t}"
-    # ★ 标题下面固定跟一条分隔线。
-    #   以前分隔线由 _grid/_finish 另外加，导致直接用
-    #   `"\n".join([_bar(...), 内容, _bar_plain()])` 的菜单漏了这条线。
-    #   放进 _bar 里，所有菜单一次统一。
-    # ★★ 1.3.0：长度从写死的 20 改成 TITLE_BAR_W（12），手机不折行。
     return t + "\n" + FOOT_CH * TITLE_BAR_W
-
 
 def _seg_bar(ch: str, n: int, seg: int = 4) -> str:
     """
@@ -213,11 +154,9 @@ def _seg_bar(ch: str, n: int, seg: int = 4) -> str:
         parts.append(ch * (n % seg))
     return " ".join(parts)
 
-
 def _bar_plain(total: int = 0) -> str:
     """收尾横线（统一宽度，托住整个菜单）"""
     return FOOT_CH * (total or FOOT_W)
-
 
 _CJK_FONT = r"C:\Windows\Fonts\msyh.ttc"
 _EMOJI_FONT = r"C:\Windows\Fonts\seguiemj.ttf"
@@ -225,7 +164,6 @@ _SYM_FONT = r"C:\Windows\Fonts\seguisym.ttf"
 _FONT_CHAIN = (_CJK_FONT, _SYM_FONT, _EMOJI_FONT)
 _EMOJI_CHAIN = (_EMOJI_FONT, _SYM_FONT, _CJK_FONT)
 _TW_CACHE = {}
-
 
 def _is_emoji(ch: str) -> bool:
     """
@@ -241,16 +179,15 @@ def _is_emoji(ch: str) -> bool:
     o = ord(ch)
     if o in (0xFE0F, 0xFE0E, 0x20E3):
         return True
-    if 0x1F000 <= o <= 0x1FAFF:        # 主要 emoji 区
+    if 0x1F000 <= o <= 0x1FAFF:
         return True
-    if 0x2700 <= o <= 0x27BF:          # 装饰符号（✂✅等）
+    if 0x2700 <= o <= 0x27BF:
         return True
-    if 0x2B00 <= o <= 0x2BFF:          # 箭头 / 星形
+    if 0x2B00 <= o <= 0x2BFF:
         return True
-    if 0x1F1E6 <= o <= 0x1F1FF:        # 区域指示符（国旗）
+    if 0x1F1E6 <= o <= 0x1F1FF:
         return True
     return False
-
 
 def _font_for(ch: str, size: int):
     """按渲染端同一套字体链挑字体（先 emoji 再中文）"""
@@ -277,7 +214,6 @@ def _font_for(ch: str, size: int):
     except Exception:
         return None
 
-
 def _tw(text: str, size: int = 20) -> float:
     """
     文本渲染宽度（像素）—— 逐字符挑字体，和渲染端口径一致。
@@ -292,7 +228,6 @@ def _tw(text: str, size: int = 20) -> float:
     for ch in str(text or ""):
         w = None
         if _is_emoji(ch):
-            # ★emoji 用表情字体直接量（渲染端也是这么画的）
             try:
                 from PIL import ImageFont
                 f = _TW_CACHE.get((_EMOJI_FONT, size))
@@ -302,7 +237,6 @@ def _tw(text: str, size: int = 20) -> float:
                 w = float(f.getlength(ch))
             except Exception:
                 w = None
-            # 表情字体量出来常常偏小，取「字号」作为下界更稳
             if not w or w < size * 0.9:
                 w = float(size)
         if w is None:
@@ -315,11 +249,9 @@ def _tw(text: str, size: int = 20) -> float:
     _TW_CACHE[key] = total
     return total
 
-
 def _bar_plain_for(title: str) -> str:
     """与标题栏等宽的收尾横线"""
     return "━" * (len(str(title or "")) + 6)
-
 
 def _foot_bar(lines) -> str:
     """
@@ -331,7 +263,6 @@ def _foot_bar(lines) -> str:
       （实测差 -67 ~ +127px），反而不如交给渲染端。
     """
     return FOOT_CH * FOOT_W
-
 
 def _sv(v, dflt: str = "") -> str:
     """
@@ -364,7 +295,6 @@ def _sv(v, dflt: str = "") -> str:
         return dflt
     return s or dflt
 
-
 def _cw(s_) -> int:
     """
     半角宽度计数：emoji / 汉字算 2，其余算 1。
@@ -382,20 +312,13 @@ def _cw(s_) -> int:
             n += 1
     return n
 
-
 def _finish(title: str, rows) -> list:
     """统一收尾：标题 + 内容行 + 收尾横线"""
     _rows = [_icon_space_line(str(r).rstrip())
              for r in (rows or []) if str(r).strip()]
-    # ★短填充行参与列判定，横线单独一行（见 _grid 注释）
-    _head = [_bar(title)]     # _bar 已含标题 + 分隔线
-    # ★收尾横线与内容等宽（同 _grid）
+    _head = [_bar(title)]
     _foot = [_foot_bar(_head + _rows)]
     return _head + _rows + _foot
-
-
-
-
 
 def _entry_name(plugin, menu_id: str, dflt: str) -> str:
     """
@@ -422,7 +345,6 @@ def _entry_name(plugin, menu_id: str, dflt: str) -> str:
             n = f(menu_id)
             if n:
                 return str(n[0]).strip() or dflt
-        # ★ 表里没有的 id（例如坐骑）-> 再试坐骑专属读取
         f2 = getattr(plugin, "_mount_menu_names", None)
         if callable(f2):
             n2 = [str(x).strip() for x in (f2() or []) if str(x).strip()]
@@ -431,7 +353,6 @@ def _entry_name(plugin, menu_id: str, dflt: str) -> str:
     except Exception:
         pass
     return dflt
-
 
 def _shop_label(plugin) -> str:
     """
@@ -451,7 +372,6 @@ def _shop_label(plugin) -> str:
         pass
     return "签到商店"
 
-
 def _grid(rows, gap: int = 4, title: str = "") -> str:
     """
     菜单统一排版（照参考图）：
@@ -463,40 +383,25 @@ def _grid(rows, gap: int = 4, title: str = "") -> str:
 
     · 两列：右列按**左列最宽项**对齐
     """
-    # ★ 1.7.6：图标后补空格要在**算列宽之前**做，
-    #   否则补出来的空格会破坏列分隔/对不齐。
     _rows = [(_icon_space_line(str(_l or "").strip()),
               _icon_space_line(str(_r or "").strip()))
              for _l, _r in rows]
-    # ★右列宽按「右列非空」的行算（右列为空的行不参与，避免被撑开）
     _left_max = max((_cw(_l) for _l, _r in _rows if _r), default=0)
-    # ★渲染器的列判定：要求「多数行是多列」才按列排版。
-    #   而列宽按**最长单元格**算 —— 标题/收尾线若是一整条长横线，
-    #   第一列会被撑到 400+px，第二列直接推到画布外。
-    #   解法：标题/收尾线用「短填充行」参与列判定，横线单独一行（宽但无分隔，
-    #   渲染器会把它当单列行画出来，不影响列宽计算的关键项）。
     _lines = []
     if title:
-        # ★标题独立一行，下面跟一条分隔线，再放内容
-        _lines.append(_bar(title))      # 已含标题 + 分隔线
+        _lines.append(_bar(title))
     _content = []
     for _l, _r in _rows:
         if not _l and not _r:
             continue
-        # ★右列为空（单列行）也要画出来 —— 以前 `if not _r: continue`
-        #   会把「🐾宠物功能」这类只有左列的行整行丢掉。
         if not _r:
             _content.append(_l)
             continue
         _content.append(_l + (" " * max(1, _left_max - _cw(_l) + gap)) + _r)
     _lines.extend(_content)
 
-    # ★收尾横线**与内容等宽**（按像素对齐，见 _foot_bar）。
-    #   固定长度会让内容窄的菜单被撑宽，线比内容长一截。
     _lines.append(_foot_bar(_lines))
-    # ★ 1.7.6：图标后补空格（列内已处理过，这里只兜底单列行）
     return _icon_space_text("\n".join(_lines))
-
 
 def build_main_menu(plugin) -> str:
     """
@@ -515,7 +420,6 @@ def build_main_menu(plugin) -> str:
         ("🔧管理系统", "💬发言功能"),
     ]
     return _grid(rows, title=title)
-
 
 def build_meme_menu(plugin) -> str:
     def _names(raw, fallback):
@@ -540,7 +444,6 @@ def build_meme_menu(plugin) -> str:
     lines.append("　 只看文本类接口，没有页数默认第一页")
     lines.append(_bar_plain())
     return "\n".join(lines)
-
 
 def build_mc_menu(plugin) -> str:
     """
@@ -567,7 +470,6 @@ def build_mc_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_greeting_menu(plugin) -> str:
     """打卡系统：只列**子菜单入口**，不列具体指令"""
     rows = [
@@ -575,7 +477,6 @@ def build_greeting_menu(plugin) -> str:
         ("🏆打卡排行", "📊打卡统计"),
     ]
     return _grid(rows, title="打卡系统")
-
 
 def build_checkin_menu(plugin) -> str:
     """
@@ -586,7 +487,6 @@ def build_checkin_menu(plugin) -> str:
       · 「抢银行」**不在这里列出** —— 它属于银行功能，
         入口和说明都放在「银行功能」菜单里（见 build_checkin_bank_menu）
     """
-    # ★★ 1.7.7：入口名全部从配置读 —— 后台改了这里显示的名字也跟着变
     rows = [
         (f"✅{_entry_name(plugin,'checkin_signin','签到指令')}",
          f"📊{_entry_name(plugin,'checkin_query','查询指令')}"),
@@ -596,13 +496,10 @@ def build_checkin_menu(plugin) -> str:
          f"🔨{_entry_name(plugin,'checkin_job','打工功能')}"),
         (f"🐾{_entry_name(plugin,'pet','宠物功能')}",
          f"🎰{_entry_name(plugin,'checkin_lottery','抽奖功能')}"),
-        # ★ 签到商店那条是**指令名**（shop_trigger_names），不是菜单入口名，
-        #   所以走 `_shop_first_name` 而不是 `_entry_name`。
         (f"🧰{_shop_label(plugin)}",
          f"❓{_entry_name(plugin,'checkin_shop_help','商店帮助')}"),
     ]
     return _grid(rows, title="签到系统")
-
 
 def build_daily_menu(plugin) -> str:
     """每日系列：四个子菜单入口"""
@@ -611,7 +508,6 @@ def build_daily_menu(plugin) -> str:
         ("🍀人品功能", "📰读报功能"),
     ]
     return _grid(rows, title="每日系列")
-
 
 def _daily_names(mod, attr="trigger_names", fallback="") -> str:
     """取模块的指令名（逗号/列表都兼容），失败回退"""
@@ -625,7 +521,6 @@ def _daily_names(mod, attr="trigger_names", fallback="") -> str:
     except Exception:
         return fallback
 
-
 def _daily_first(mod, attr="trigger_names", fallback="") -> str:
     """取模块的「主指令名」（第一个），用于用法示例"""
     try:
@@ -637,7 +532,6 @@ def _daily_first(mod, attr="trigger_names", fallback="") -> str:
     except Exception:
         pass
     return fallback
-
 
 def build_fortune_menu(plugin) -> str:
     """运势功能子菜单"""
@@ -655,7 +549,6 @@ def build_fortune_menu(plugin) -> str:
         "💡结果按「输出模式」渲染（文本 / 图片）",
         _bar_plain(),
     ])
-
 
 def build_husband_menu(plugin) -> str:
     """老公功能子菜单（含逼迫指令）"""
@@ -675,7 +568,6 @@ def build_husband_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_luck_menu(plugin) -> str:
     """人品功能子菜单"""
     mod = getattr(plugin, "luck_module", None)
@@ -693,7 +585,6 @@ def build_luck_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_news_menu(plugin) -> str:
     """
     读报功能子菜单。
@@ -706,19 +597,15 @@ def build_news_menu(plugin) -> str:
         return [x.strip() for x in str(raw).replace("，", ",").split(",")
                 if x.strip()] or [dflt]
 
-    # 手动读报（默认「今日读报 / 每日读报」）
     manual = _names("cmd_daily_news_name", "今日读报,每日读报")
     m_names = " / ".join(manual)
     m_main = manual[0]
-    # 定时推送开关（默认「开启功能 读报推送 / 关闭功能 读报推送」）
     on_names = " / ".join(_names("cmd_daily_news_on_name", "开启功能 读报推送"))
     off_names = " / ".join(_names("cmd_daily_news_off_name", "关闭功能 读报推送"))
-    # 手动读报开关（默认「开启功能 读报功能 / 关闭功能 读报功能」）
     m_on = " / ".join(_names("cmd_daily_news_manual_on_name",
                              "开启功能 读报功能"))
     m_off = " / ".join(_names("cmd_daily_news_manual_off_name",
                               "关闭功能 读报功能"))
-    # 推送时间 / 推送列表
     t_name = _names("cmd_daily_news_time_name", "读报推送时间")[0]
     l_name = _names("cmd_daily_news_list_name", "读报推送列表")[0]
     return "\n".join([
@@ -741,7 +628,6 @@ def build_news_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_output_mode_menu(plugin) -> str:
     """输出模式说明（管理员可切换，按群生效）"""
     om = getattr(plugin, "output_mode_module", None)
@@ -763,10 +649,6 @@ def build_output_mode_menu(plugin) -> str:
         "💡图片模式下内容与菜单都会转图；状态提示仍是文字",
         _bar_plain(),
     ])
-
-
-
-
 
 def build_weather_menu(plugin) -> str:
     """
@@ -801,9 +683,6 @@ def build_weather_menu(plugin) -> str:
         "　 图片版另有：分时段预报（3 小时一段，8 段）+ 未来 7 天",    ]
     return "\n".join(_finish(title, lines))
 
-
-
-
 def build_entertain_menu(plugin) -> str:
     """
     娱乐功能：子功能入口（后续新功能都加在这里）。
@@ -813,7 +692,6 @@ def build_entertain_menu(plugin) -> str:
     """
     card = _sv(getattr(plugin, "cmd_card_menu_name", "")) or "名片功能"
     rps = _sv(getattr(plugin, "cmd_rps_menu", "")) or "猜拳功能"
-    # ★★ 1.7.7：猜数游戏（娱乐功能新增）
     guess = _entry_name(plugin, "guess", "猜数功能")
     wea = _sv(getattr(plugin, "cmd_weather_menu_name", "")) or "天气查询"
     qq = _sv(getattr(plugin, "cmd_qqinfo_menu_name", "")) or "查询功能"
@@ -822,7 +700,6 @@ def build_entertain_menu(plugin) -> str:
         (f"🔢{guess}", f"☁️{wea}"),
         (f"🔍{qq}", ""),
     ], title=title)
-
 
 def build_guess_menu(plugin) -> str:
     """
@@ -854,7 +731,6 @@ def build_guess_menu(plugin) -> str:
     else:
         _to_txt = f"{to} 秒内没人猜就关闭"
     rows = [
-        # ★ 标题跟**菜单入口名**走，和「娱乐功能」里显示的保持一致
         _bar(_entry_name(plugin, "guess", "猜数功能")),
         f"🔢{start}",
         f"　 开一局：我想一个 {lo} ~ {hi} 之间的整数",
@@ -881,7 +757,6 @@ def build_guess_menu(plugin) -> str:
     ]
     return "\n".join(rows)
 
-
 def _names_of(v, dflt=None):
     """把指令配置统一成列表"""
     if isinstance(v, (list, tuple)):
@@ -889,7 +764,6 @@ def _names_of(v, dflt=None):
     else:
         out = [x.strip() for x in str(v or "").split(",") if x.strip()]
     return out or list(dflt or [])
-
 
 def build_qqinfo_menu(plugin) -> str:
     """查询功能：用法说明（查 QQ 用户资料）。"""
@@ -924,9 +798,6 @@ def build_qqinfo_menu(plugin) -> str:
     title = _sv(getattr(plugin, "cmd_qqinfo_menu_name", "")) or "查询功能"
     return "\n".join(_finish(title, rows))
 
-
-
-
 def build_admin_menu(plugin) -> str:
     rows = [
         ("🖼️接口管理", "📚词库管理"),
@@ -935,63 +806,137 @@ def build_admin_menu(plugin) -> str:
         ("📣艾特设置", "👑超管设置"),
         ("📰读报管理", "🚫成员管理"),
         ("🎨输出模式", "🔔提示功能"),
-        # ★★ 1.3.0：授权功能
         ("🔑授权功能", ""),
     ]
     return _grid(rows, title="管理系统")
 
+def _ga_help_lines():
+    """「全局管理员」设置说明（授权指令菜单 / 权限不足提示共用）"""
+    return [
+        "🔒 只有 **AstrBot 全局管理员** 能改授权",
+        "　 群主 / 群管理员 / 插件专属管理员 都无权",
+        "",
+        "🛠 怎么把自己设成全局管理员",
+        "　 配置文件 ➡ 平台配置（一般用默认配置文件，",
+        "　 也可以自己设置自定义）➡ 管理ID（点「添加更多」）",
+        "",
+        "🔍 怎么查自己的 ID",
+        "　 1. 记得开启「内置指令」插件",
+        "　 2. 发 `/sid` 即可查自己的 ID",
+        "　 3. ID 就是 UID：那一串字符数字",
+        "",
+        "💡 平台配置里的「唤醒词」就是指令前缀",
+        "　 例如默认的 `/`；清空后需 @机器人 才能触发内置指令",
+    ]
+
 
 def build_auth_menu(plugin, group_id: str = "") -> str:
     """
-    授权功能 —— 管理系统下级。
+    授权功能（主菜单）—— 两个下级入口 **排在同一行**（用户要求）。
 
-    按群授权，**到期自动关闭整个插件**（连开关都轮不到）。
+        {前缀}授权功能
+        ━━━━━━━━━━━━
+        授权指令　　授权查询
+        ━━━━━━━━━━━━━━━━━━━━
 
-    ★★ 只输出**指令用法**（用户要求：不要「本群授权」「各群授权状态」）。
-       查状态走 `授权状态` 指令，看全部群走 `授权列表` 指令。
+    ★★ 权限：**只有 AstrBot 全局管理员**能改授权。
     """
     am = getattr(plugin, "auth_module", None)
-    lines = [
-        _bar("授权功能"),
-    ]
     if am is None:
-        lines.append("⚠️ 授权模块未加载")
-        lines.append("")
-        lines.append("　 插件会在启动时重建它；若一直这样请检查 core/auth.py")
+        lines = [_bar("授权功能"), "⚠️ 授权模块未加载"]
         lines.append(_foot_bar(lines))
         return "\n".join(lines)
 
-    cmds = getattr(am, "cmd_names", None) or ["授权"]
-    cmd = cmds[0]
+    left = f"📝{_entry_name(plugin, 'auth_cmd', '授权指令')}"
+    right = f"🔍{_entry_name(plugin, 'auth_query', '授权查询')}"
+    try:
+        out = _grid([(left, right)], title="授权功能")
+        if str(out or "").strip():
+            return out
+    except Exception:
+        logger.debug("[auth] _grid 生成授权菜单失败，回落简单排版",
+                     exc_info=True)
+    lines = [_bar("授权功能"), f"{left}　　{right}"]
+    lines.append(_foot_bar(lines))
+    return "\n".join(lines)
+
+def build_auth_cmd_menu(plugin, group_id: str = "") -> str:
+    """
+    「授权指令」下级菜单 —— **指令使用提示**。
+    """
+    am = getattr(plugin, "auth_module", None)
+    lines = [_bar(_entry_name(plugin, "auth_cmd", "授权指令"))]
+    if am is None:
+        lines.append("⚠️ 授权模块未加载")
+        lines.append(_foot_bar(lines))
+        return "\n".join(lines)
+
+    cmd = (getattr(am, "cmd_names", None) or ["授权"])[0]
+    lines += [
+        f"　 ♾️ 「{cmd} 永久」　　永久授权",
+        f"　 📅 「{cmd} 30d」　　 30 天",
+        f"　 ⏰ 「{cmd} 12h」　　 12 小时",
+        f"　 ⏱️ 「{cmd} 90分」　　90 分钟",
+        f"　 🚫 「{cmd} 停用」　　停用（该群静默）",
+        f"　 🗑️ 「{cmd} 删除」　　删记录，回默认规则",
+        f"　 🎯 「{cmd} 群号 30d」给指定群授权",
+        "",
+        "💡 不带群号 = **发指令的那个群**",
+        "💡 时长也认 `30天` / `12小时` / `永久`",
+        "🔒 只有 **AstrBot 全局管理员** 能用",
+        "　 群主 / 群管理员 / 插件专属管理员 都无权",
+        "　 后台「授权功能」页有详细设置说明",
+    ]
+    lines.append(_foot_bar(lines))
+    return "\n".join(lines)
+
+def build_auth_query_menu(plugin, group_id: str = "") -> str:
+    """
+    「授权查询」下级菜单 —— 授权状态 / 授权列表 的指令和提示。
+
+    版式（用户指定，勿改）：
+        {前缀}授权查询
+        ━━━━━━━━━━━━
+        🔓 任何人都能查（不需要权限）
+
+        🔍 授权状态（查本群）
+        ──────────
+        　 授权状态　　　　　查**本群**是否已授权
+        　 授权状态 群号　　 查指定群
+
+        📋 授权列表（查全部群）
+        ──────────
+        　 授权列表　　　　　列出**每个群**的授权状态
+
+        💡 未授权的群看到的是「⛔ 本群未授权」
+        💡 授权要 AstrBot 全局管理员操作
+        ━━━━━━━━━━━━━━━━━━━━
+    """
+    am = getattr(plugin, "auth_module", None)
+    lines = [_bar(_entry_name(plugin, "auth_query", "授权查询"))]
+    if am is None:
+        lines.append("⚠️ 授权模块未加载")
+        lines.append(_foot_bar(lines))
+        return "\n".join(lines)
+
     st_cmd = (getattr(am, "status_names", None) or ["授权状态"])[0]
     ls_cmd = (getattr(am, "list_names", None) or ["授权列表"])[0]
-
-    # ============================================================
-    # ① 授权指令（三条主指令各自列出）
-    # ============================================================
+    _bar_sep = "─" * 10
     lines += [
-        f"📝 {cmd}指令（群里发，需管理员）",
-        "──────────",
-        f"　 {cmd} 永久　　　　 给**本群**永久授权",
-        f"　 {cmd} 30d　　　　　给本群 30 天（也认 `12h` / `90分`）",
-        f"　 {cmd} 停用　　　　 停用本群（立刻静默）",
-        f"　 {cmd} 删除　　　　 删本群记录",
-        f"　 {cmd} 群号 30d　　 指定群（群号放前面）",
+        "🔓 任何人都能查（不需要权限）",
         "",
-        f"🔍 {st_cmd}指令",
-        "──────────",
-        f"　 {st_cmd}　　　　　查**本群**状态",
-        f"　 {st_cmd} 群号　　 查指定群",
+        f"🔍 {st_cmd}（查本群）",
+        _bar_sep,
+        f"　 🔍 「{st_cmd}」　　　　查**本群**是否已授权",
+        f"　 🔎 「{st_cmd} 群号」　 查指定群",
         "",
-        f"📋 {ls_cmd}指令",
-        "──────────",
-        f"　 {ls_cmd}　　　　　列出**每个群**的状态",
+        f"📋 {ls_cmd}（查全部群）",
+        _bar_sep,
+        f"　 📋 「{ls_cmd}」　　　　列出**每个群**的授权状态",
         "",
+        "💡 未授权的群看到的是「⛔ 本群未授权」",
+        "💡 授权要 AstrBot 全局管理员操作",
     ]
-    lines.append("💡 未授权的群**所有指令都会提示需要授权**")
-    lines.append(f"💡 三条指令分工：`{cmd}` 改授权　"
-                 f"`{st_cmd}` 查本群　`{ls_cmd}` 看全部")
-    lines.append("💡 后台可改：总开关 / 默认天数 / 提醒天数 / 指令白名单")
     lines.append(_foot_bar(lines))
     return "\n".join(lines)
 
@@ -1017,7 +962,6 @@ def build_notice_menu(plugin) -> str:
         "admin": "谁成为 / 取消管理员",
         "title": "谁获得 / 取消专属称号",
     }
-    # 标签优先用模块里那份，取不到就退回内置表
     try:
         from .notice import NOTICE_LABEL as _LAB
     except Exception:
@@ -1046,7 +990,6 @@ def build_notice_menu(plugin) -> str:
     lines.append(_bar_plain())
     return "\n".join(lines)
 
-
 def build_member_admin_menu(plugin) -> str:
     return "\n".join([
         _bar("成员管理"),
@@ -1062,7 +1005,6 @@ def build_member_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_news_admin_menu(plugin) -> str:
     return "\n".join([
         _bar("读报管理"),
@@ -1075,10 +1017,6 @@ def build_news_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
-# ============================================================
-# 接口系统 · 三级子菜单
-# ============================================================
 def build_meme_feature_menu(plugin) -> str:
     return "\n".join([
         _bar("接口功能"),
@@ -1094,13 +1032,6 @@ def build_meme_feature_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
-# ============================================================
-# MC系统 · 三级子菜单
-# ============================================================
-# ============================================================
-# 打卡系统 · 三级子菜单
-# ============================================================
 def build_greeting_morning_menu(plugin) -> str:
     mn = " / ".join(plugin.greeting_module.morning_names) if plugin.greeting_module else "早安 / 早上好 / 起床"
     return "\n".join([
@@ -1112,7 +1043,6 @@ def build_greeting_morning_menu(plugin) -> str:
         "💡逻辑日 6 点重置",
         _bar_plain(),
     ])
-
 
 def build_greeting_night_menu(plugin) -> str:
     nn = " / ".join(plugin.greeting_module.night_names) if plugin.greeting_module else "晚安 / 睡觉 / 睡了"
@@ -1126,10 +1056,7 @@ def build_greeting_night_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_greeting_rank_menu(plugin) -> str:
-    # ★★ 市场版 1.1：打卡排行拆成**三条独立指令**（各出一个前十榜），
-    #   顺序按用户指定：天数 / 清醒 / 睡眠。
     _gm = getattr(plugin, "greeting_module", None)
 
     def _n(attr, dflt):
@@ -1183,7 +1110,6 @@ def build_racing_menu(plugin, page=1) -> str:
     wait = max(0, int(getattr(plugin, "race_wait_sec", 3600) or 0))
     limit = max(0, int(getattr(plugin, "race_daily_limit", 10) or 0))
     fee = max(0, int(getattr(plugin, "race_entry_fee", 500) or 0))
-    # ★★ 1.6：奖池上下限是**赛车自己的**（机制同抽奖，但奖池独立）
     blo = max(0, int(getattr(plugin, "race_pool_bonus_min", 1000) or 0))
     bhi = max(blo, int(getattr(plugin, "race_pool_bonus_max", 5000) or 0))
     npc_n = max(1, int(getattr(plugin, "race_fast_npc", 5) or 5))
@@ -1210,7 +1136,6 @@ def build_racing_menu(plugin, page=1) -> str:
         wait_txt = f"{wait} 秒没满就补 NPC"
 
     def _pages_of(i: int) -> list:
-        # ---------------- 第 1 页：所有指令 ----------------
         if i == 0:
             rows = [_bar(title), "── 所有指令 ──"]
 
@@ -1239,7 +1164,6 @@ def build_racing_menu(plugin, page=1) -> str:
                f"抽到几次就是几次，例：「{lucky_all}」")
             return rows
 
-        # ---------------- 第 2 页：比赛规则 ----------------
         if i == 1:
             rows = [
                 _bar(title),
@@ -1270,7 +1194,6 @@ def build_racing_menu(plugin, page=1) -> str:
             ]
             return rows
 
-        # ---------------- 第 3 页：胜负与进阶 ----------------
         rows = [
             _bar(title),
             "── 怎么才能赢 ──",
@@ -1323,7 +1246,6 @@ def build_checkin_signin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_checkin_query_menu(plugin) -> str:
     inf = " / ".join(plugin.checkin_module.info_trigger_names) if plugin.checkin_module else "签到统计"
     bc = getattr(plugin.checkin_module, "rank_count_names", None) or ["签到次数排行"]
@@ -1339,7 +1261,6 @@ def build_checkin_query_menu(plugin) -> str:
                 return " / ".join(out)
         return " / ".join(fb)
 
-    # ★★ 1.7.6：保险箱 / 理财 的指令与提示也在这里列出来
     _sh = _n("shop_trigger_names", "签到商店")
     _sb = _n("shop_buy_trigger_names", "购买物品")
     _ss = _n("shop_save_trigger_names", "存入保险箱")
@@ -1367,7 +1288,6 @@ def build_checkin_query_menu(plugin) -> str:
         f"📊{inf} QQ号",
         "　 查询指定用户",
     ]
-    # ★ 买了保险箱后，「签到统计」里会多一行保险箱余额
     if _shop_on:
         _lines += [
             f"　 🧰 买了保险箱的人，这里会多显示一行「保险箱：金额」",
@@ -1382,10 +1302,6 @@ def build_checkin_query_menu(plugin) -> str:
         f"　 {' / '.join(bd)}",
         f"　 　 按【欠款】排，欠得越多越靠前",
     ]
-    # ---------- 🧰 保险箱 ----------
-    # ★★ 1.7.6：**只留保险箱相关** ——
-    #   商店的「查看商店 / 购买商品」属于**签到商店**那条线，
-    #   已经挂在「签到系统 -> 商店帮助」菜单里，这里不再重复。
     if _shop_on:
         _lines += [
             "",
@@ -1398,12 +1314,8 @@ def build_checkin_query_menu(plugin) -> str:
             f"　 🛡 有保险箱：被偷概率 -{_fnum(_vr)}%",
             f"　 　 （保险箱在「{_sh}」里购买）",
         ]
-    # ---------- 💼 银行理财 ----------
-    # ★★ 1.7.6：**不在这里列** —— 理财属于**银行功能**，
-    #   指令和说明都已经在「银行功能」菜单里了，这里重复会显得啰嗦。
     _lines.append(_bar_plain())
     return "\n".join(_lines)
-
 
 def _bank_common(plugin):
     """银行相关菜单的**公共取值**（指令名 + 各类数值），拆成小工具避免重复。"""
@@ -1445,7 +1357,6 @@ def _bank_common(plugin):
     d["rp0"] = (d["rp"].split(" / ") or ["还款"])[0]
     return d
 
-
 def build_checkin_bank_menu(plugin) -> str:
     """
     ★★ 1.7.6：银行功能**主菜单** —— 只留「账户 + 存取」，其余拆到下级菜单。
@@ -1485,7 +1396,6 @@ def build_checkin_bank_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_checkin_bank_save_menu(plugin) -> str:
     """银行下级菜单：存钱 / 取钱"""
     c = _bank_common(plugin)
@@ -1504,7 +1414,6 @@ def build_checkin_bank_save_menu(plugin) -> str:
         "💡 银行里的钱**抢银行时会被抢走**，钱包里的不会",
         _bar_plain(),
     ])
-
 
 def build_checkin_bank_loan_menu(plugin) -> str:
     """银行下级菜单：借款 / 还款 / 借款信息（含逾期规则）"""
@@ -1553,7 +1462,6 @@ def build_checkin_bank_loan_menu(plugin) -> str:
     ]
     return "\n".join(lines)
 
-
 def build_checkin_bank_fund_menu(plugin) -> str:
     """银行下级菜单：**理财功能**（买入 / 查看 / 取出）"""
     c = _bank_common(plugin)
@@ -1585,7 +1493,6 @@ def build_checkin_bank_fund_menu(plugin) -> str:
         lines.append("🚫 该功能当前已关闭")
     lines.append(_bar_plain())
     return "\n".join(lines)
-
 
 def build_checkin_bank_rob_menu(plugin) -> str:
     """银行下级菜单：抢银行"""
@@ -1641,7 +1548,6 @@ def build_checkin_rob_hint(plugin) -> str:
         f"　 ⚠️ 成功率很低，下手前想清楚",
     ] + ([] if _on else ["　 🚫 该功能当前已关闭"]))
 
-
 def build_checkin_lottery_menu(plugin) -> str:
     """
     抽奖功能（1.7.6）：**列出全部相关指令** ——
@@ -1652,7 +1558,6 @@ def build_checkin_lottery_menu(plugin) -> str:
     ck = plugin.checkin_module
     lt = " / ".join(getattr(ck, "lottery_trigger_names", None) or ["开始抽奖"]) \
         if ck else "开始抽奖"
-    # ★★ 1.7.6：「全部抽奖」—— 一个指令抽完当天剩余次数
     lat = " / ".join(getattr(ck, "lottery_all_trigger_names", None)
                      or ["全部抽奖"]) if ck else "全部抽奖"
     _on = bool(getattr(ck, "lottery_enable", True)) if ck else True
@@ -1660,7 +1565,6 @@ def build_checkin_lottery_menu(plugin) -> str:
     _pmax = getattr(ck, "lottery_prize_max", 500)
     _rate = getattr(ck, "lottery_win_rate", 30)
     _lim = getattr(ck, "lottery_daily_limit", 0)
-    # ★ 奖池信息（1.7.6）
     pq = " / ".join(getattr(ck, "pool_trigger_names", None) or ["参与抽奖"])
     pq_info = ((getattr(ck, "pool_info_names", None) or ["奖池"])[0])
     _pfee = getattr(ck, "pool_fee", 500)
@@ -1671,7 +1575,6 @@ def build_checkin_lottery_menu(plugin) -> str:
     _ptimeout = getattr(ck, "pool_timeout_hours", 1)
     lines = [
         _bar("抽奖功能"),
-        # ---------- ① 普通抽奖 ----------
         f"🎰{lt}",
         "　 **不带参数**，直接发就行",
         f"　 抽一次：花 {_cost} {_sn(plugin)}",
@@ -1679,13 +1582,11 @@ def build_checkin_lottery_menu(plugin) -> str:
         "　 （**可能是 0，空手而归**）",
         (f"　 每天最多抽 {_lim} 次" if _lim > 0 else "　 每天次数不限"),
         "",
-        # ---------- ② 全部抽奖 ----------
         f"⚡{lat}",
         "　 **不带参数**，一个指令把当天剩余次数**全抽完**",
         (f"　 一次最多抽 {_lim} 次（= 每天上限）" if _lim > 0
          else "　 ⚠️ 本群抽奖不限次数，这个指令会提示改用普通抽奖"),
         "",
-        # ---------- ③ 奖池参与 ----------
         f"🎁{pq}",
         "　 **没有参数**，每天每人只能参与一次",
         f"　 入门费 {_pfee} {_sn(plugin)}（归系统，不退）",
@@ -1695,10 +1596,8 @@ def build_checkin_lottery_menu(plugin) -> str:
         f"　 奖池 {_pmin} ~ {_pool_max} {_sn(plugin)}（每天随机）",
         "　 开奖时奖池**全额随机分完**，各自进钱包",
         "",
-        # ---------- ④ 奖池信息 ----------
         f"💡 查看奖池进度：「{pq_info}」",
         "",
-        # ---------- 通用提示 ----------
         "📌 每天签到后，消息末尾也会提示这个玩法",
         "📌 花掉的钱**先扣**，中奖再额外加奖励",
         f"⚠️ 扣成负数就是负债，可以去银行「"
@@ -1710,7 +1609,6 @@ def build_checkin_lottery_menu(plugin) -> str:
         lines.append("🚫 奖池当前已关闭")
     lines.append(_bar_plain())
     return "\n".join(lines)
-
 
 def build_checkin_steal_menu(plugin) -> str:
 
@@ -1724,7 +1622,6 @@ def build_checkin_steal_menu(plugin) -> str:
         f"💡银行里的{_sn(plugin)}不会被偷",
         _bar_plain(),
     ])
-
 
 def _mount_common(plugin):
     """坐骑相关菜单的**公共取值**（指令名 + 状态），避免重复。"""
@@ -1743,7 +1640,6 @@ def _mount_common(plugin):
                 return out
         return [str(x) for x in (fallback or ["坐骑"])]
 
-    # 菜单入口（动态，走 mount_menu_names）
     try:
         mmenu = [str(x).strip() for x in plugin._mount_menu_names()
                  if str(x).strip()]
@@ -1761,13 +1657,11 @@ def _mount_common(plugin):
         "mv": " / ".join(_names("mount_view_names", "坐骑查看")),
         "ma": " / ".join(_names("cmd_mount_add_names", "添加坐骑")),
         "md": " / ".join(_names("cmd_mount_del_names", "删除坐骑")),
-        # ★★ 市场版：坐骑图片已移除
         "dir": "",
         "greet": bool(getattr(ck, "mount_greet_enable", True)),
         "sn": _sn(plugin),
     }
     return d
-
 
 def build_checkin_mount_menu(plugin) -> str:
     """
@@ -1792,7 +1686,6 @@ def build_checkin_mount_menu(plugin) -> str:
         f"💰{c['mb']} 坐骑名 / 序号",
         f"　 消耗{c['sn']}购买坐骑",
         "",
-        # ---------- 下级菜单入口 ----------
         "── 下级菜单（发下面的名字即可打开）──",
         f"🎽{_entry_name(plugin, 'mount_manage', '坐骑管理')}",
         f"　 装备坐骑 / {c['mv']}详情 / 翻页说明",
@@ -1803,7 +1696,6 @@ def build_checkin_mount_menu(plugin) -> str:
          if c["greet"] else "🚫 每天登场提示已关闭"),
         _bar_plain(),
     ])
-
 
 def build_checkin_mount_manage_menu(plugin) -> str:
     """坐骑下级菜单：坐骑管理（装备 / 查看 / 翻页）"""
@@ -1828,7 +1720,6 @@ def build_checkin_mount_manage_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_checkin_mount_admin_menu(plugin) -> str:
     """坐骑下级菜单：坐骑设置（管理员指令 / 图片 / 登场提示）"""
     c = _mount_common(plugin)
@@ -1837,7 +1728,6 @@ def build_checkin_mount_admin_menu(plugin) -> str:
         f"🛠 管理员指令",
         f"　 添加：{c['ma']} 名|价格|描述",
         f"　 删除：{c['md']} 名/序号",
-        "　 ⚠️ 需要插件专属管理员权限",
         "",
         "📁 坐骑图片：按坐骑名从素材目录找同名图",
         f"　 {c['dir']}",
@@ -1850,7 +1740,6 @@ def build_checkin_mount_admin_menu(plugin) -> str:
         "　 后台 mount_greet_enable 可开关",
         _bar_plain(),
     ])
-
 
 def build_checkin_shop_menu(plugin) -> str:
     """
@@ -1875,17 +1764,15 @@ def build_checkin_shop_menu(plugin) -> str:
     _buy = _n("shop_buy_trigger_names", "购买物品")
     _save = _n("shop_save_trigger_names", "存钱")
     _take = _n("shop_take_trigger_names", "取钱")
-    # ★★ 1.7.7：启用武器 / 我的装备（后台可自定义）
     _eq = _n("shop_equip_trigger_names", "启用武器")
     _me = _n("my_equip_trigger_names", "我的装备")
     _base = getattr(ck, "steal_success_rate", 50)
     _vr = getattr(ck, "vault_steal_reduce", 15)
     _cap = getattr(ck, "shop_defense_cap", 60)
-    # ★★ 1.7.7：武器破保险箱规则（没开就不显示那两行）
     _brate = float(getattr(ck, "vault_break_rate", 0.0) or 0.0)
     _bratio = float(getattr(ck, "vault_break_ratio", 1.0) or 1.0)
     _bdestroy = bool(getattr(ck, "vault_break_destroy", False))
-    _sn_txt = _sn(plugin)      # ★ 别起名 _sn，会遮蔽模块里的 _sn() 函数
+    _sn_txt = _sn(plugin)
 
     def _fmt(v):
         """15.0 -> 15 ；7.5 -> 7.5（和坐骑加成一致的显示风格）"""
@@ -1925,7 +1812,6 @@ def build_checkin_shop_menu(plugin) -> str:
         "📌 只有**当前启用**的那把武器算加成，换掉后旧的就不生效了",
         "📌 偷到的钱按 **钱包 → 银行 → 保险箱** 依次拿",
         "",
-        # ★★ 1.7.7：武器破保险箱（只有开了才有这行）
         *(["🔨 **武器破保险箱**：钱包和银行都掏空后，",
            f"　 带武器才有概率撬开对方保险箱（{_fmt(_brate)}%）"
            + ("，抢走箱内全部" if _bratio >= 1 else
@@ -1935,7 +1821,6 @@ def build_checkin_shop_menu(plugin) -> str:
           if _brate > 0 else []),
         _bar_plain(),
     ])
-
 
 def build_checkin_shop_help_menu(plugin, page=1) -> str:
     """
@@ -1984,15 +1869,8 @@ def build_checkin_shop_help_menu(plugin, page=1) -> str:
 
     def _pages_of(p: int) -> list:
         if p == 0:
-            # ★★ 1.7.7：**指令和说明分行** ——
-            #   以前用全角空格把说明挤在同一行（「💰购买商品 名字 / 序号　　买东西…」），
-            #   命令名一长就超出渲染宽度，断行位置乱七八糟（用户反馈「没换行」）。
-            #   现在统一成「指令一行 + 说明缩进一行」，和其它菜单一致。
             rows = [
                 _bar(_title),
-                # ★★ 1.7.7：这里**不再显示「签到商店」指令** ——
-                #   用户要求把它从商店帮助里移除（商品列表进「签到商店」
-                #   菜单看就行，不必在帮助里再列一条）。
                 "── 所有指令 ──",
             ]
 
@@ -2010,11 +1888,6 @@ def build_checkin_shop_help_menu(plugin, page=1) -> str:
             _c(f"📋{_jl}", "看工种、收益、体力消耗")
             _c(f"🔨{_save} 金额", "把钱存进保险箱（偷不走）")
             _c(f"📤{_take} 金额", "从保险箱取回")
-            # rows += [
-            #     "",
-            #     f"💡 用「{_shop} 2」可以翻到第 2 页商品",
-            #     f"💡 翻本说明：「{_title} 2」",
-            # ]
             return rows
         if p == 1:
             rows = [
@@ -2058,7 +1931,6 @@ def build_checkin_shop_help_menu(plugin, page=1) -> str:
                 "　 钱包 → 银行（不动保险箱）",
             ]
             return rows
-        # p == 2
         return [
             _bar(_title),
             "⚡ 体力系统",
@@ -2098,7 +1970,6 @@ def build_checkin_shop_help_menu(plugin, page=1) -> str:
     body.append(_bar_plain())
     return "\n".join(body)
 
-
 def build_speak_menu(plugin) -> str:
     m = getattr(plugin, "speak_stats_module", None)
 
@@ -2124,7 +1995,6 @@ def build_speak_menu(plugin) -> str:
         "\u3000查看自己的累计发言与活跃天数",
         _bar_plain(),
     ])
-
 
 def _pet_common(plugin):
     """宠物相关菜单的**公共取值**（指令名），拆成小工具避免重复。"""
@@ -2164,7 +2034,6 @@ def _pet_common(plugin):
         d[k + "0"] = (d[k].split(" / ") or [k])[0]
     return d
 
-
 def build_pet_menu(plugin) -> str:
     """
     ★★ 1.7.6：宠物功能**主菜单** —— 只留「宠物商店 + 物品商店」，其余拆下级。
@@ -2192,7 +2061,6 @@ def build_pet_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_pet_care_menu(plugin) -> str:
     """宠物下级菜单：养成操作（买/看/卖/放生/列表）"""
     d = _pet_common(plugin)
@@ -2219,7 +2087,6 @@ def build_pet_care_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_pet_fight_menu(plugin) -> str:
     """宠物下级菜单：对战玩法（冒险/休息/上班/决斗）"""
     d = _pet_common(plugin)
@@ -2244,7 +2111,6 @@ def build_pet_fight_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_pet_item_menu(plugin) -> str:
     """宠物下级菜单：道具（商店/购买/使用）"""
     d = _pet_common(plugin)
@@ -2262,26 +2128,9 @@ def build_pet_item_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def build_checkin_job_menu(plugin) -> str:
     jl = " / ".join(plugin.checkin_module.job_info_trigger_names) if plugin.checkin_module else "打工列表"
     jw = " / ".join(plugin.checkin_module.job_trigger_names) if plugin.checkin_module else "打工"
-    # ★★ 1.7.6：「全部打工」指令名（后台可自定义），菜单里要同步显示。
-    #   新增功能**必须**补进对应菜单，否则用户看不到有这条指令。
     ja = " / ".join(
         getattr(plugin.checkin_module, "job_all_trigger_names", None)
         or ["全部打工"]) if plugin.checkin_module else "全部打工"
@@ -2304,7 +2153,6 @@ def build_checkin_job_menu(plugin) -> str:
         "　 花体力一键清冷却，马上接着干",
         _bar_plain(),
     ])
-
 
 def build_stamina_menu(plugin) -> str:
     """
@@ -2342,7 +2190,6 @@ def build_stamina_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_checkin_job_list_menu(plugin) -> str:
     """★ 1.7.7：打工列表 — 工种明细 + 怎么开始"""
     _ck = getattr(plugin, "checkin_module", None)
@@ -2376,7 +2223,6 @@ def build_checkin_job_list_menu(plugin) -> str:
     rows.append(_bar_plain())
     return "\n".join(rows)
 
-
 def build_checkin_job_refill_menu(plugin) -> str:
     """
     ★★ 1.7.7：加班**主菜单**（用户要求：输出下级菜单）。
@@ -2386,10 +2232,6 @@ def build_checkin_job_refill_menu(plugin) -> str:
       · 加班 工种 / 全部加班 -> 真正扣体力清冷却
     """
     _ck = getattr(plugin, "checkin_module", None)
-    # 三条指令名各自读配置（都可在后台改）
-    #   ★ 主菜单入口名 = 「加班功能」；**执行指令名**是另一个键
-    #     （默认「加班」），别混用 —— 以前拿入口名当指令名，菜单里会
-    #     显示成「加班功能 工种名」（用户根本敲不出来）。
     _st_cmd = str(_entry_name(plugin, "job_refill_status", "加班状态")
                   ).split(" / ")[0]
     _cmd = ((getattr(_ck, "stamina_refill_trigger_names", None)
@@ -2407,7 +2249,6 @@ def build_checkin_job_refill_menu(plugin) -> str:
         "　 单独加班**一个**工种（只清它的冷却）",
         f"🔥{_all_cmd}",
         "　 加班**所有**冷却中的工种",
-        # ★ 用户要求：裸「加班」不输出内容，所以菜单里别把它列成一条
         f"　 💡 只打「{_cmd}」两个字没有反应，要带上工种名",
         "",
         "── 消耗规则 ──",
@@ -2418,7 +2259,6 @@ def build_checkin_job_refill_menu(plugin) -> str:
         "💡 体力每天 0 点回满，用食物可以立刻补",
         _bar_plain(),
     ])
-
 
 def build_checkin_job_refill_status_menu(plugin) -> str:
     """
@@ -2433,7 +2273,6 @@ def build_checkin_job_refill_status_menu(plugin) -> str:
     _ck = getattr(plugin, "checkin_module", None)
     _st_cmd = str(_entry_name(plugin, "job_refill_status", "加班状态")
                   ).split(" / ")[0]
-    # ★ 这里同样是**执行指令名**（不是菜单入口名）
     _cmd = ((getattr(_ck, "stamina_refill_trigger_names", None)
              or ["加班"])[0]) if _ck else "加班"
     _all_cmd = ((getattr(_ck, "stamina_refill_all_names", None)
@@ -2456,10 +2295,6 @@ def build_checkin_job_refill_status_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
-# ============================================================
-# 管理系统 · 二级子菜单
-# ============================================================
 def build_meme_admin_menu(plugin) -> str:
     return "\n".join([
         _bar("接口管理"),
@@ -2471,7 +2306,6 @@ def build_meme_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_word_admin_menu(plugin) -> str:
     return "\n".join([
         _bar("词库管理"),
@@ -2481,7 +2315,6 @@ def build_word_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_checkin_admin_menu(plugin) -> str:
     """
     签到管理：签到系统的管理指令（工种 / 坐骑 / 积分调整）。
@@ -2489,18 +2322,13 @@ def build_checkin_admin_menu(plugin) -> str:
     ★ 加减积分属于签到系统的管理指令，放在这里。
       指令名读插件属性，读不到再用默认值。
     """
-    # ★ 加减积分的指令名在**签到模块**里（score_add/sub_trigger_names），
-    #   不在插件属性上，所以从 checkin_module 读。
     _ck = getattr(plugin, "checkin_module", None)
     _adds = getattr(_ck, "score_add_trigger_names", None) or ["加积分"]
     _subs = getattr(_ck, "score_sub_trigger_names", None) or ["减积分"]
     add = str(_adds[0]).strip() or "加积分"
     sub = str(_subs[0]).strip() or "减积分"
-    # ★★ 1.7.7：清空财富（管理员，不可撤销）
     _wipes = getattr(_ck, "wipe_wealth_trigger_names", None) or ["清空财富"]
     wipe = str(_wipes[0]).strip() or "清空财富"
-    # 工种 / 坐骑：配置里常写多个别名（逗号分隔），
-    # 取主名显示，其余折成「别名：…」一行，避免标题被撑得又长又乱。
     def _split(v):
         return [x.strip() for x in str(v or "").replace("，", ",").split(",")
                 if x.strip()]
@@ -2537,7 +2365,6 @@ def build_checkin_admin_menu(plugin) -> str:
     lines.append(_bar_plain())
     return "\n".join(lines)
 
-
 def build_status_admin_menu(plugin) -> str:
     names = " / ".join(plugin.cmd_status_names)
     return "\n".join([
@@ -2550,7 +2377,6 @@ def build_status_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_switch_admin_menu(plugin) -> str:
     return "\n".join([
         _bar("开关管理"),
@@ -2561,7 +2387,6 @@ def build_switch_admin_menu(plugin) -> str:
         f"📊{_sv(plugin.cmd_feature_status_name)} ［群号］",
         _bar_plain(),
     ])
-
 
 def build_chime_admin_menu(plugin) -> str:
     return "\n".join([
@@ -2576,7 +2401,6 @@ def build_chime_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
 def build_must_at_admin_menu(plugin) -> str:
     return "\n".join([
         _bar("艾特设置"),
@@ -2585,7 +2409,6 @@ def build_must_at_admin_menu(plugin) -> str:
         f"📊{_sv(plugin.cmd_must_at_bot_status_name)} ［群号］",
         _bar_plain(),
     ])
-
 
 def build_super_admin_menu(plugin) -> str:
     return "\n".join([
@@ -2598,12 +2421,6 @@ def build_super_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
-
-# ============================================================
-# 菜单输出内容：后台可自定义
-# ============================================================
-# 每个菜单的 id 与默认生成函数。默认值会在插件启动时写进后台数据，
-# 之后后台改过的内容优先；改回空字符串即恢复默认。
 MENU_REGISTRY = {
     "main":            ("主菜单",         "build_main_menu"),
     "meme":            ("接口系统",       "build_meme_menu"),
@@ -2624,12 +2441,10 @@ MENU_REGISTRY = {
     "greeting_morning": ("早安打卡",      "build_greeting_morning_menu"),
     "greeting_night":  ("晚安打卡",       "build_greeting_night_menu"),
     "greeting_rank":   ("打卡排行",       "build_greeting_rank_menu"),
-    # ★★ 市场版 1.1：赛车功能菜单（分页）
     "racing":         ("赛车功能",      "build_racing_menu"),
     "checkin_signin":  ("签到指令",       "build_checkin_signin_menu"),
     "checkin_query":   ("查询指令",       "build_checkin_query_menu"),
     "checkin_bank":    ("银行功能",       "build_checkin_bank_menu"),
-    # ★★ 1.7.6：银行拆成 4 个下级菜单（主菜单只留「账户 + 存取」）
     "checkin_bank_save": ("存钱取钱",     "build_checkin_bank_save_menu"),
     "checkin_bank_loan": ("借款还款",     "build_checkin_bank_loan_menu"),
     "checkin_bank_fund": ("理财功能",     "build_checkin_bank_fund_menu"),
@@ -2637,33 +2452,21 @@ MENU_REGISTRY = {
     "checkin_lottery": ("抽奖功能",       "build_checkin_lottery_menu"),
     "checkin_steal":   ("神偷功能",       "build_checkin_steal_menu"),
     "checkin_mount":   ("坐骑功能",       "build_checkin_mount_menu"),
-    # ★★ 1.7.7：坐骑拆成两个下级菜单
     "mount_manage":    ("坐骑管理",       "build_checkin_mount_manage_menu"),
     "mount_admin":     ("坐骑设置",       "build_checkin_mount_admin_menu"),
     "checkin_job":     ("打工功能",       "build_checkin_job_menu"),
-    # ★★ 1.7.7：打工下级菜单
     "job_list":        ("打工列表",       "build_checkin_job_list_menu"),
-    # ★★ 1.7.7：加班主菜单（下级菜单：加班状态 / 加班）
     "job_refill":      ("加班功能",       "build_checkin_job_refill_menu"),
-    # ★★ 1.7.7：加班状态（只列可加班 / 不可加班工种）
     "job_refill_status": ("加班状态",     "build_checkin_job_refill_status_menu"),
-    # ★★ 1.7.7：体力
     "stamina":         ("我的体力",       "build_stamina_menu"),
-    # ★★ 1.7.6 新增：签到商店
     "checkin_shop":    ("签到商店",       "build_checkin_shop_menu"),
-    # ★★ 1.7.6：商店帮助 —— 和「签到商店」**输出完全一样**的说明菜单。
-    #   分销：`签到商店` 这条**指令**输出商品列表（见 do_shop_list），
-    #         `商店帮助` 这个**菜单入口**输出指令说明。
     "checkin_shop_help": ("商店帮助",     "build_checkin_shop_help_menu"),
     "speak":           ("发言功能",       "build_speak_menu"),
     "pet":             ("宠物功能",       "build_pet_menu"),
-    # ★★ 1.7.6：宠物拆成 3 个下级菜单（主菜单只留「宠物商店 + 物品商店」）
     "pet_care":        ("宠物养成",       "build_pet_care_menu"),
     "pet_fight":       ("宠物玩法",       "build_pet_fight_menu"),
     "pet_item":        ("宠物道具",       "build_pet_item_menu"),
-    # ★★ 1.7.7：猜数游戏（娱乐功能下级）
     "guess":           ("猜数功能",       "build_guess_menu"),
-    # ★★ 1.7.7：音乐下级菜单（点歌 / 搜歌 各自独立 + 音源设置）
     "meme_admin":      ("接口管理",       "build_meme_admin_menu"),
     "word_admin":      ("词库管理",       "build_word_admin_menu"),
     "checkin_admin":   ("签到管理",       "build_checkin_admin_menu"),
@@ -2674,12 +2477,11 @@ MENU_REGISTRY = {
     "member_admin":    ("成员管理",       "build_member_admin_menu"),
     "must_at_admin":   ("艾特设置",       "build_must_at_admin_menu"),
     "super_admin":     ("超管设置",       "build_super_admin_menu"),
-    # ★ 1.7.6：提示功能（管理系统子菜单）
     "notice":          ("提示功能",       "build_notice_menu"),
-    # ★★ 1.3.0：授权功能（管理系统子菜单）
     "auth":            ("授权功能",       "build_auth_menu"),
+    "auth_cmd":        ("授权指令",       "build_auth_cmd_menu"),
+    "auth_query":      ("授权查询",       "build_auth_query_menu"),
 }
-
 
 def menu_default(plugin, menu_id: str) -> str:
     """生成某个菜单的**默认**内容（不读后台覆盖）"""
@@ -2691,20 +2493,15 @@ def menu_default(plugin, menu_id: str) -> str:
     if fn is None:
         return ""
     try:
-        # ★ 图鉴菜单：写入后台的「默认文案」不带翻页行，
-        #   翻页提示由 main._build_bird_menu 在渲染时按需补上。
-        #   这样用户改文案不会残留硬提示，功能用法也不会丢。
         if mid == "bird":
             return str(fn(plugin, with_page_hint=False) or "")
         return str(fn(plugin) or "")
     except Exception:
         return ""
 
-
 def all_menu_defaults(plugin) -> dict:
     """所有菜单的默认内容（给后台初始化用）"""
     return {k: menu_default(plugin, k) for k in MENU_REGISTRY}
-
 
 def resolve_menu(plugin, menu_id: str, custom=None) -> str:
     """

@@ -41,7 +41,6 @@ import threading
 from astrbot.api import logger
 _LOCK = threading.RLock()
 
-# 所有受管理的集合（顺序即后台展示顺序）
 COLLECTIONS = [
     "api_list",
     "fortune_list",
@@ -55,17 +54,13 @@ COLLECTIONS = [
     "pet_adventure_events",
     "pet_item_list",
     "menu_texts",
-    # ★★ 1.7.6 新增：签到商店（保险箱 / 武器）
     "shop_list",
-    # ★★ 1.7.8 新增：戳一戳随机回复词库
     "poke_reply_list",
-    # ★★ 市场版 1.1 新增：赛车数据（数据管理可视化增删改）
     "race_car_list",
     "race_lottery_pool",
     "race_npc_cars",
 ]
 
-# 各集合用于「只读摘要」展示的字段
 SUMMARY_FIELDS = {
     "api_list": ("keywords", "media_type"),
     "fortune_list": ("fortune", "title"),
@@ -78,17 +73,13 @@ SUMMARY_FIELDS = {
     "pet_work_events": ("event", "exp_min"),
     "pet_adventure_events": ("event", "exp_min"),
     "pet_item_list": ("name", "price"),
-    # ★★ 1.7.6 新增：签到商店（条目名 + 价格 + 类型）
     "shop_list": ("name", "price", "kind"),
-    # ★★ 1.7.8 新增：戳一戳回复词库
     "poke_reply_list": ("word",),
-    # ★★ 市场版 1.1 新增：赛车数据
     "race_car_list": ("name", "price", "kind"),
     "race_lottery_pool": ("kind", "name", "weight"),
     "race_npc_cars": ("name", "speed", "accel", "handling"),
 }
 
-# 各集合在 template_list 里的模板键（迁移时要用）
 TEMPLATE_KEYS = {
     "api_list": "meme_rule",
     "fortune_list": "fortune_item",
@@ -101,12 +92,10 @@ TEMPLATE_KEYS = {
     "pet_work_events": "pet_event",
     "pet_adventure_events": "pet_adventure_event",
     "pet_item_list": "pet_item_goods",
-    # ★★ 1.7.8 新增
     "poke_reply_list": "poke_word_item",
 }
 
 DATA_VERSION = 2
-
 
 class DataStore:
     """统一数据存储（线程安全，原子写盘，支持检测文件变更自动重载）"""
@@ -116,14 +105,9 @@ class DataStore:
         self.version = DATA_VERSION
         self.collections = {k: [] for k in COLLECTIONS}
         self.pet_work_events_ver = 0
-        # ★ 上次读到的文件指纹（mtime_ns + 大小）
-        #   用来发现「别的进程 / 用户直接编辑」导致的文件变化
         self._stamp = None
         self.load()
 
-    # ============================================================
-    # 读写
-    # ============================================================
     def _file_stamp(self):
         """文件指纹；文件不存在返回 None"""
         if not self.path:
@@ -157,7 +141,6 @@ class DataStore:
         if not force and self._stamp is not None and cur == self._stamp:
             return False
         if not force and self._stamp is None:
-            # 首次记录：构造时已经 load 过，不重复读
             self._stamp = cur
             return False
         self.load()
@@ -180,7 +163,6 @@ class DataStore:
             for k in COLLECTIONS:
                 v = cols.get(k)
                 self.collections[k] = list(v) if isinstance(v, list) else []
-            # 兼容旧键名：早期把集合直接放在顶层
             for k in COLLECTIONS:
                 if not self.collections[k] and isinstance(data.get(k), list):
                     self.collections[k] = list(data[k])
@@ -188,7 +170,6 @@ class DataStore:
                 self.version = int(data.get("version", DATA_VERSION) or DATA_VERSION)
             except Exception:
                 self.version = DATA_VERSION
-            # 数据升级标记（各功能独立，避免反复覆盖用户数据）
             try:
                 self.pet_work_events_ver = int(
                     data.get("pet_work_events_ver", 0) or 0
@@ -220,9 +201,6 @@ class DataStore:
             except Exception:
                 logger.exception("[data_store] 保存失败")
 
-    # ============================================================
-    # 集合访问
-    # ============================================================
     def get(self, key: str, autoreload=False) -> list:
         """
         读一个集合。
@@ -297,9 +275,6 @@ class DataStore:
     def count(self, key: str) -> int:
         return len(self.get(key))
 
-    # ============================================================
-    # 从旧后台配置迁移（只做一次，幂等）
-    # ============================================================
     def migrate_from_config(self, cfg: dict) -> dict:
         """
         把旧后台配置里的 template_list 数据搬进独立文件。
@@ -345,9 +320,6 @@ class DataStore:
                 cfg[key] = []
         return cfg
 
-    # ============================================================
-    # 只读摘要（写进后台的文本字段，方便快速查看）
-    # ============================================================
     def summary(self, key: str, limit: int = 8) -> str:
         rows = self.get(key)
         fields = SUMMARY_FIELDS.get(key, ())

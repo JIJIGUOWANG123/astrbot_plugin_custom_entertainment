@@ -21,12 +21,9 @@ from astrbot.api import logger
 try:
     import aiohttp
     _HAS_AIOHTTP = True
-except Exception:  # pragma: no cover
+except Exception:
     _HAS_AIOHTTP = False
 
-# ★★ 1.7.7：图片模式分成两种配色
-#   · image      深色卡片（原来那套，白字）
-#   · image_light **纯白底 + 黑字**（亮色环境 / 想打印时更清楚）
 MODES = ("text", "image", "image_light")
 DEFAULT_MODE = "text"
 MODE_LABELS = {
@@ -34,35 +31,26 @@ MODE_LABELS = {
     "image": "图片模式（深色）",
     "image_light": "图片模式（白底黑字）",
 }
-# 模式触发词（用户/管理员可发这些来切）
 MODE_ALIASES = {
     "文本": "text", "text": "text", "纯文本": "text", "文字": "text",
     "图片": "image", "image": "image", "图片模式": "image", "图": "image",
-    # ★★ 1.7.7：白底黑字
     "白底": "image_light", "白底黑字": "image_light",
     "亮色": "image_light", "浅色": "image_light",
     "图片白底": "image_light", "image_light": "image_light",
     "light": "image_light", "白": "image_light",
-    # 兼容旧写法：卡片 -> 图片（卡片模式已取消）
     "卡片": "image", "卡片模式": "image", "card": "image",
 }
 
-# 背景图
-BG_ORIGINAL = "original"                  # 原来的深色底
-# ★★ 1.7.7：**纯白底 + 黑字** —— 也作为一个「背景」选项暴露给后台，
-#   这样除了「切换输出模式 白底」，在「图片背景图」下拉里也能直接选。
+BG_ORIGINAL = "original"
 BG_WHITE = "white"
 DEFAULT_BG = BG_ORIGINAL
-# 内置可选的背景图（MemeAPI 目录下的文件）
 BUILTIN_BACKGROUNDS = (
     "Background1.jpg", "Background2.png",
     "Background3.jpg", "Background4.jpg",
 )
-# 中文别名 -> 文件名
 BG_ALIASES = {
     "默认": BG_ORIGINAL, "原来": BG_ORIGINAL, "原版": BG_ORIGINAL,
     "original": BG_ORIGINAL, "默认背景": BG_ORIGINAL,
-    # ★★ 1.7.7：白底黑字
     "白底": BG_WHITE, "纯白": BG_WHITE, "白色": BG_WHITE,
     "白底黑字": BG_WHITE, "白色背景": BG_WHITE, "白背景": BG_WHITE,
     "white": BG_WHITE,
@@ -74,34 +62,24 @@ BG_ALIASES = {
     "3": "Background3.jpg", "4": "Background4.jpg",
 }
 
-# 渲染缓存版本
-#   ★ 只要渲染结果会变（改了字体逻辑 / 排版 / 配色等），就把它 +1，
-#     旧缓存会自动失效，不会再发出历史版本的图。
-#   ★★ 1.7.7：+1（新增白底黑字主题 + 图标列宽归一 + 分隔线识别修正）
 CACHE_VERSION = 104
 
-# 渲染服务地址（与表情包接口同一服务）
 DEFAULT_RENDER_BASE = "http://127.0.0.1:5099"
 RENDER_PATH = "/api/render"
-HUSBAND_PATH = "/api/husband"        # 老公卡片（头像嵌入图中）
-QUERY_PATH = "/api/query"            # 查询卡片（顶部 QQ 头像）
-BIRD_PATH = "/api/bird"              # 抽鸟卡
-BIRD_GALLERY_PATH = "/api/bird_gallery"  # 小鸟收集图鉴
-BIRD_LIST_PATH = "/api/bird_list_page"   # 图鉴列表（编号 + 名称）
-BIRD_DETAIL_PATH = "/api/bird_detail"    # 图鉴详情（每项一行）
-# ★ 1.7.6：坐骑卡（图片在顶部，按坐骑名自动找 car 目录里的同名图）
+HUSBAND_PATH = "/api/husband"
+QUERY_PATH = "/api/query"
+BIRD_PATH = "/api/bird"
+BIRD_GALLERY_PATH = "/api/bird_gallery"
+BIRD_LIST_PATH = "/api/bird_list_page"
+BIRD_DETAIL_PATH = "/api/bird_detail"
 MOUNT_PATH = "/api/mount"
-# ★★ 1.7.7：缺字形探测（哪些字符会渲染成方框）
 GLYPH_PATH = "/api/glyph_check"
-# ★ 1.7.6：行内图片标记 [[img:名字]]（文本模式整行去掉，图片模式渲染进卡片）
 INLINE_IMG_RE = re.compile(r"^[ \t]*\[\[\s*img\s*:[^\]]*\]\][ \t]*$",
                            re.MULTILINE)
-
 
 def strip_inline_img(text: str) -> str:
     """文本模式用：去掉行内图片标记那一行，并压掉多余空行"""
     return _collapse_blank(INLINE_IMG_RE.sub("", str(text or ""))).strip()
-
 
 def _collapse_blank(text: str) -> str:
     """把连续空行压成一个"""
@@ -117,20 +95,12 @@ def _collapse_blank(text: str) -> str:
         out.append(ln)
     return "\n".join(out)
 
-
 RENDER_TIMEOUT = 20
-# ★★ 市场版：**不再内置任何本机服务目录**。
-# ★★ 审核整改：以下「自动拉起渲染服务」相关的常量已**废弃删除**
-#   （LOCAL_SERVICE_DIRS / START_COOLDOWN / START_WAIT）——
-#   插件不再启动任何外部进程，渲染服务由用户自行启动。
-# 渲染文本上限（超过就退回纯文本，避免超长卡片）
 RENDER_MAX_CHARS = 3500
-
 
 class OutputModeModule:
     """按群管理输出模式：text / card / image"""
 
-    # 暴露给外部（main.py 会用 实例.MODE_LABELS / 实例.MODES）
     MODES = MODES
     MODE_LABELS = MODE_LABELS
     MODE_ALIASES = MODE_ALIASES
@@ -139,18 +109,14 @@ class OutputModeModule:
     def __init__(self, plugin_dir: str = ""):
         self.plugin_dir = plugin_dir
         self.default_mode = DEFAULT_MODE
-        self.groups = {}                 # {群号: 模式}
+        self.groups = {}
         self.render_base = DEFAULT_RENDER_BASE
         self.enable = True
         self.cmd_names = ["切换输出模式", "输出模式"]
-        self.card_title = ""             # 卡片标题（留空则不显示）
-        self._cache = {}                 # 渲染结果缓存 {key: path}
-        # ★ 给个默认值：_load_cfg 还没跑（或中途异常）时也不会 AttributeError
+        self.card_title = ""
+        self._cache = {}
         self.bg_image = ""
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         cfg = cfg if isinstance(cfg, dict) else {}
 
@@ -167,7 +133,7 @@ class OutputModeModule:
             return str(v).strip().lower() in ("1", "true", "yes", "on", "开")
 
         mode = _s("output_default_mode", DEFAULT_MODE).lower()
-        if mode == "card":          # 旧配置兼容：卡片 -> 图片
+        if mode == "card":
             mode = "image"
         self.default_mode = mode if mode in MODES else DEFAULT_MODE
 
@@ -175,10 +141,7 @@ class OutputModeModule:
         self.render_base = (_s("output_render_base", DEFAULT_RENDER_BASE)
                             or DEFAULT_RENDER_BASE).rstrip("/")
         self.card_title = _s("output_card_title", "")
-        # ★★ 审核整改：不再读取/使用「渲染服务目录」——
-        #   插件不启动任何外部进程。
 
-        # 背景图（不填则用原来的深色底）
         bg = _s("output_bg_image", DEFAULT_BG)
         self.bg_image = self.normalize_bg(bg)
 
@@ -186,7 +149,6 @@ class OutputModeModule:
                  _s("cmd_output_mode", "切换输出模式,输出模式").replace("，", ",").split(",")]
         self.cmd_names = [x for x in names if x] or ["切换输出模式"]
 
-        # 每群模式（存成 "群号:模式,群号:模式"）
         self.groups = {}
         raw = _s("output_group_modes", "")
         for part in raw.replace("，", ",").split(","):
@@ -195,14 +157,11 @@ class OutputModeModule:
                 continue
             g, m = part.split(":", 1)
             g, m = g.strip(), m.strip().lower()
-            if m == "card":          # 旧配置兼容
+            if m == "card":
                 m = "image"
             if g and m in MODES:
                 self.groups[g] = m
 
-    # ============================================================
-    # 背景图
-    # ============================================================
     @staticmethod
     def normalize_bg(raw) -> str:
         """
@@ -219,20 +178,16 @@ class OutputModeModule:
         low = v.lower()
         if low in (BG_ORIGINAL, "none", "default", "无"):
             return BG_ORIGINAL
-        # ★ 含路径分隔符 / 上级目录的一律拒绝（防路径穿越）
         norm = v.replace("\\", "/")
         if "/" in norm or ".." in norm:
             return BG_ORIGINAL
         blo = v.lower()
-        # 带后缀：先按内置名单做大小写不敏感匹配
         for ext in (".jpg", ".jpeg", ".png", ".webp"):
             if blo.endswith(ext):
                 for fn in BUILTIN_BACKGROUNDS:
                     if fn.lower() == blo:
                         return fn
-                # 自加的图：纯文件名也接受
                 return v
-        # 只写了数字或名字前缀
         for i, fn in enumerate(BUILTIN_BACKGROUNDS, start=1):
             if v == str(i) or v in fn:
                 return fn
@@ -247,9 +202,6 @@ class OutputModeModule:
             return "纯白底（黑字）"
         return b
 
-    # ============================================================
-    # 模式读写
-    # ============================================================
     def theme_of(self, group_id="") -> str:
         """
         ★★ 1.7.7：本群该用哪个渲染主题。
@@ -321,7 +273,6 @@ class OutputModeModule:
                     continue
                 rest = t[len(prefix):].strip(" ：:，,")
                 if not rest:
-                    # 只发了指令：返回空模式，由调用方提示当前状态
                     return "", ""
                 m = self.parse_mode(rest)
                 if m:
@@ -330,18 +281,6 @@ class OutputModeModule:
                             f"💡 可用：文本 / 图片")
         return None, ""
 
-    # ============================================================
-    # 渲染
-    # ============================================================
-    # ============================================================
-    # ★★ 1.7.7：**缺字形字符**（会渲染成方框）的精确探测
-    # ------------------------------------------------------------
-    # 插件侧只能按 Unicode 区间猜「哪些字符会变方框」，猜不准：
-    #   · 私用区、增补平面能猜到（已按区间过滤）
-    #   · 但「字体链里真没这个字形」的字符，区间猜不出来
-    # 渲染服务有精确探测（`_has_glyph`：比对豆腐框位图指纹），
-    # 于是这里问它一次，把结论**缓存**下来，之后同步过滤即可。
-    # ============================================================
     async def fetch_missing_glyphs(self, text: str) -> set:
         """
         问渲染服务：这段文本里哪些字符**画不出来**（会变方框）。
@@ -403,17 +342,6 @@ class OutputModeModule:
     def _endpoint(self) -> str:
         return self.render_base + RENDER_PATH
 
-    # ================================================================
-    # ★★ 审核整改：**已移除**「渲染服务自动拉起」功能。
-    #
-    #   原实现会用 `外部进程调用` 去执行某个目录下的
-    #   `start.bat` / `python app.py`，把一个本地渲染服务拉起来。
-    #   社区规范对「插件自行拉起外部进程」比较敏感，所以整体删掉：
-    #     · 渲染服务改为**完全由用户自己启动**（或指向任意可用的
-    #       渲染地址）；插件只负责发 HTTP 请求
-    #     · 服务不可达时**回落到纯文本输出**（本来就有的行为）
-    # ================================================================
-
     async def _get_with_retry(self, url: str, params: dict):
         """
         GET 一次文本渲染接口。
@@ -455,8 +383,6 @@ class OutputModeModule:
         """
         if not _HAS_AIOHTTP or not self.enable:
             return ""
-        # ★★ 1.7.6：进渲染前去掉 markdown 强调标记（`**`）
-        #   图片渲染不认 markdown，`**` 会原样画出来、还让文字显斜体。
         try:
             from .path_utils import strip_md as _smd
         except Exception:
@@ -467,10 +393,8 @@ class OutputModeModule:
         if _smd is not None:
             text = _smd(text)
             tail = _smd(tail)
-        # ★ 尾巴要算进长度限制，否则「正文刚好满 + 尾巴」会被丢掉
         _all_len = len(str(text or "")) + len(str(tail or ""))
         body = INLINE_IMG_RE.sub("", str(text or "")).strip()
-        # ★ 标记行留下的空行收拾一下（连续空行压成一个）
         body = _collapse_blank(body)
         if not body.strip() or _all_len > RENDER_MAX_CHARS:
             return ""
@@ -484,14 +408,10 @@ class OutputModeModule:
                 pass
         if img_dir:
             params["img_dir"] = str(img_dir)
-        # ★★ 1.7.7：图片模式分两种配色 —— white 主题走「纯白底 + 黑字」
-        #   由调用方按当前 mode 传进来（image_light -> theme=white）
         if theme:
             params["theme"] = str(theme)
         if self.card_title:
             params["title"] = self.card_title
-        # 背景图（original 时不传，用原来深色底）
-        # ★★ 1.7.7：white 是「主题」不是背景图文件，别当 bg 传过去
         _bgv = str(getattr(self, "bg_image", "") or "")
         if _bgv and _bgv not in (BG_ORIGINAL, BG_WHITE):
             params["bg"] = self.bg_image
@@ -499,7 +419,6 @@ class OutputModeModule:
         if err or not blob:
             logger.warning(f"[output] 渲染失败：{err or '空响应'}")
             return ""
-        # ★ 缓存键要带上 max_w，否则「宽版」和「窄版」会互相顶掉
         return self._save_cache(blob, style,
                                 str(text or "") + "\n" + str(tail or "")
                                 + f"|w{int(max_w or 0)}|t{theme}")
@@ -526,7 +445,6 @@ class OutputModeModule:
                 if os.path.isdir(p):
                     shutil.rmtree(p, ignore_errors=True)
                 elif name.endswith(".jpg"):
-                    # 更早的平铺缓存（没有版本目录时）
                     try:
                         os.remove(p)
                     except Exception:
@@ -538,11 +456,6 @@ class OutputModeModule:
                     extra: str = "") -> str:
         """把渲染结果写进临时目录（相同内容复用，避免重复渲染）"""
         import hashlib
-        # ★ 背景图 + 缓存版本都要进 key，
-        #   否则换背景 / 改渲染逻辑后仍会拿到旧图
-        # ★ 用 getattr 兜底：bg_image 由 _load_cfg 赋值，
-        #   若配置加载中途异常，这里会 AttributeError，
-        #   导致**所有**渲染方法（名片/小鸟/猜拳…）静默返回空串。
         raw = (f"v{CACHE_VERSION}|" + style + "|"
                + (str(getattr(self, "bg_image", "") or "")
                                    + ":" + self.theme_of()) + "|"
@@ -559,7 +472,6 @@ class OutputModeModule:
                 with open(path, "wb") as f:
                     f.write(blob)
             self._cache[key] = path
-            # 缓存别无限涨
             if len(self._cache) > 300:
                 self._cache.clear()
                 self._cache[key] = path
@@ -586,7 +498,6 @@ class OutputModeModule:
         _bgv2 = str(getattr(self, "bg_image", "") or "")
         if _bgv2 and _bgv2 not in (BG_ORIGINAL, BG_WHITE):
             payload["bg"] = self.bg_image
-        # 头像转 base64
         if avatar_path:
             try:
                 if os.path.isfile(avatar_path):
@@ -663,8 +574,6 @@ class OutputModeModule:
                 f"[output] 查询卡片渲染异常：{type(e).__name__}: {str(e)[:80]}")
             return ""
 
-
-
     async def render_bird_card(self, title: str, name: str, desc: str = "",
                                img: str = "", bg: str = "",
                                lv: int = 0, count: int = 0,
@@ -711,7 +620,6 @@ class OutputModeModule:
                     blob = await resp.read()
             if not blob:
                 return ""
-            # ★ 等级 / 第几只 必须进缓存键，否则升级后仍发旧图
             return self._save_cache(blob, "bird", name,
                                     extra="|".join([payload["title"],
                                                     payload["img"],
@@ -799,7 +707,6 @@ class OutputModeModule:
             _p = 1
         if _p < 1:
             _p = 1
-        # 与服务端 GAL_PAGE_SIZE / GAL_COLS 保持一致，仅用于算总页数
         _per = 60
         _pages = max(1, -(-len(items) // _per))
         if _p > _pages:
@@ -818,17 +725,8 @@ class OutputModeModule:
 
         payload = {"items": items[:200], "bg": str(bg or ""), "page": _p,
                    "rank": _rank, "total_users": _tu}
-        # ★ 缓存键必须包含「**本页**每只鸟的名字/等级/拥有状态」+ **总数**。
-        #   旧写法有两个坑（会导致一直发旧图）：
-        #     ① 只取签名前 600 字符 -> 只覆盖**前 60 只**；之后新增的鸟
-        #        （都在末尾且未拥有）不影响签名，于是缓存命中、永远发旧图
-        #     ② 不含总数 -> 「已收集 x / y」里的 y 停在旧值
-        #   现在对**该页切片**做完整签名，并显式带上总数。
         _slice = items[(_p - 1) * _per:_p * _per]
         import hashlib as _hl
-        # ★ 两个签名一起进缓存键：
-        #   all — **整个名单**的哈希（增删任意一只鸟都会变，包括删末页的）
-        #   page — 本页每只鸟的名字/等级/拥有状态（收集进度变化会变）
         _all = _hl.md5("|".join(
             str(i.get("name", "")) for i in items).encode("utf-8")).hexdigest()
         _psig = _hl.md5(",".join(
@@ -857,7 +755,6 @@ class OutputModeModule:
         cached = self._cache.get(key)
         if cached and os.path.isfile(cached):
             return cached
-        # 进程内没记录，但磁盘上可能已有（重启后）
         try:
             p = os.path.join(self._cache_dir(), f"{key}.jpg")
             if os.path.isfile(p):
@@ -878,11 +775,9 @@ class OutputModeModule:
         """
         if not _HAS_AIOHTTP:
             return ""
-        # ---- ① 先查缓存 ----
         hit = self._cache_lookup(style, body, extra)
         if hit:
             return hit
-        # ---- ② 未命中才真正渲染 ----
         try:
             timeout = aiohttp.ClientTimeout(total=RENDER_TIMEOUT + 20)
             async with aiohttp.ClientSession(timeout=timeout) as sess:
@@ -936,8 +831,6 @@ class OutputModeModule:
             "title": str(title or "图鉴列表"),
             "page_cmd": str(page_cmd or ""),
         }
-        # ★ 缓存键：本页切片 + 总数 + 页码 + 标题 + 翻页指令名
-        #   （含总数，新增小鸟后立刻失效；含本页切片，页码之间不互相污染）
         import hashlib as _hl
         _slice = items[(_p - 1) * _pp:_p * _pp]
         _sig = _hl.md5(",".join(
@@ -968,7 +861,6 @@ class OutputModeModule:
             "title": str(title or "图鉴详情"),
             "img": str(img_name or ""),
         }
-        # ★ 缓存键：全部字段内容 + 标题 + 素材名（含冒号，避免字段串味）
         import hashlib as _hl
         _sig = _hl.md5("|".join(
             "%s=%s=%s" % (f.get("label", ""), f.get("value", ""),
@@ -997,7 +889,6 @@ class OutputModeModule:
         mode = self.mode_of(group_id)
         if mode == "text":
             return [], "text"
-        # ★★ 1.7.7：image_light -> 渲染服务用 white 主题（纯白底 + 黑字）
         _theme = self.theme_of(group_id)
         path = await self.render_to_path(text, "plain", img_dir=img_dir,
                                          tail=tail, max_w=max_w,

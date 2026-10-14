@@ -69,13 +69,8 @@ import random
 import time
 from datetime import datetime
 
-# ★★ 市场版 1.1.0：日志记录器**必须且只能**从 astrbot.api 导入。
-#   原来这里有一段内置日志库的兜底分支，已按上架规范删除。
 from astrbot.api import logger
 
-# ------------------------------------------------------------------
-# 属性键（顺序固定，用于展示）
-# ------------------------------------------------------------------
 ATTR_KEYS = ("speed", "accel", "handling", "stability", "luck")
 ATTR_LABEL = {
     "speed": "速度",
@@ -88,16 +83,11 @@ ATTR_ICON = {
     "speed": "🏎️", "accel": "⚡", "handling": "🌀",
     "stability": "🛡️", "luck": "🍀",
 }
-# 排名权重（总和 1.0）
 ATTR_WEIGHT = {
     "speed": 0.38, "accel": 0.24, "handling": 0.22,
     "stability": 0.08, "luck": 0.08,
 }
 
-# ------------------------------------------------------------------
-# 商店默认车（后台可增删改；`shop` 字段由 main.py 从配置读）
-# 属性是 1~100，价格越高总体越强，但**各有侧重**
-# ------------------------------------------------------------------
 DEFAULT_CARS = [
     {"name": "买菜小车", "price": 2000,
      "desc": "刚拿到驾照的第一辆车，胜在便宜",
@@ -122,10 +112,6 @@ DEFAULT_CARS = [
      "speed": 95, "accel": 93, "handling": 92, "stability": 82, "luck": 62},
 ]
 
-# ------------------------------------------------------------------
-# 抽奖能抽到的**超稀有车**（商店买不到，用户要求）
-# 后台 `race_lottery_cars` 可自定义；默认这三辆
-# ------------------------------------------------------------------
 DEFAULT_LOTTERY_CARS = [
     {"name": "星轨 S", "price": 0,
      "desc": "★超稀有★ 抽奖限定，操控与稳定兼备",
@@ -138,7 +124,6 @@ DEFAULT_LOTTERY_CARS = [
      "speed": 90, "accel": 88, "handling": 88, "stability": 96, "luck": 99},
 ]
 
-# NPC 车手用的车（不外售，只用来补位）
 NPC_CARS = [
     {"name": "路人甲的车", "price": 0, "desc": "NPC",
      "speed": 40, "accel": 42, "handling": 40, "stability": 45, "luck": 40},
@@ -152,29 +137,15 @@ NPC_CARS = [
 NPC_NAMES = ["秋名山车神", "隔壁老王", "摸鱼司机", "头文字D粉", "漂移新手",
              "夜跑狂魔", "加油站小哥", "键盘车神", "送豆腐的", "退休老司机"]
 
-# 前三名奖金分配比例（4/5 名没有）—— 用户要求「前三名瓜分最多」
 PRIZE_RATIO = (0.50, 0.30, 0.20)
 
-# ★★ 1.6：赛车插图目录（用户指定）
-#   按**车名**找同名图片：`疾风 GT.png` / `疾风 GT.jpg` / ...
-#   找不到就不发图（只发文字），绝不报错。
 DEFAULT_RACE_IMG_DIR = r"D:\MemeAPI\bar"
 
-# ★★ 1.6：赛车列表的数据集合名（和坐骑 / 签到商店一样走**数据管理**）
-#   结构：[{name, price, kind, desc, speed, accel, handling,
-#           stability, luck}, ...]
-#   kind: "shop"  = 商店在售（可积分购买）
-#         "lucky" = 抽奖限定（商店买不到）
 RACE_CAR_COLLECTION = "race_car_list"
 KIND_SHOP = "shop"
 KIND_LUCKY = "lucky"
 
-# ★★ 1.6：**NPC 用车**的数据集合名（也用「数据管理」列表 UI 维护）
-#   结构和 race_car_list 一样：{name, desc, speed, accel, handling,
-#   stability, luck}
-#   ★ 数据文件里空 -> 用内置 NPC_CARS 兜底
 RACE_NPC_COLLECTION = "race_npc_cars"
-
 
 def kind_of_car(kind) -> str:
     """把后台填的类型归一成 shop / lucky（留空 = shop）"""
@@ -184,10 +155,8 @@ def kind_of_car(kind) -> str:
         return KIND_LUCKY
     return KIND_SHOP
 
-
 def _today_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
-
 
 def _clamp_num(v, lo=1, hi=100, dflt=50) -> int:
     try:
@@ -195,7 +164,6 @@ def _clamp_num(v, lo=1, hi=100, dflt=50) -> int:
     except Exception:
         return dflt
     return max(lo, min(hi, n))
-
 
 def normalize_car(raw) -> dict:
     """
@@ -239,7 +207,6 @@ def normalize_car(raw) -> dict:
             out[k] = 50
     return out
 
-
 def parse_car_list(raw) -> list:
     """
     解析后台的车列表配置（多行文本 / 列表 / 逗号分隔都行）。
@@ -250,7 +217,6 @@ def parse_car_list(raw) -> list:
         items = list(raw)
     else:
         txt = str(raw or "")
-        # 换行优先；没有换行再按逗号切（但逗号可能是描述里的，所以优先换行）
         if "\n" in txt:
             items = txt.split("\n")
         elif "；" in txt or ";" in txt:
@@ -269,14 +235,12 @@ def parse_car_list(raw) -> list:
         out.append(car)
     return out
 
-
 def car_power(car: dict) -> float:
     """车的综合实力（0~100），用于展示 / 粗略比较"""
     if not isinstance(car, dict):
         return 0.0
     return sum(float(car.get(k, 50) or 50) * w
                for k, w in ATTR_WEIGHT.items())
-
 
 def simulate_race(entries: list, rng=None) -> list:
     """
@@ -293,7 +257,6 @@ def simulate_race(entries: list, rng=None) -> list:
     r = rng or random
     out = []
     for e in entries:
-        # ★ 兼容 `car_obj`（车属性 dict）与 `car`（车名 / dict）
         car = e.get("car_obj")
         if not isinstance(car, dict):
             car = e.get("car")
@@ -306,28 +269,18 @@ def simulate_race(entries: list, rng=None) -> list:
         st = float(car.get("stability", 50) or 50)
         lk = float(car.get("luck", 50) or 50)
 
-        # ① 基础用时：三个主属性越高越快
-        #   ★★ 1.6 调参：原来属性贡献 9 秒，而波动只有 ±2.2 秒，
-        #     导致最强车对最弱车胜率 96% : 0.1% —— 弱车完全没机会，
-        #     「冷门也能夺冠」就成空话了。
-        #   现在 **属性总贡献 6 秒**、**波动 ±3.6 秒**，
-        #   强弱车的差距仍在（好车稳定多赢），但弱车也常能爆冷。
         t = 30.0
         t -= sp * ATTR_WEIGHT["speed"] / 100.0 * 6.0
         t -= ac * ATTR_WEIGHT["accel"] / 100.0 * 6.0
         t -= hd * ATTR_WEIGHT["handling"] / 100.0 * 6.0
-        # ② 稳定：降低波动幅度
         st_scale = max(0.45, 1.0 - (st - 50.0) / 110.0)
-        # ③ 幸运：小的正向偏移
         t -= (lk / 100.0) * 0.6
-        # ④ 随机波动（稳定越低越大）
         t += r.uniform(-3.6, 3.6) * st_scale
-        # ⑤ 小概率的「神之一圈 / 爆胎」
         roll = r.random()
         if roll < 0.02:
-            t -= r.uniform(1.0, 2.2)          # 神之一圈
+            t -= r.uniform(1.0, 2.2)
         elif roll > 0.98:
-            t += r.uniform(1.2, 2.8)          # 爆胎 / 打滑
+            t += r.uniform(1.2, 2.8)
 
         item = dict(e)
         item["time"] = max(5.0, round(t, 2))
@@ -338,54 +291,43 @@ def simulate_race(entries: list, rng=None) -> list:
         it["rank"] = i
     return out
 
-
 class RacingModule:
     """赛车数据层 + 比赛逻辑"""
 
     def __init__(self, data_path: str):
         self.data_path = data_path
         self.groups = {}
-        # ---- 配置（由 main.py 注入）----
         self.enable = True
         self.score_name = "积分"
-        # 指令名
-        self.trigger_names = ["参与比赛"]          # 报名
-        self.fast_names = ["快速比赛"]             # PVE 立刻开
+        self.trigger_names = ["参与比赛"]
+        self.fast_names = ["快速比赛"]
         self.my_names = ["我的赛车"]
         self.equip_names = ["装备赛车"]
         self.view_names = ["赛车查看"]
         self.shop_names = ["赛车商店"]
-        self.buy_names = ["购买赛车"]        # ★★ 1.6 购买（看店是另一条）
-        # ★★ 1.6：抽奖
-        self.lucky_names = ["赛车抽奖"]      # 抽奖指令
+        self.buy_names = ["购买赛车"]
+        self.lucky_names = ["赛车抽奖"]
         self.lucky_all_names = ["赛车一键抽奖", "赛车全部抽奖"]
         self.lucky_all_raw = "赛车一键抽奖,赛车全部抽奖"
-        self.lucky_fee = 2000                # 每次抽奖费用
-        self.lucky_daily_limit = 1           # 每人每天几次
-        self.lottery_pool = []               # 奖品池（数据管理里配）
-        # 规则
-        self.players = 5                 # 几人开赛
-        self.wait_sec = 3600             # 多久没满就补 NPC（默认 1 小时）
-        self.daily_limit = 10            # 每人每天几场
-        self.entry_fee = 500             # 报名费（不退）
-        self.pool_bonus_min = 1000       # 奖池系统加成下限
-        self.pool_bonus_max = 5000       # 奖池系统加成上限
-        self.npc_fill = True             # 允许补 NPC
-        self.fast_npc = 5                # 快速比赛的 NPC 数量
-        # ★★ 1.6：NPC 强度（%）
-        self.npc_power = 100             # 100=原样 / 80=弱 / 120=强
-        # ★★ 1.6：NPC 用车（数据管理可自定义；空则用内置 NPC_CARS）
+        self.lucky_fee = 2000
+        self.lucky_daily_limit = 1
+        self.lottery_pool = []
+        self.players = 5
+        self.wait_sec = 3600
+        self.daily_limit = 10
+        self.entry_fee = 500
+        self.pool_bonus_min = 1000
+        self.pool_bonus_max = 5000
+        self.npc_fill = True
+        self.fast_npc = 5
+        self.npc_power = 100
         self.npc_cars = [dict(c) for c in NPC_CARS]
-        self.show_time = True            # 结果里显示用时
-        # 车
+        self.show_time = True
         self.shop = [dict(c) for c in DEFAULT_CARS]
         self.lottery_cars = [dict(c) for c in DEFAULT_LOTTERY_CARS]
         self.img_dir = DEFAULT_RACE_IMG_DIR
         self._load()
 
-    # ------------------------------------------------------------
-    # 持久化
-    # ------------------------------------------------------------
     def _load(self):
         try:
             if not os.path.isfile(self.data_path):
@@ -411,10 +353,6 @@ class RacingModule:
         except Exception:
             logger.exception("[racing] 保存赛车数据失败")
 
-    # ------------------------------------------------------------
-    # ★★ 1.6：从**数据管理**的文件里读车列表
-    #   （和坐骑 / 签到商店同一套：后台「数据管理」页可视化增删改）
-    # ------------------------------------------------------------
     def load_cars_from_store(self) -> bool:
         """
         从 `data_store` 的 `race_car_list` 读车。
@@ -446,7 +384,6 @@ class RacingModule:
             (lucky if car.get("kind") == KIND_LUCKY else shop).append(car)
         if not shop and not lucky:
             return False
-        # 全被标成抽奖限定也要把商店填上，否则没法买车
         self.shop = shop
         self.lottery_cars = lucky
         logger.info(f"[racing] 从数据文件读到赛车：商店 {len(shop)} 辆 / "
@@ -467,9 +404,6 @@ class RacingModule:
             out.append(r)
         return out
 
-    # ------------------------------------------------------------
-    # 基础读取
-    # ------------------------------------------------------------
     @staticmethod
     def _gid(group_id) -> str:
         s = str(group_id or "0").strip()
@@ -484,7 +418,6 @@ class RacingModule:
           这种两套日界线打架的情况。
         ★ 拿不到就退回本机 0 点。
         """
-        # ① 优先借用 checkin 的逻辑日（插件实例注入过）
         try:
             ck = getattr(getattr(self, "_plugin", None),
                          "checkin_module", None)
@@ -492,14 +425,12 @@ class RacingModule:
                 return int(ck._day_start())
         except Exception:
             pass
-        # ② 兜底：checkin 模块被注入到 self 上（测试时常见）
         try:
             ck = getattr(self, "checkin_module", None)
             if ck is not None and hasattr(ck, "_day_start"):
                 return int(ck._day_start())
         except Exception:
             pass
-        # ③ 最终兜底：本机 0 点
         try:
             now = datetime.now()
             return int(time.mktime(
@@ -514,7 +445,6 @@ class RacingModule:
             b = {"users": {}, "queue": {"cars": [], "started_ts": 0}}
             self.groups[gid] = b
         b.setdefault("users", {})
-        # ★★ 1.6：每日奖池加成（当天固定，跨天重随机）
         if not isinstance(b.get("daily"), dict):
             b["daily"] = {}
         q = b.get("queue")
@@ -531,7 +461,6 @@ class RacingModule:
         if not isinstance(u, dict):
             u = {"cars": [], "equipped": "", "races": 0, "wins": 0,
                  "top3": 0, "date": "", "today": 0, "last_ts": 0,
-                 # ★★ 1.6：今日抽奖次数
                  "lucky_today": 0}
             b["users"][str(uid)] = u
         u.setdefault("cars", [])
@@ -555,7 +484,6 @@ class RacingModule:
         if u.get("date") != today:
             u["date"] = today
             u["today"] = 0
-            # ★★ 1.6：抽奖次数也是**按天**重置
             u["lucky_today"] = 0
         return u
 
@@ -565,12 +493,6 @@ class RacingModule:
         u = self.touch_today(group_id, uid)
         return max(0, self.daily_limit - int(u.get("today", 0) or 0))
 
-    # ------------------------------------------------------------
-    # ★★ 1.6：赛车抽奖
-    #   · 后台可自定义指令名 / 每次费用 / 每天次数
-    #   · **抽到过的限定车不会再抽中同一台**（抽完就排除）
-    #   · 奖池（奖品+权重）来自数据管理 `race_lottery_pool`
-    # ------------------------------------------------------------
     def lucky_left_today(self, group_id, uid) -> int:
         """今天还能抽几次（<=0 表示不限）"""
         if int(getattr(self, "lucky_daily_limit", 0) or 0) <= 0:
@@ -612,7 +534,6 @@ class RacingModule:
         except Exception:
             _pool = []
         if not _pool:
-            # 没配奖池 -> 用限定车兜底（等价于纯抽车）
             _left = self.lucky_left_cars(group_id, uid)
             return [{"kind": "car", "name": n, "weight": 1} for n in _left]
         _leftset = set(self.lucky_left_cars(group_id, uid))
@@ -624,7 +545,7 @@ class RacingModule:
             if _k in ("car", "lucky", "赛车", "抽奖限定"):
                 _nm = str(it.get("name") or "").strip()
                 if _nm and _nm not in _leftset:
-                    continue          # 已抽到过 -> 从这个池子剔掉
+                    continue
             out.append(it)
         return out
 
@@ -658,7 +579,6 @@ class RacingModule:
             nm = str(it.get("name") or "").strip()
             car = self.find_car(nm)
             if car is None:
-                # 奖池里的车名不在车列表里 -> 用兜底属性也能发
                 car = {"name": nm, "price": 0, "desc": "★超稀有★ 抽奖限定",
                        "speed": 70, "accel": 70, "handling": 70,
                        "stability": 70, "luck": 70}
@@ -669,9 +589,6 @@ class RacingModule:
             amt = 0
         return "score", {"amount": max(0, amt)}
 
-    # ------------------------------------------------------------
-    # 车
-    # ------------------------------------------------------------
     def all_known_cars(self) -> list:
         """商店 + 抽奖限定（用于「赛车查看」认名字）"""
         out = []
@@ -704,9 +621,6 @@ class RacingModule:
                 return c
         return None
 
-    # ------------------------------------------------------------
-    # ★★ 1.6：按「名字 或 序号」定位（用户要求：可以输入车名和序号）
-    # ------------------------------------------------------------
     @staticmethod
     def _is_index(s: str) -> bool:
         """是不是纯序号（支持 1 起；`#3` / `No.3` 也认）"""
@@ -732,7 +646,6 @@ class RacingModule:
         items = [c for c in (listing or []) if isinstance(c, dict)]
         if not items:
             return None, "列表是空的"
-        # ① 纯序号（1 起）
         if self._is_index(t):
             try:
                 idx = int(str(t).strip().lstrip("#").strip()
@@ -742,7 +655,6 @@ class RacingModule:
             if 1 <= idx <= len(items):
                 return items[idx - 1], ""
             return None, f"序号超出范围（1~{len(items)}）"
-        # ② 车名
         want = t.replace(" ", "")
         for c in items:
             if str(c.get("name", "")).strip() == t:
@@ -829,9 +741,6 @@ class RacingModule:
         self._save()
         return True, car
 
-    # ------------------------------------------------------------
-    # 报名队列
-    # ------------------------------------------------------------
     def queue_of(self, group_id) -> dict:
         return self._gbucket(group_id)["queue"]
 
@@ -990,7 +899,6 @@ class RacingModule:
             e = dict(c)
             nm = str(e.get("car") or "").strip()
             e["car_name"] = nm
-            # 没车 -> 给一辆「没车」的垫底车（正常流程进不来）
             e["car_obj"] = self.find_car(nm) or {
                 "name": nm or "无车", "price": 0, "desc": "",
                 "speed": 20, "accel": 20, "handling": 20,
@@ -1002,15 +910,12 @@ class RacingModule:
         if only_npc:
             need = max(need, int(force_npc or self.fast_npc))
         if not bool(getattr(self, "npc_fill", True)):
-            need = 0                  # 关了「允许补 NPC」就不补
+            need = 0
         npcs = self.make_npcs(need, exclude_names=[c.get("name")
                                                    for c in real])
         lineup = real + npcs
         return lineup, len(npcs)
 
-    # ------------------------------------------------------------
-    # 奖金
-    # ------------------------------------------------------------
     def _daily_range(self) -> tuple:
         """
         ★★ 1.6：当日随机加成的**上下限**。
@@ -1044,20 +949,13 @@ class RacingModule:
         daily = b.setdefault("daily", {})
         rec = daily.get(day_key)
         lo, hi = self._daily_range()
-        # ★★ 1.6 修 bug：缓存里要带上**生成时的区间** `rng`。
-        #   后台把上下限从 1000~5000 改成 20万~600万时，如果只看
-        #   「今天有没有缓存」，就会继续用旧区间生成的那个数
-        #   （用户反馈：奖池金额和后台设置对不上）。
-        #   现在区间一变就**立刻重随机**。
         _rng_tag = f"{lo}-{hi}"
         if isinstance(rec, dict):
             try:
                 _cached = max(0, int(rec.get("bonus", 0) or 0))
-                # 老数据没有 rng 字段 -> 只要不在当前区间内就重算
                 if rec.get("rng") == _rng_tag:
                     return _cached, day_key
                 if not rec.get("rng") and lo <= _cached <= hi:
-                    # 兼容老数据：值还在新区间里就沿用，顺手补上 rng
                     rec["rng"] = _rng_tag
                     if save:
                         self._save()
@@ -1067,7 +965,6 @@ class RacingModule:
         bonus = _random.randint(lo, hi) if hi > 0 else 0
         daily[day_key] = {"bonus": int(bonus), "ts": int(time.time()),
                           "rng": _rng_tag}
-        # 只留最近 7 天，别让文件无限长
         if len(daily) > 7:
             for _k in sorted(daily.keys())[:-7]:
                 daily.pop(_k, None)
@@ -1098,9 +995,6 @@ class RacingModule:
         out[0] += pool - sum(out)
         return out
 
-    # ------------------------------------------------------------
-    # 结算
-    # ------------------------------------------------------------
     def settle(self, group_id, lineup: list):
         """
         跑完一局并**记账**（场次 / 战绩），返回结算结果 dict：
@@ -1117,7 +1011,6 @@ class RacingModule:
         ranking = simulate_race(lineup)
         real_n = sum(1 for c in ranking if not c.get("npc"))
         npc_n = len(ranking) - real_n
-        # ★★ 1.6：奖池 = 报名费 + **当天固定**的系统加成
         pool, bonus = self.roll_pool(group_id, real_n)
         prizes = self.split_prize(pool)
 
@@ -1133,7 +1026,6 @@ class RacingModule:
                 "car": str(item.get("car") or ""),
             })
 
-        # ---- 记战绩 ----
         for item in ranking:
             if item.get("npc"):
                 continue
@@ -1154,9 +1046,6 @@ class RacingModule:
                 "prizes": prizes, "winners": winners,
                 "real": real_n, "npc_n": npc_n}
 
-    # ------------------------------------------------------------
-    # 展示
-    # ------------------------------------------------------------
     def car_stat_lines(self, car: dict) -> list:
         """一辆车的属性行（带进度条）"""
         if not isinstance(car, dict):

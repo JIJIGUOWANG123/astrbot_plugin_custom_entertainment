@@ -2,17 +2,12 @@ import asyncio
 import datetime
 from astrbot.api import logger
 
-# ★ 新增：延迟初始化的异步锁，防止并发启动多个后台任务
 _mc_checker_lock = None
 _chime_checker_lock = None
 _status_push_lock = None
 _daily_news_lock = None
 
-# ★ 模块级任务登记表：{ 任务名: asyncio.Task }
-#   模块对象在同一进程内复用 —— 插件重载后（新实例）这里登记的任务仍然有效，
-#   于是可以强制取消旧循环，杜绝「孤儿任务用旧代码继续跑」。
 _BG_TASKS = {}
-
 
 async def _cancel_bg_task(name: str, why: str = "") -> int:
     """取消指定名字的旧后台任务，返回取消个数。"""
@@ -29,16 +24,13 @@ async def _cancel_bg_task(name: str, why: str = "") -> int:
         pass
     return 1
 
-
 def _register_bg_task(name: str, task) -> None:
     """登记新任务（同名旧任务应已先被取消）。"""
     _BG_TASKS[name] = task
 
-
 def bg_task_names() -> list:
     """当前登记的后台任务名（调试用）。"""
     return list(_BG_TASKS.keys())
-
 
 def _get_mc_lock():
     global _mc_checker_lock
@@ -58,13 +50,11 @@ def _get_status_push_lock():
         _status_push_lock = asyncio.Lock()
     return _status_push_lock
 
-
 def _get_daily_news_lock():
     global _daily_news_lock
     if _daily_news_lock is None:
         _daily_news_lock = asyncio.Lock()
     return _daily_news_lock
-
 
 async def mc_auto_checker(plugin):
     await asyncio.sleep(20)
@@ -95,7 +85,6 @@ async def mc_auto_checker(plugin):
                         msgs = plugin.minecraft_module.check_new_versions_for_group(gid, result)
                         for m in msgs:
                             umo = plugin.minecraft_module.get_umo(gid)
-                            # ★ 按该群「输出模式」渲染
                             _t, _imgs = await plugin.render_group_text(
                                 str(gid), f"📢 {m}")
                             pushed = await plugin._push_mc_notification(
@@ -115,7 +104,6 @@ async def mc_auto_checker(plugin):
             logger.exception("[minecraft] 自动检测循环异常")
             await asyncio.sleep(300)
 
-
 async def hourly_chime_checker(plugin):
     await asyncio.sleep(30)
     logger.info("[hourly_chime] 整点报时循环启动")
@@ -130,19 +118,14 @@ async def hourly_chime_checker(plugin):
                 continue
             hour = now.hour
             
-            # ★ 核心修复：获取所有群ID，依赖 check_and_mark 内部严格的开关和防重判断
             all_gids = plugin.hourly_chime_module.get_all_group_ids()
             for gid in all_gids:
-                # 原子操作：检查开关、时间、防重，并标记已发送
                 if not plugin.hourly_chime_module.check_and_mark(gid, hour):
                     continue
                 
-                # 获取文案（check_and_mark 内已加载最新状态到内存，此处直接从内存读）
-                # ★ 1.7.6：第一行报时 + 第二行每日一言
                 text = await plugin.hourly_chime_module.build_text_async(
                     gid, hour)
                 umo = plugin.hourly_chime_module.get_umo(gid)
-                # ★ 按本群「输出模式」渲染：图片模式下附带一张渲染图
                 images = []
                 try:
                     text, images = await plugin.render_group_text(
@@ -170,7 +153,6 @@ async def hourly_chime_checker(plugin):
             logger.exception("[hourly_chime] 整点报时循环异常")
             await asyncio.sleep(120)
 
-
 async def daily_status_push_checker(plugin):
     """
     定时状态推送循环（按分钟间隔）。
@@ -186,9 +168,7 @@ async def daily_status_push_checker(plugin):
                 await asyncio.sleep(60)
                 continue
 
-            # 每轮检查一次有哪些群到了推送时间（原子标记，避免重复推）
             for gid in module.get_all_group_ids():
-                # 该群是否开着电脑状态（每群开关，与查询共用）
                 try:
                     if not plugin._is_group_feature_enable(gid, "status"):
                         continue
@@ -214,7 +194,6 @@ async def daily_status_push_checker(plugin):
             logger.exception("[status_push] 状态推送循环异常")
             await asyncio.sleep(120)
 
-
 async def _push_status_to_group(plugin, module, gid) -> bool:
     """生成并推送一次电脑状态文本。"""
     try:
@@ -229,7 +208,6 @@ async def _push_status_to_group(plugin, module, gid) -> bool:
         logger.exception(f"[status_push] 群 {gid} 生成状态文本失败")
         return False
     umo = module.get_umo(gid)
-    # ★ 按该群「输出模式」渲染（图片模式下附图）
     images = []
     try:
         text, images = await plugin.render_group_text(str(gid), text)
@@ -238,7 +216,6 @@ async def _push_status_to_group(plugin, module, gid) -> bool:
         images = []
     return await plugin._push_mc_notification(gid, text, umo=umo,
                                               images=images)
-
 
 async def daily_news_checker(plugin):
     """
@@ -262,7 +239,6 @@ async def daily_news_checker(plugin):
 
             hhmm = now.strftime("%H:%M")
             for gid in module.get_all_group_ids():
-                # 原子判定：开关 + 时间命中 + 今日未推送，并标记
                 if not module.check_and_mark(gid, hhmm):
                     continue
 
@@ -283,16 +259,9 @@ async def daily_news_checker(plugin):
                     logger.exception(f"[daily_news] 群 {gid} 读报图片推送失败，尝试文字回退")
 
                 if not pushed:
-                    # 说明：读报本身就以图片为主（上面那条），这里是
-                    #       「图片推送失败」后的文字兜底，所以**不再转图**
-                    #       （转图也得先有图，属于双重回退，没有意义）。
                     try:
                         text = await _fetch_news_text()
                         if text:
-                            # ★ 1.7.6：这条也走 render_group_text，
-                            #   这样尾巴会**接在最底部**（和别处一致）。
-                            #   （图片由渲染器画，尾巴已在图里；
-                            #     纯文本分支 render_group_text 会自己补尾巴）
                             try:
                                 _t2, _imgs2 = await plugin.render_group_text(
                                     str(gid), text)
@@ -301,7 +270,6 @@ async def daily_news_checker(plugin):
                                     "[daily_news] 文字兜底渲染失败，回落纯文本")
                                 _t2, _imgs2 = text, []
                             if not _t2 and not _imgs2:
-                                # 渲染/取文本都空 -> 用原文 + 尾巴兜底
                                 _t2 = text
                             pushed = await plugin._push_mc_notification(
                                 gid, _t2, umo=umo, images=_imgs2)
@@ -323,7 +291,6 @@ async def daily_news_checker(plugin):
             logger.exception("[daily_news] 每日读报循环异常")
             await asyncio.sleep(120)
 
-
 async def _fetch_news_text() -> str:
     """拉取 60s 读报的文字版，作为图片失败时的回退。"""
     try:
@@ -343,7 +310,6 @@ async def _fetch_news_text() -> str:
         logger.exception("[daily_news] 获取读报文字失败")
         return ""
 
-
 def _build_chain_result(chain):
     """构造带 .chain 的结果对象。"""
     try:
@@ -358,7 +324,6 @@ def _build_chain_result(chain):
         r.chain = chain
         return r
 
-
 async def ensure_daily_news(plugin):
     if getattr(plugin, "_daily_news_started", False):
         return
@@ -369,9 +334,6 @@ async def ensure_daily_news(plugin):
         if getattr(plugin, "daily_news_module", None) is None:
             return
         plugin._daily_news_started = True
-        # ★ 先取消同名的旧循环：插件重载会产生新实例（标志为 False），
-        #   旧循环若只靠 terminate() 取消，一旦卸载异常就会永久残留，
-        #   继续用旧代码跑（曾导致自动推送发出未 await 的协程对象）。
         try:
             await _cancel_bg_task("daily_news", "（启动新的之前）")
         except Exception:
@@ -394,9 +356,6 @@ async def ensure_mc_checker(plugin):
         if getattr(plugin, "minecraft_module", None) is None:
             return
         plugin._mc_checker_started = True
-        # ★ 先取消同名的旧循环：插件重载会产生新实例（标志为 False），
-        #   旧循环若只靠 terminate() 取消，一旦卸载异常就会永久残留，
-        #   继续用旧代码跑（曾导致自动推送发出未 await 的协程对象）。
         try:
             await _cancel_bg_task("mc_checker", "（启动新的之前）")
         except Exception:
@@ -419,9 +378,6 @@ async def ensure_status_push(plugin):
         if getattr(plugin, "status_push_module", None) is None:
             return
         plugin._status_push_started = True
-        # ★ 先取消同名的旧循环：插件重载会产生新实例（标志为 False），
-        #   旧循环若只靠 terminate() 取消，一旦卸载异常就会永久残留，
-        #   继续用旧代码跑（曾导致自动推送发出未 await 的协程对象）。
         try:
             await _cancel_bg_task("status_push", "（启动新的之前）")
         except Exception:
@@ -444,9 +400,6 @@ async def ensure_hourly_chime(plugin):
         if getattr(plugin, "hourly_chime_module", None) is None:
             return
         plugin._chime_checker_started = True
-        # ★ 先取消同名的旧循环：插件重载会产生新实例（标志为 False），
-        #   旧循环若只靠 terminate() 取消，一旦卸载异常就会永久残留，
-        #   继续用旧代码跑（曾导致自动推送发出未 await 的协程对象）。
         try:
             await _cancel_bg_task("hourly_chime", "（启动新的之前）")
         except Exception:

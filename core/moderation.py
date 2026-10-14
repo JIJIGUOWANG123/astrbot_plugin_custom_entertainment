@@ -15,19 +15,16 @@
 
 from astrbot.api import logger
 
-# 支持的处置动作
 ACTION_KICK = "kick"
 ACTION_MUTE = "mute"
 ACTION_IGNORE = "ignore"
 VALID_ACTIONS = (ACTION_KICK, ACTION_MUTE, ACTION_IGNORE)
 
-# 动作的中文名（用于提示）
 ACTION_LABEL = {
     ACTION_KICK: "踢出",
     ACTION_MUTE: "禁言",
     ACTION_IGNORE: "无视",
 }
-
 
 def parse_blacklist(raw) -> dict:
     """
@@ -53,7 +50,6 @@ def parse_blacklist(raw) -> dict:
         result[uid] = act
     return result
 
-
 def get_action(blacklist: dict, user_id: str, default_action: str = ACTION_IGNORE) -> str:
     """取某成员被拉黑后的处置动作；未拉黑返回空串。"""
     uid = str(user_id or "").strip()
@@ -64,12 +60,10 @@ def get_action(blacklist: dict, user_id: str, default_action: str = ACTION_IGNOR
         act = default_action if default_action in VALID_ACTIONS else ACTION_IGNORE
     return act
 
-
 def format_blacklist_line(user_id: str, action: str) -> str:
     """生成一行黑名单配置。"""
     act = action if action in VALID_ACTIONS else ACTION_IGNORE
     return f"{str(user_id).strip()}:{act}"
-
 
 def upsert_blacklist(raw, user_id: str, action: str) -> str:
     """在配置文本里新增/更新一条黑名单，返回新的配置文本。"""
@@ -98,7 +92,6 @@ def upsert_blacklist(raw, user_id: str, action: str) -> str:
         lines.append(format_blacklist_line(uid, act))
     return "\n".join(lines)
 
-
 def remove_blacklist(raw, user_id: str) -> tuple:
     """从配置文本里移除一条黑名单，返回 (新文本, 是否移除成功)。"""
     uid = str(user_id or "").strip()
@@ -121,7 +114,6 @@ def remove_blacklist(raw, user_id: str) -> tuple:
         lines.append(s)
     return "\n".join(lines), removed
 
-
 class ModerationModule:
     """
     群员管理模块。
@@ -131,9 +123,6 @@ class ModerationModule:
     def __init__(self, group_admin_module=None):
         self.group_admin = group_admin_module
 
-    # ============================================================
-    # 机器人权限
-    # ============================================================
     async def bot_can_moderate(self, event):
         """
         机器人是否有管理权限。
@@ -160,9 +149,6 @@ class ModerationModule:
             "💡 请先把机器人设为群管理员，或让群主操作"
         )
 
-    # ============================================================
-    # 实际动作
-    # ============================================================
     async def do_kick(self, event, user_id: str) -> bool:
         if self.group_admin is None:
             return False

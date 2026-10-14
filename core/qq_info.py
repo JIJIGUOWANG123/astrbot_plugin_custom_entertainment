@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 r"""
 QQ 用户信息查询（查询功能）。
 
@@ -19,11 +18,8 @@ import re
 
 from astrbot.api import logger
 
-# ★ @某人 内联形式：@昵称(123456789) / @昵称（123456789）
 _AT_RE = re.compile(r"@[^\s()\u3000]*[\(（](\d{5,12})[\)）]")
-# 裸 QQ 号
 _QQ_RE = re.compile(r"\d{5,12}")
-
 
 def parse_target(arg: str) -> str:
     """
@@ -41,10 +37,6 @@ def parse_target(arg: str) -> str:
     m2 = _QQ_RE.search(s)
     return m2.group(0) if m2 else ""
 
-
-# ============================================================
-# 调用 OneBot action 的小工具
-# ============================================================
 async def _call(event, action: str, **params):
     """调 OneBot action；拿不到客户端/失败都返回 None。"""
     if event is None:
@@ -61,7 +53,6 @@ async def _call(event, action: str, **params):
         logger.debug(f"[qqinfo] {action} 失败: {e}")
         return None
 
-
 def _dig(d, *keys, default=None):
     """按路径取值，任一层缺失就返回 default。"""
     cur = d
@@ -72,21 +63,17 @@ def _dig(d, *keys, default=None):
             return default
     return cur if cur is not None else default
 
-
 def _s(v) -> str:
     if v is None or v is False:
         return ""
-    # ★ 0 也当作「没有值」：很多字段缺失时协议端回 0
     if isinstance(v, (int, float)) and v == 0:
         return ""
     if isinstance(v, (dict, list, tuple, set)):
         return ""
     s = str(v).strip()
-    # 字符串形式的假值也算空
     if s.lower() in ("none", "null", "false"):
         return ""
     return s
-
 
 def _ts(v) -> str:
     """时间戳（秒）-> 'YYYY-MM-DD HH:MM:SS'；已是字符串就原样返回。"""
@@ -106,14 +93,12 @@ def _ts(v) -> str:
         return str(v)
     if n <= 0:
         return ""
-    # 毫秒时间戳自动降级
     if n > 10_000_000_000:
         n //= 1000
     try:
         return datetime.datetime.fromtimestamp(n).strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return ""
-
 
 def _days_between(ts_str: str) -> int:
     """从 'YYYY-MM-DD...' 到今天的天数。"""
@@ -125,10 +110,6 @@ def _days_between(ts_str: str) -> int:
     except Exception:
         return 0
 
-
-# ============================================================
-# 解析：把 NapCat 的响应摊平成统一结构
-# ============================================================
 def _walk_keys(node, depth=0, max_depth=8, prefix=""):
     """
     递归收集 { 小写键名: [(值, 完整路径), ...] }。
@@ -159,7 +140,6 @@ def _walk_keys(node, depth=0, max_depth=8, prefix=""):
                     stack.append((v, f"{path}[{n}].", d + 1))
     return found
 
-
 def _first(found, keys, pred=None):
     """
     从 _walk_keys 的结果里取第一个满足 pred 的值。
@@ -169,9 +149,6 @@ def _first(found, keys, pred=None):
     for k in keys:
         for v, _path in found.get(k.lower(), []):
             if pred is None:
-                # ★ 注意：False 是**有效值**（表示「明确未开通」），
-                #   不能跳过 —— 否则区分不了「假」和「字段不存在」。
-                #   只跳过 None / 空串 / 容器。
                 if v is None or v == "":
                     continue
                 if isinstance(v, (dict, list, tuple, set)):
@@ -181,7 +158,6 @@ def _first(found, keys, pred=None):
                 if pred(v):
                     return v
     return None
-
 
 def _best(found, keys, score):
     """
@@ -205,14 +181,12 @@ def _best(found, keys, score):
                 best_v, best_s = v, sc
     return best_v
 
-
 def _one_line(s: str, limit: int = 0) -> str:
     """压成单行；limit>0 时超长会截断加省略号。"""
     s = " ".join(str(s or "").split())
     if limit and len(s) > limit:
         s = s[: limit - 1] + "…"
     return s
-
 
 def parse_user_info(raw, member=None) -> dict:
     """
@@ -243,18 +217,13 @@ def parse_user_info(raw, member=None) -> dict:
             s = s[:-2]
         return s
 
-    # ---------------- 基础 ----------------
-    # ★ 昵称：优先「单行且短」的候选。
-    #   NapCat 里 longNick 可能是「带换行的长签名」（如每日鸡汤），
-    #   直接取会把整段签名当昵称，所以按分数挑最像昵称的。
     def _nick_score(s, key):
         has_nl = ("\n" in s) or ("\r" in s)
         n = len(s)
         if has_nl:
-            return None if n > 40 else 1        # 多行的基本是签名，弃用
+            return None if n > 40 else 1
         if n > 36:
-            return 2                            # 太长，不太像昵称
-        # 越短越像昵称；nickname/nick 这类键名额外加权
+            return 2
         base = 100 - n
         if key.lower() in ("nickname", "nick", "nickname2", "cardname",
                            "long_nick"):
@@ -265,7 +234,6 @@ def parse_user_info(raw, member=None) -> dict:
                         "long_nick", "longnick"), _nick_score)
     if _nk is None:
         _nk = _first(f_mem, ("nickname", "card", "nick"))
-    # 兜底：实在只有长签名，就取它的第一行
     if _nk is None:
         _raw_nl = _first(f_raw, ("longnick", "long_nick", "nickname"))
         if _raw_nl is not None:
@@ -273,21 +241,17 @@ def parse_user_info(raw, member=None) -> dict:
     out["nick"] = _one_line(_s(_nk), 40)
     out["qid"] = _s(_first(f_raw, ("qid", "uid", "userid", "uin_qid"))
                     or _first(f_mem, ("qid",)))
-    # ★ 签名：优先长的（多行的鸡汤那种就是签名，不是昵称）
     out["sign"] = _s(_best(
         f_raw, ("sign", "signature", "personalsign", "longnick", "long_nick"),
         lambda s, k: len(s)))
     out["age"] = _num_str(_first(f_raw, ("age",)) or _first(f_mem, ("age",)))
     out["sex"] = _s(_first(f_raw, ("sex", "gender")) or _first(f_mem, ("sex",)))
 
-    # ---------------- 等级 ----------------
-    #   优先 QQ 等级（qqLevel），再退群等级（memberLevel / level）
     out["qq_level"] = _num_str(
         _first(f_raw, ("qqlevel", "qq_level", "level", "memberlevel",
                        "member_level"))
         or _first(f_mem, ("memberlevel", "member_level", "level")))
 
-    # ---------------- 能量 / 活跃 / 达人 ----------------
     out["energy"] = _num_str(_first(f_raw, (
         "energy", "qqenergy", "qq_energy", "power", "energyvalue")))
     out["active_day"] = _num_str(_first(f_raw, (
@@ -297,7 +261,6 @@ def parse_user_info(raw, member=None) -> dict:
         "caredays", "care_days", "caredays", "frienddays", "careday",
         "memberlevelinfocaredays")))
 
-    # ---------------- 注册 ----------------
     reg = _first(f_raw, ("regtime", "reg_time", "registertime",
                          "register_time", "createtime", "create_time"))
     out["reg_time"] = _ts(reg) or _s(reg)
@@ -307,12 +270,10 @@ def parse_user_info(raw, member=None) -> dict:
         d = _days_between(out["reg_time"])
         out["reg_days"] = str(d) if d else ""
 
-    # ---------------- 头像修改 ----------------
     out["avatar_time"] = _ts(_first(f_raw, (
         "avatartime", "avatar_time", "avatarupdatetime", "avatar_update",
         "avatarmodifytime", "headimgupdatetime")))
 
-    # ---------------- 会员 ----------------
     out["vip_level"] = _num_str(_first(f_raw, (
         "viplevel", "vip_level", "sviplevel", "svip_level")))
     out["vip_exp"] = _num_str(_first(f_raw, (
@@ -321,7 +282,6 @@ def parse_user_info(raw, member=None) -> dict:
         "vipgrowth", "vip_growth", "growthspeed", "growth")))
     out["is_vip"] = _first(f_raw, ("isvip", "is_vip", "svipflag"),
                            pred=lambda v: v is not None and v != "")
-    # ★ 键名必须是 is_years_vip（format_user_info 读的是这个）
     out["is_years_vip"] = _first(f_raw, (
         "isyearvip", "is_years_vip", "isyearvip", "yearvipflag"),
         pred=lambda v: v is not None and v != "")
@@ -338,14 +298,12 @@ def parse_user_info(raw, member=None) -> dict:
         "bigyear", "big_year", "yearbigvipflag", "isyearbigvip",
         "isyearvip"), pred=lambda v: v is not None and v != "")
 
-    # ---------------- 群内 ----------------
     out["member_level"] = _num_str(_first(f_mem, (
         "memberlevel", "member_level", "level")))
     out["member_title"] = _s(_first(f_mem, ("title",)))
     out["join_time"] = _ts(_first(f_mem, ("jointime", "join_time")))
     out["last_sent"] = _ts(_first(f_mem, ("lastsenttime", "last_sent_time")))
 
-    # 兜底：群内信息补空
     if not out["nick"]:
         out["nick"] = _s(_first(f_mem, ("nickname", "card")))
     if not out["sex"]:
@@ -358,7 +316,6 @@ def parse_user_info(raw, member=None) -> dict:
     for k in ("member_level", "member_title", "join_time", "last_sent"):
         out.setdefault(k, "")
 
-    # ★ 记下见过哪些键，便于排查「字段没解析出来」
     try:
         logger.info("[qqinfo] stranger 响应里所有键：%s",
                     sorted(f_raw.keys()))
@@ -369,9 +326,6 @@ def parse_user_info(raw, member=None) -> dict:
         pass
     return out
 
-# ============================================================
-# 拉取
-# ============================================================
 async def fetch_user_info(event, user_id: str, group_id: str = "") -> dict:
     """
     查一个 QQ 的详细资料。
@@ -382,12 +336,10 @@ async def fetch_user_info(event, user_id: str, group_id: str = "") -> dict:
     uid = _s(user_id)
     if not uid:
         return {}
-    # ① 详细资料（昵称/QID/等级/签名/注册时间/会员…）
     raw = await _call(event, "get_stranger_info",
                       user_id=int(uid) if uid.isdigit() else uid,
                       no_cache=False)
     member = None
-    # ② 群内资料（群等级 / 活跃天数 / 入群时间）
     if group_id and str(group_id).isdigit():
         member = await _call(event, "get_group_member_info",
                              group_id=int(group_id), user_id=int(uid),
@@ -400,10 +352,6 @@ async def fetch_user_info(event, user_id: str, group_id: str = "") -> dict:
         pass
     return parse_user_info(raw, member)
 
-
-# ============================================================
-# 格式化输出
-# ============================================================
 def _lv_text(v: str) -> str:
     """等级统一成 'LV61级'"""
     s = _s(v)
@@ -411,7 +359,6 @@ def _lv_text(v: str) -> str:
         return ""
     m = re.search(r"\d+", s)
     return f"LV{m.group(0)}级" if m else s
-
 
 def _yes_no(v) -> str:
     """
@@ -435,7 +382,6 @@ def _yes_no(v) -> str:
         return "已开通"
     return s
 
-
 def _days_with_years(n: str) -> str:
     """'1737' -> '1737天(≈4.8年)'"""
     s = _s(n)
@@ -446,19 +392,13 @@ def _days_with_years(n: str) -> str:
         return s
     return f"{d}天(≈{d / 365:.1f}年)"
 
-
-# ★★ 1.7.7：昵称显示**统一走 path_utils 的公共实现** ——
-#   以前这里自带一份「字符数 > 12 就砍」的版本：
-#     · 中文英文按同一标准算，视觉宽度差一倍；
-#     · 不清零宽 / 私用区字符，图片模式下会出方框。
 try:
     from .path_utils import nick_display as _shared_nick
-except Exception:               # 兜底：独立运行时
+except Exception:
     try:
         from path_utils import nick_display as _shared_nick
     except Exception:
         _shared_nick = None
-
 
 def _nick_display(s: str, limit: int = 0) -> str:
     """
@@ -470,7 +410,6 @@ def _nick_display(s: str, limit: int = 0) -> str:
         return _shared_nick(s, limit)
     return " ".join(str(s or "").split())
 
-
 def _reg_date(s: str) -> str:
     """注册时间只留日期：'2007-01-01 12:34:56' -> '2007-01-01'"""
     s = _s(s)
@@ -478,7 +417,6 @@ def _reg_date(s: str) -> str:
         return ""
     m = re.match(r"(\d{4}-\d{2}-\d{2})", s)
     return m.group(1) if m else s
-
 
 def _days_plain(n: str) -> str:
     """'7000' -> '7000天（≈19年）'"""
@@ -489,7 +427,6 @@ def _days_plain(n: str) -> str:
     if d <= 0:
         return s
     return f"{d}天（≈{d / 365:.0f}年）"
-
 
 def format_user_info(info: dict, user_id: str = "") -> str:
     """
@@ -511,7 +448,6 @@ def format_user_info(info: dict, user_id: str = "") -> str:
     lines = []
 
     def add(label, val, limit=0):
-        # ★ 值里的换行压成空格，保证「一行一项」
         s = _s(val).replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
         s = " ".join(s.split())
         if limit and len(s) > limit:
@@ -519,28 +455,21 @@ def format_user_info(info: dict, user_id: str = "") -> str:
         if s:
             lines.append(f"{label}：{s}")
 
-    # ① QQ昵称（太长省略号）
     add("QQ昵称", _nick_display(info.get("nick")))
 
-    # ② QQ等级
     _lv = _s(info.get("qq_level"))
     if _lv:
         m = re.search(r"\d+", _lv)
         lines.append(f"QQ等级：{m.group(0)}级" if m else f"QQ等级：{_lv}")
 
-    # ③ QID
     add("QID", info.get("qid"))
 
-    # ④ QQ签名（太长也截断，避免卡片变太宽）
     add("QQ签名", info.get("sign") or "这个人很懒，什么都没写", limit=40)
 
-    # ⑤ 注册时间（只留日期）
     add("注册时间", _reg_date(info.get("reg_time")))
 
-    # ⑥ 注册天数（≈N年）
     add("注册天数", _days_plain(info.get("reg_days")))
 
-    # ⑦ 会员等级（★ 0 也显示为「0级」，别整行消失）
     _vl = _s(info.get("vip_level"))
     _has_vip = bool(_vl) or any(
         info.get(k) is not None and info.get(k) != ""
@@ -550,18 +479,10 @@ def format_user_info(info: dict, user_id: str = "") -> str:
         lines.append(f"会员等级：{_vln.group(0)}级" if _vln
                      else f"会员等级：{_vl or '0'}级")
 
-    # ⑧ 会员现状：普通会员 / 超级会员 / 大会员 / 未开通
-    #   优先级：年费大会员 > 大会员 > 超级会员 > 普通会员 > 未开通
     def _on(v):
         s = _yes_no(v)
         return s == "已开通"
 
-    # ★★ 判定只看**真正的开通标志**：
-    #   big_year / big_month      -> 大会员
-    #   is_vip / is_years_vip     -> 超级会员
-    #   ⚠️ vip_level **不是**开通状态！它是「QQ会员成长等级」
-    #      （跟 QQ 等级类似，没开会员的人也有值），
-    #      拿它判断会把没开会员的显示成已开通 —— 之前就是这么错的。
     _st = "未开通"
     if _on(info.get("big_year")) or _on(info.get("big_month")):
         _st = "大会员"

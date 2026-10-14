@@ -323,10 +323,6 @@ function buildAuthStatusHtml() {
         <div class="data-item-head">
           <span class="data-item-title">${m.icon} ${esc(r.gid)}
             <span class="muted" style="${tone}">· ${esc(m.text)}</span></span>
-          <span class="data-item-btns">
-            <button class="btn btn-sm" data-action="auth-copy"
-                    data-gid="${esc(r.gid)}">复制指令</button>
-          </span>
         </div>
         <div class="data-item-body">
           <div class="form-group"><label>到期时间</label>
@@ -402,8 +398,7 @@ function buildBankFrozenHtml() {
 /** 绑定授权状态列表里的按钮（数据管理同款 UI） */
 function bindAuthStatusActions() {
   document.querySelectorAll(
-    "#content [data-action='auth-refresh'],"
-    + "#content [data-action='auth-copy']"
+    "#content [data-action='auth-refresh']"
   ).forEach((btn) => {
     if (btn.dataset.authBound) return;
     btn.dataset.authBound = "1";
@@ -411,18 +406,6 @@ function bindAuthStatusActions() {
       const act = btn.dataset.action;
       btn.disabled = true;
       try {
-        if (act === "auth-copy") {
-          const gid = String(btn.dataset.gid || "");
-          const cmd = String((AUTH_STATUS && AUTH_STATUS.cmd) || "授权");
-          const txt = `${cmd} ${gid} 30d`;
-          try {
-            await navigator.clipboard.writeText(txt);
-            toast(`已复制：${txt}`);
-          } catch (_) {
-            toast(`指令：${txt}`, "info");
-          }
-          return;
-        }
         await loadAuthStatus();
         toast("已刷新授权状态");
         render();
@@ -3145,14 +3128,37 @@ const VIEWS = {
         "授权状态 619915692  查指定群\n" +
         "授权列表            列出**每个群**的授权状态\n" +
         "```\n" +
+        "\n★ **只有 AstrBot 全局管理员能授权**（群主 / 群管 / 插件管理员都无权）\n" +
+        "　 全局管理员：AstrBot 后台 → 配置 → `admins_id`\n" +
         "\n★ 到期后插件对该群不可用；到期前 `auth_warn_days` 天会每天提醒一次续期\n" +
         "★ 数据文件：`..._auth.json`（可手动编辑）" },
       { title: "授权：总开关与默认时长", keys: [
           "auth_enable", "auth_default_days", "auth_warn_days"] },
       { title: "授权状态列表（每个群的状态与到期时间）", type: "authstatus" },
-      { title: "授权：远程指令与白名单", keys: [
+      { title: "授权：远程指令名", keys: [
           "auth_remote_commands", "auth_status_commands",
-          "auth_list_commands", "auth_admin_groups"] },
+          "auth_list_commands"] },
+      { title: "🔑 授权：操作权限与怎么设置全局管理员", type: "hint", tone: "warn", text:
+        "★ **只有 AstrBot 全局管理员**能执行授权 / 停用 / 删除。\n" +
+        "　 群主、群管理员、插件专属管理员**都无权**。\n" +
+        "\n★ 怎么把自己设成全局管理员：\n" +
+        "```\n" +
+        "配置文件 ➡ 平台配置（一般用默认配置文件，也可以自己设置自定义）\n" +
+        "        ➡ 管理ID（点击「添加更多」）\n" +
+        "```\n" +
+        "\n★ 怎么查自己的 ID：\n" +
+        "```\n" +
+        "1. 记得开启「内置指令」插件\n" +
+        "2. 发 /sid 即可查自己的 ID（官机和 OneBot 显示不一样）\n" +
+        "3. ID 就是 UID：那一串字符数字\n" +
+        "```\n" +
+        "\n★ 平台配置里的「唤醒词」就是指令前缀\n" +
+        "　 例如默认的 `/`；清空后需 @机器人 才能触发内置指令。\n" +
+        "\n★ 任何人（不需要权限）都能查：\n" +
+        "```\n" +
+        "授权状态     查本群是否已授权\n" +
+        "授权列表     列出每个群的授权状态\n" +
+        "```" },
       { title: "授权功能排障", type: "hint", tone: "info", text:
         "· **本来一直能用，升级后突然不能用了？**\n" +
         "　 → 先看「总开关」是不是被关了；再看本群有没有被单独设成过期/停用\n" +

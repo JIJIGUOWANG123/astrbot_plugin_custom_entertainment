@@ -8,7 +8,6 @@ import tempfile
 import urllib.parse
 from astrbot.api import logger
 
-
 def parse_params(raw: str) -> list:
     """把用户输入拆成参数列表（逗号、空格、顿号都作为分隔）"""
     if not raw:
@@ -17,7 +16,6 @@ def parse_params(raw: str) -> list:
     for sep in ("，", "、", " ", "\t", "\n"):
         text = text.replace(sep, ",")
     return [x.strip() for x in text.split(",") if x.strip()]
-
 
 def build_url(template: str, params: list) -> str:
     """
@@ -39,8 +37,6 @@ def build_url(template: str, params: list) -> str:
     def _quote(v):
         return urllib.parse.quote(str(v), safe="")
 
-    # 兜底：参数值若仍是 {qq}/{me}/{at} 之类的引用，按原样清掉花括号，
-    # 避免把 "{qq}" 这种字面量发给接口（接口只会回 400）。
     params = [p for p in (params or [])]
     for _i, _p in enumerate(params):
         _t = str(_p or "").strip()
@@ -84,10 +80,7 @@ def build_url(template: str, params: list) -> str:
 
     return url
 
-
-# @ 占位符：event_helpers.split_text_and_ats 用 \x00AT<n>\x00 标记被 @ 的人
 _AT_TOKEN_CHARS = "\x00"
-
 
 def validate_meme_params(text: str) -> str:
     """
@@ -105,15 +98,11 @@ def validate_meme_params(text: str) -> str:
         return ""
     raw = str(text)
 
-    # 允许的分隔符：空白 / 逗号 / 顿号 / 字面 @
-    # （用户在群里打「关键词@123456」时那个 @ 就是字面字符）
     _SEPS = ",,\uff0c\u3001@"
     _SEP_RE = r"[,\uff0c\u3001@\s]+"
 
-    # 先把空白删掉，方便判断数字之间是否只由分隔符连接
     no_space = re.sub(r"\s+", "", raw)
 
-    # ① 纯数字（含逗号/顿号/@ 分隔）
     if no_space:
         compact = no_space
         for sep in _SEPS:
@@ -121,7 +110,6 @@ def validate_meme_params(text: str) -> str:
         if compact.isdigit():
             return re.sub(_SEP_RE, " ", raw).strip()
 
-    # ② 数字 + @占位符 混排（先去掉占位符，再看剩下的是不是纯数字/分隔符）
     if _AT_TOKEN_CHARS in raw:
         stripped = raw
         for m in re.finditer(r"\x00AT\d+\x00", raw):
@@ -134,12 +122,7 @@ def validate_meme_params(text: str) -> str:
 
     return ""
 
-
-# 参数值里可用的「引用」，会替换成当前上下文的人
-#   {qq} / {me} / {at}  → 发送者 QQ（若指令里 @ 了别人，restore_ats 已换成数字）
-#   {bot}               → 机器人自身 QQ
 PARAM_REF_RE = re.compile(r"\{\s*(qq|me|at|user|sender|bot)\s*\}", re.I)
-
 
 def resolve_param_refs(text: str, sender_id: str = "", bot_id: str = "") -> str:
     """
@@ -161,7 +144,6 @@ def resolve_param_refs(text: str, sender_id: str = "", bot_id: str = "") -> str:
         return sender_id
 
     return PARAM_REF_RE.sub(_sub, str(text))
-
 
 def detect_param_types(template: str, param_count: int) -> list:
     """
@@ -201,15 +183,12 @@ def detect_param_types(template: str, param_count: int) -> list:
 
     return types
 
-
-# 各类媒体格式的后缀映射
 _EXT_MAP = {
     "jpeg": "jpg", "jpg": "jpg", "png": "png", "gif": "gif", "webp": "webp",
     "bmp": "bmp", "svg": "svg", "avif": "avif", "heic": "heic",
     "mp4": "mp4", "webm": "webm", "quicktime": "mov", "x-matroska": "mkv",
     "x-msvideo": "avi", "mpeg": "mpeg", "3gpp": "3gp", "x-flv": "flv",
 }
-
 
 def _guess_media(content_type: str, url: str = "") -> tuple:
     """
@@ -228,7 +207,6 @@ def _guess_media(content_type: str, url: str = "") -> tuple:
     if ct.startswith("image/") or ext in ("jpg", "png", "gif", "webp", "bmp", "svg", "avif", "heic"):
         return "image", ext or "png"
 
-    # content-type 不认识时，退回看 URL 后缀
     lower_url = (url or "").lower().split("?")[0]
     for suffix, kind in (
         (".mp4", "video"), (".webm", "video"), (".mov", "video"), (".mkv", "video"),
@@ -239,7 +217,6 @@ def _guess_media(content_type: str, url: str = "") -> tuple:
             return kind, suffix.lstrip(".")
     return "unknown", ext or "bin"
 
-
 def get_content_ext(content_type: str) -> str:
     """兼容旧接口：仅按 content-type 推断后缀。
     历史上无法识别时统一回落 png，这里保持一致，避免影响既有调用方。"""
@@ -248,17 +225,13 @@ def get_content_ext(content_type: str) -> str:
         return "png"
     return ext
 
-
-# JSON 里常见的媒体地址字段名，按优先级排序
 _URL_FIELD_CANDIDATES = (
     "video", "video_url", "videourl", "mp4", "play", "play_url", "playurl",
     "url", "src", "image", "image_url", "imageurl", "img", "imgurl",
     "pic", "picture", "cover", "media", "file", "download",
 )
 
-# 值明显不是媒体直链的字段，避免误取
 _URL_SKIP_VALUES = ("success", "ok", "true", "false", "null", "none", "")
-
 
 def _looks_like_media_url(value: str) -> bool:
     """判断一个字符串是否像媒体地址（http/https 开头，或指向常见媒体后缀）。"""
@@ -270,12 +243,10 @@ def _looks_like_media_url(value: str) -> bool:
     lower = v.lower().split("?")[0]
     if lower.startswith(("http://", "https://")):
         return True
-    # 相对路径：必须带媒体后缀才认
     return any(lower.endswith(s) for s in (
         ".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".m3u8",
         ".gif", ".jpg", ".jpeg", ".png", ".webp", ".bmp",
     ))
-
 
 def _get_by_path(data, path: str):
     """按 "data.video" 这样的点号路径取值，取不到返回 None。"""
@@ -296,7 +267,6 @@ def _get_by_path(data, path: str):
             return None
     return cur
 
-
 def extract_media_url(payload, json_field: str = "") -> str:
     """
     从接口返回的 JSON 里提取媒体地址。
@@ -310,14 +280,11 @@ def extract_media_url(payload, json_field: str = "") -> str:
     if payload is None:
         return ""
 
-    # 1) 显式配置优先
     if json_field:
         val = _get_by_path(payload, json_field)
         if isinstance(val, str) and _looks_like_media_url(val):
             return val.strip()
-        # 显式字段存在但不像直链时继续兜底，不直接失败
 
-    # 2) 按常见字段名搜索（同一层优先，再看嵌套）
     def _search_fields(node, depth=0):
         if depth > 6:
             return ""
@@ -327,7 +294,6 @@ def extract_media_url(payload, json_field: str = "") -> str:
                     val = node[key]
                     if isinstance(val, str) and _looks_like_media_url(val):
                         return val.strip()
-                    # 字段值是嵌套对象时继续往里找
                     if isinstance(val, (dict, list)):
                         got = _search_fields(val, depth + 1)
                         if got:
@@ -348,7 +314,6 @@ def extract_media_url(payload, json_field: str = "") -> str:
     if got:
         return got
 
-    # 3) 全量扫描字符串
     def _scan(node, depth=0):
         if depth > 6:
             return ""
@@ -368,7 +333,6 @@ def extract_media_url(payload, json_field: str = "") -> str:
 
     return _scan(payload)
 
-
 def _json_error_message(payload) -> str:
     """从 JSON 里取出可读的错误信息，用于失败提示。"""
     if isinstance(payload, dict):
@@ -380,7 +344,6 @@ def _json_error_message(payload) -> str:
         if code not in (None, 0, "0", 200, "200"):
             return f"code={code}"
     return ""
-
 
 async def download_media(
     url: str,
@@ -420,7 +383,6 @@ async def download_media(
                     f"[meme-api] HTTP {resp.status}, body={body[:300]}"
                     f"\n           请求 URL: {url}"
                 )
-                # 占位符没被替换是最常见的 400 原因，单独点出来
                 if "{" in str(url) and "}" in str(url):
                     logger.warning(
                         "[meme-api] ★ 请求 URL 里还残留 { } 占位符，"
@@ -429,7 +391,6 @@ async def download_media(
                     )
                 raise RuntimeError(f"接口异常 HTTP {resp.status}")
 
-            # ---- 接口返回 JSON：说明是「API 包装」，真正的媒体地址在 JSON 里 ----
             if "application/json" in content_type or "text/plain" in content_type:
                 payload = None
                 try:
@@ -451,7 +412,6 @@ async def download_media(
                                f"（已按字段 {json_field} 查找）")
                         )
 
-                    # 相对路径补全为绝对地址
                     if media_url.startswith("//"):
                         media_url = "https:" + media_url
                     elif media_url.startswith("/"):
@@ -462,7 +422,6 @@ async def download_media(
                         f"[meme-api] 从 JSON 提取到媒体地址"
                         f"{'（字段 ' + json_field + '）' if json_field else ''}: {media_url}"
                     )
-                    # 递归下载真正的媒体文件
                     return await download_media(
                         media_url,
                         timeout=timeout,
@@ -475,7 +434,6 @@ async def download_media(
             final_url = str(resp.url) if resp.url else url
             kind, ext = _guess_media(content_type, final_url)
 
-            # content-type / 后缀都判断不出来时，按规则期望类型兜底
             want = str(expect or "").strip().lower()
             if kind == "unknown" and want in ("image", "video"):
                 kind = want
@@ -514,7 +472,6 @@ async def download_media(
     logger.info(f"[meme-api] 已下载 {kind}（{len(data)} 字节）-> {fpath}")
     return fpath, kind
 
-
 def extract_text_from_body(body: str, content_type: str = "",
                            json_field: str = "") -> str:
     """
@@ -534,7 +491,6 @@ def extract_text_from_body(body: str, content_type: str = "",
     ct = (content_type or "").lower()
     looks_json = "json" in ct or text.startswith("{") or text.startswith("[")
 
-    # ③ JSON：按字段提取
     if looks_json:
         try:
             payload = json.loads(text)
@@ -550,20 +506,16 @@ def extract_text_from_body(body: str, content_type: str = "",
                 val = _get_by_path(payload, f)
                 if isinstance(val, (str, int, float)) and str(val).strip():
                     return str(val).strip()
-                # data 是字符串时也算命中
                 if isinstance(val, str) and val.strip():
                     return val.strip()
             return ""
 
-    # ② document.write("...") / document.writeln('...')
     m = re.search(r"""document\.write(?:ln)?\(\s*(["'])(.*?)\1\s*\)""", text, re.S)
     if m:
         inner = m.group(2)
         return _unescape_js(inner).strip()
 
-    # ① 纯文本
     return text
-
 
 def _unescape_js(s: str) -> str:
     """还原 JS 字符串里常见的转义"""
@@ -573,7 +525,6 @@ def _unescape_js(s: str) -> str:
     out = out.replace('\\"', '"').replace("\\'", "'")
     out = out.replace("\\/", "/").replace("\\\\", "\\")
     return out
-
 
 async def fetch_text(
     url: str,
@@ -628,7 +579,6 @@ async def fetch_text(
         )
     logger.info(f"[meme-api] 文本接口提取成功（{len(text)} 字）")
     return text
-
 
 async def download_image(url: str, timeout: int = 15) -> str:
     """兼容旧接口：只下载图片，返回本地路径。"""

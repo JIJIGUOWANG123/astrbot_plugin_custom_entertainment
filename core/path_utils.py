@@ -16,44 +16,24 @@ PLUGIN_STATUS_PUSH_DATA_FILENAME = f"{PLUGIN_ID}_status_push.json"
 PLUGIN_DAILY_NEWS_DATA_FILENAME = f"{PLUGIN_ID}_daily_news.json"
 PLUGIN_NICKNAME_DATA_FILENAME = f"{PLUGIN_ID}_nickname.json"
 PLUGIN_SPEAK_STATS_DATA_FILENAME = f"{PLUGIN_ID}_speak_stats.json"
-# ★★ 1.3.0：授权功能（按群到期时间）
 PLUGIN_AUTH_DATA_FILENAME = f"{PLUGIN_ID}_auth.json"
 PLUGIN_PET_DATA_FILENAME = f"{PLUGIN_ID}_pet.json"
 PLUGIN_BIRD_DATA_FILENAME = f"{PLUGIN_ID}_bird.json"
 PLUGIN_DATA_STORE_FILENAME = f"{PLUGIN_ID}_data.json"
 PLUGIN_RPS_DATA_FILENAME = f"{PLUGIN_ID}_rps.json"
-# ★★ 1.7.7：猜数游戏数据文件
 PLUGIN_GUESS_DATA_FILENAME = f"{PLUGIN_ID}_guess.json"
-# ★★ 市场版 1.1：赛车数据文件
 PLUGIN_RACING_DATA_FILENAME = f"{PLUGIN_ID}_racing.json"
-# ★★ 1.7.7：收发消息计数（重载不归零）
 PLUGIN_MSG_STATS_FILENAME = f"{PLUGIN_ID}_msg_stats.json"
 
-# ============================================================
-# 统一排版（1.7.6）
-# ------------------------------------------------------------
-# 所有**输出内容**的标题都跟菜单保持一致：
-#     鸡鸡娱乐系统：{标题}
-#     ━━━━━━━━━━━━━━━━━━━━
-# 结尾用 _FOOT 收尾，和菜单一样。
-#
-# ★ 为什么放在这里：这里没有其它依赖，各 core 模块都能安全导入。
-# ============================================================
-# ★★ 1.7.6：「鸡鸡娱乐系统：」这个前缀**可以自定义**（后台 `title_prefix`）。
-#   实现方式：模块级可变量 + `set_title_prefix()`。
-#   这样 `title_bar()` 每次调用取当前值，**100 多个调用点一个都不用改**。
 TITLE_PREFIX_DEFAULT = "铁剑娘系统："
 TITLE_PREFIX = TITLE_PREFIX_DEFAULT
-TITLE_SEP = "━" * 20        # 标题下面的分隔线
-TITLE_FOOT = "━" * 36       # 收尾线
+TITLE_SEP = "━" * 20
+TITLE_FOOT = "━" * 36
 
-
-# ★ 用户表达「不要前缀」时可能填的值（避免误填出「关闭：」这种怪标题）
 _TITLE_PREFIX_OFF = {
     "", "无", "没有", "不要", "关闭", "关", "取消", "空", "留空",
     "none", "null", "nil", "false", "off", "no", "0", "-",
 }
-
 
 def set_title_prefix(prefix) -> str:
     """
@@ -70,15 +50,12 @@ def set_title_prefix(prefix) -> str:
         TITLE_PREFIX = TITLE_PREFIX_DEFAULT
         return TITLE_PREFIX
     p = str(prefix).strip()
-    # ★ 留空 / 或填了「不要前缀」的等价词 -> 彻底不要前缀
     if p.lower() in _TITLE_PREFIX_OFF:
         TITLE_PREFIX = ""
         return TITLE_PREFIX
-    # 末尾统一成「：」，避免出现「我的机器人标题」这种粘连
     p = p.rstrip("：: 　\t")
     TITLE_PREFIX = (p + "：") if p else ""
     return TITLE_PREFIX
-
 
 def title_bar(title: str, foot: bool = False) -> str:
     """
@@ -92,7 +69,6 @@ def title_bar(title: str, foot: bool = False) -> str:
     t = str(title or "").strip()
     if not t:
         return TITLE_SEP
-    # ★ 用模块级变量（可被 set_title_prefix 改），不要用常量快照
     _pfx = TITLE_PREFIX
     if _pfx and not t.startswith(_pfx):
         t = f"{_pfx}{t}"
@@ -100,7 +76,6 @@ def title_bar(title: str, foot: bool = False) -> str:
     if foot:
         out += "\n" + TITLE_FOOT
     return out
-
 
 def strip_md(text: str) -> str:
     """
@@ -119,15 +94,12 @@ def strip_md(text: str) -> str:
     s = _re2.sub(r"\*\*(.+?)\*\*", r"\1", s, flags=_re2.S)
     return s.replace("**", "")
 
-
 _BAR_CHARS = "\u2500\u2501\u2504\u2508\u254c"
-
 
 def _is_bar_line(s: str) -> bool:
     """整行都是横线字符（含前导空白）"""
     t = str(s or "").strip()
     return bool(t) and all(ch in _BAR_CHARS for ch in t)
-
 
 def with_bottom_bar(text: str, bar: str = "") -> str:
     """
@@ -147,27 +119,18 @@ def with_bottom_bar(text: str, bar: str = "") -> str:
     s = str(text or "")
     if not s.strip():
         return s
-    # ★ 先去掉**末尾空行**：不然「横线 + 空行」会把尾巴顶到横线下面去
     lines = s.rstrip("\n").split("\n")
     _tail_blank = []
     while lines and not lines[-1].strip():
         _tail_blank.append(lines.pop())
     if lines and _is_bar_line(lines[-1]):
-        return "\n".join(lines)          # 已经有底部横线
+        return "\n".join(lines)
     return "\n".join(lines) + "\n" + (bar or TITLE_FOOT)
-
 
 def title_foot() -> str:
     """收尾横线（托住整段输出，和菜单一致）"""
     return TITLE_FOOT
 
-
-# ============================================================
-# 数字缩略显示（1.7.6）
-# ------------------------------------------------------------
-# 积分数一大，满屏都是「1234567」这种长数字，很不好读。
-# 统一缩略：过万 -> `5.2万`，过亿 -> `1.2亿`。
-# ============================================================
 def fmt_num(v, unit_wan: str = "万", unit_yi: str = "亿") -> str:
     """
     把数字缩略成人话（保留 1 位小数，去掉多余的 .0）：
@@ -193,86 +156,41 @@ def fmt_num(v, unit_wan: str = "万", unit_yi: str = "亿") -> str:
     if a >= 1e8:
         s = f"{a / 1e8:.1f}".rstrip("0").rstrip(".") + unit_yi
     elif a >= 1e4:
-        # ★ 过千万（含四舍五入会变成 1000 万）直接用「亿」，
-        #   否则会出现「1234.6万」这种不好读的数
         if a / 1e4 >= 999.95:
             s = f"{a / 1e8:.2f}".rstrip("0").rstrip(".") + unit_yi
         else:
             s = f"{a / 1e4:.1f}".rstrip("0").rstrip(".") + unit_wan
     else:
-        # 小于一万：整数就不带小数点
         s = str(int(a)) if abs(a - int(a)) < 1e-9 else f"{a:g}"
     return ("-" if neg else "") + s
 
-
-# ============================================================
-# 坐骑图片素材（**已弃用**）
-#   ★★ 市场版：坐骑图片功能已移除。
-#   这里只保留常量与查找函数，保证历史代码路径调用时不报错；
-#   默认目录为**空字符串**（不再指向任何本机路径）。
-# ============================================================
 MOUNT_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 DEFAULT_MOUNT_IMG_DIR = ""
 
-# ============================================================
-# ★★ 1.7.7：昵称显示的公共处理（**宽度自适应**）
-# ------------------------------------------------------------
-# 三件事：
-#   ① 清掉**渲染不出来的字符**（零宽 / 方向控制 / 孤立代理对 /
-#      私用区 / 增补平面非 emoji）—— 卡片画不出来，直接去掉。
-#   ② 按**显示宽度**算长度：中文 / 全角 / emoji = 2 格，英文数字 = 1 格；
-#      emoji 的变体选择符 / ZWJ 序列算**一个**字符。
-#   ③ 只有**真的会换行**时才用省略号 —— 宽度装得下就完整显示。
-# ============================================================
-#
-# 榜单一行能放下的**显示宽度预算**（格）。
-#   ★ 以前是「字符数 ≤ 10」这种死限制：短名字也被砍，
-#     中文和英文还按同一个标准算 —— 两头都不对。
-#   ★ 现在给的是渲染宽度预算：20 格 ≈ 10 个汉字 ≈ 20 个英文字母。
 NICK_WIDTH = 20
-# 窄列场景（榜单名次列之类）用这个
 NICK_WIDTH_NARROW = 14
 
-# 零宽字符 / 方向控制 / 孤立代理对（这些要删）
-#   ★★ 1.7.7 修正：**不能**把 U+200D（ZWJ）和 U+FE0E / U+FE0F
-#     （变体选择符）算进来 —— 它们是 emoji 的**结构字符**：
-#       · 删掉 U+FE0F -> `⚔️` 退化成单色 `⚔`
-#       · 删掉 U+200D -> `👨‍👩‍👧‍👦` 散成 4 个独立 emoji
-#     以前的范围 `\u200b-\u200f` 和 `\ufe00-\ufe0f` 把这两个都误伤了。
 _ZW_RE = re.compile(
     "[\u200b\u200c\u200e\u200f"
     "\u202a-\u202e\u2060-\u2064\u206a-\u206f"
     "\ufeff\ufe00-\ufe0d\ud800-\udfff]")
-# 要**保留**的符号（emoji / 常见符号），清理前先摘出来
 _EMOJI_RE = re.compile(
     "[\U0001F000-\U0001FAFF"
     "\u2600-\u27bf\u2b00-\u2bff\u2190-\u21ff\u2300-\u23ff"
     "\u20e3]")
-# ★★ 1.7.7：**本机字体链实测缺字形**、渲染时只会画成方框的范围。
-#   私用区（U+E000-F8FF）是最常见的重灾区（截图工具/输入法会塞进来），
-#   增补私用区 A/B 同理；增补平面里**非 emoji** 的（音乐符号、
-#   数学字母等）微软雅黑/符号/emoji 三套字体都没有字形。
 _BAD_RE = re.compile(
     "[\ue000-\uf8ff"
     "\U000F0000-\U000FFFFD"
     "\U00100000-\U0010FFFD"
     "]")
 
-# ------------------------------------------------------------------
-# ★★ 1.7.7：**缺字形字符缓存**（会渲染成方框的那些）
-#   渲染服务有精确探测（比对豆腐框位图指纹），插件问一次就缓存下来。
-#   `set_glyph_probe()` 由 main.py 启动时注入探测器（避免这里反向依赖
-#   输出模式模块）；探测失败/没注入时 `_GLYPH_CACHE` 为空，行为不变。
-# ------------------------------------------------------------------
 _GLYPH_CACHE = set()
 _GLYPH_PROBE = None
-
 
 def set_glyph_probe(fn) -> None:
     """注入「取缺字形字符集合」的探测器（签名：fn() -> set[str]）"""
     global _GLYPH_PROBE
     _GLYPH_PROBE = fn if callable(fn) else None
-
 
 def refresh_glyph_cache(chars=None) -> set:
     """
@@ -293,11 +211,9 @@ def refresh_glyph_cache(chars=None) -> set:
         pass
     return _GLYPH_CACHE
 
-
 def glyph_cache() -> set:
     """当前已确认缺字形的字符集合（只读）"""
     return set(_GLYPH_CACHE)
-
 
 def _char_units(text: str) -> list:
     """
@@ -313,10 +229,10 @@ def _char_units(text: str) -> list:
         if o in (0xFE0F, 0xFE0E, 0x200D, 0x20E3):
             buf += c
         elif 0x1F3FB <= o <= 0x1F3FF and buf:
-            buf += c                      # 肤色修饰符，跟在基 emoji 后面
+            buf += c
         else:
             if buf.endswith("\u200d"):
-                buf += c                  # ZWJ 后面的字要接上
+                buf += c
             elif buf:
                 out.append(buf)
                 buf = c
@@ -326,7 +242,6 @@ def _char_units(text: str) -> list:
         out.append(buf)
     return out
 
-
 def _unit_name(u: str) -> str:
     """
     取一个「显示单元」的**基准名**（用于判重 / 合并 ZWJ 序列）。
@@ -335,7 +250,6 @@ def _unit_name(u: str) -> str:
     而不是 4 个 —— 否则宽度算成 8 格，明明只占 2 格。
     """
     return u.split("\u200d")[0].split("\ufe0f")[0].split("\ufe0e")[0]
-
 
 def display_width(s) -> int:
     """
@@ -351,26 +265,24 @@ def display_width(s) -> int:
     t = str(s or "")
     w = 0
     for u in _char_units(t):
-        # ★ ZWJ 序列整体按「一个 emoji」算
         if "\u200d" in u:
             w += 2
             continue
         ch = u[0]
         o = ord(ch)
         if o in (0xFE0F, 0xFE0E, 0x200D, 0x20E3):
-            continue                      # 孤立的修饰符不占位
+            continue
         if _ud.category(ch) in ("Mn", "Me", "Cf", "Cc"):
-            continue                      # 组合记号 / 控制符不占位
+            continue
         if (o >= 0x1F000 or 0x2600 <= o <= 0x27BF
                 or 0x2B00 <= o <= 0x2BFF or 0x2190 <= o <= 0x21FF
                 or 0x2300 <= o <= 0x23FF):
-            w += 2                        # emoji / 装饰符号按全角
+            w += 2
         elif _ud.east_asian_width(ch) in ("W", "F"):
             w += 2
         else:
             w += 1
     return w
-
 
 def truncate_width(s, max_w: int = NICK_WIDTH, ellipsis: str = "…") -> str:
     """
@@ -399,7 +311,6 @@ def truncate_width(s, max_w: int = NICK_WIDTH, ellipsis: str = "…") -> str:
         w += uw
     return (out.rstrip() or t[:1]) + ellipsis
 
-
 def nick_display(s, limit: int = 0) -> str:
     """
     昵称显示：**先清掉渲染不出来的字符**，宽度装不下再用省略号。
@@ -424,29 +335,12 @@ def nick_display(s, limit: int = 0) -> str:
         return truncate_width(t, NICK_WIDTH_NARROW)
     return truncate_width(t, NICK_WIDTH)
 
-
 def nick_display_narrow(s) -> str:
     """窄列显示名（榜单名次列）—— 宽度预算更小"""
     return truncate_width(clean_display(s), NICK_WIDTH_NARROW)
 
-
-# ============================================================
-# ★★ 1.7.7：排行榜「名次前缀」统一生成
-# ------------------------------------------------------------
-# 两个要点（都是用户反馈的）：
-#   ① 前三名一律用奖牌图标 🥇🥈🥉，第 4 名起用数字；
-#   ② 名次后面用**两个空格**——渲染端把「至少 2 个空白」当作列分隔，
-#      于是「🥇 名字」和「4.  名字」会被排成**同一列**，
-#      奖牌和数字的**左边缘自动对齐**，名字也都从同一 x 开始。
-#      （只用一个空格不会分列，数字就会顶到最左边，和奖牌错开。）
-# ============================================================
 RANK_MEDALS = ("🥇", "🥈", "🥉")
-# 名次与正文之间的分隔：**一个空格**。
-#   ★★ 1.7.7：曾经用「两个空格」触发渲染端的列分割，结果奖牌与名字
-#     之间空出一大截（渲染端按图标列宽 + 列间距排）。现在改回一个空格，
-#     渲染端用「统一标签墨迹宽 + 小间距」的算法对齐 —— 既紧又齐。
 RANK_GAP = " "
-
 
 def rank_tag(i: int, medals=None, gap: str = RANK_GAP) -> str:
     """
@@ -464,22 +358,8 @@ def rank_tag(i: int, medals=None, gap: str = RANK_GAP) -> str:
         return f"{med[n - 1]}{gap}"
     return f"{n}.{gap}"
 
-
-# ★★ 1.7.8：「昵称里混进 protobuf 原始字节」的检测与抢救。
-#   实测适配器会把**群成员 protobuf** 当字符串塞进 `sender.nickname`：
-#       {NL}{NL}{NL}\x08%\x01\x01\x07\xd8{NL}{NL}\x12\x08MZCanYan\x10\x00
-#   这些字节里 `%`(0x25)、`\x01`、`\xd8` 之类 isprintable() 都为真，
-#   老的 clean_display 拦不住，于是渲染成 `%ÃÃØ` 这种鬼画符，
-#   还被写进昵称缓存到处显示。
-#
-#   判据（故意保守，正常昵称绝不误伤）：
-#     · 出现控制字符（< U+0020，换行除外）或 C1 控制符（U+0080~U+009F）；或
-#     · 同时出现 `%` 与 `\u0100~\u024F`（Latin Extended-B）-> protobuf 残留特征；
-#     · 或有两个及以上拉丁变音符（U+00C0~U+00FF）且长度 >= 6。
-#   CJK / emoji / 数学字母（𝔻𝕒𝕐）/ 圈字（㊙）都不在判据里，不会误伤。
 _BIN_MARK_RE = re.compile(r"[\u00c0-\u024f\ufffd]")
 _C1_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
-
 
 def _looks_binary(t: str) -> bool:
     """昵称里是不是混进了原始二进制字节（protobuf 残留等）"""
@@ -492,7 +372,6 @@ def _looks_binary(t: str) -> bool:
     if len(t) >= 6 and len(_BIN_MARK_RE.findall(t)) >= 2:
         return True
     return False
-
 
 def _salvage_from_binary(t: str) -> str:
     """
@@ -518,7 +397,6 @@ def _salvage_from_binary(t: str) -> str:
     best = best.strip()
     if _BIN_MARK_RE.search(best):
         best = _BIN_MARK_RE.sub("", best).strip()
-    # ★ 再剃掉首尾的垃圾符号（protobuf 残留常把 `%` 留在名字前面）
     best = best.strip(" %{}<>|\\/[]()\"'.,;:-_=+*#@!?~^`")
     return best if len(best) >= 2 else ""
 
@@ -547,19 +425,15 @@ def clean_display(s) -> str:
     t = str(s or "")
     if not t:
         return ""
-    # ★★ 1.3.0：先判「是不是二进制垃圾」—— 是就只抢救里面的人名，
-    #   别把 `%ÃÃØ` 这种鬼画符放出去（也不会写进昵称缓存）。
     if _looks_binary(t):
         _sv = _salvage_from_binary(t)
         if not _sv:
             return ""
         t = _sv
-    # ★ 先干掉「字体链肯定画不出」的字符（方框重灾区）
     try:
         t = _BAD_RE.sub("", t)
     except Exception:
         pass
-    # ★★ 缺字形字符（渲染服务精确探测过的那批）直接去掉
     if _GLYPH_CACHE and t:
         try:
             t = "".join(ch for ch in t
@@ -574,13 +448,8 @@ def clean_display(s) -> str:
         return _PH + chr(0xE100 + len(_keep) - 1) + _PH
 
     try:
-        # ① 保留符号 -> 标记
         t = _EMOJI_RE.sub(_stash, t)
-        # ② 去零宽/方向控制
         t = _ZW_RE.sub("", t)
-        # ③ 逐字符过滤：只放行「空格 / 可打印 / 我们的标记」
-        #    标记是 U+E000 + U+E1xx + U+E000 三段，单看每段都在私用区；
-        #    这里用「是否属于合法标记」来判断，而不是放行整个私用区。
         _valid = set()
         for _i in range(len(_keep)):
             _valid.add(_PH + chr(0xE100 + _i) + _PH)
@@ -601,16 +470,12 @@ def clean_display(s) -> str:
                 out.append(ch)
             i += 1
         t = "".join(out)
-        # ④ 标记换回原符号
         for _i, _v in enumerate(
                 [_PH + chr(0xE100 + k) + _PH for k in range(len(_keep))]):
             t = t.replace(_v, _keep[_i])
     except Exception:
-        # 清理失败就用原串（绝不因为昵称把整条输出搞挂）
         return re.sub(r"\s+", " ", str(s or "")).strip()
-    # ★ 只压**空白**，不要用 `.split()` —— 它会把 emoji 序列按 ZWJ 拆开
     return re.sub(r"\s+", " ", t).strip()
-
 
 def mount_image_path(name: str, base_dir: str = "") -> str:
     """
@@ -626,7 +491,6 @@ def mount_image_path(name: str, base_dir: str = "") -> str:
     if not raw:
         return ""
     root = str(base_dir or "").strip() or DEFAULT_MOUNT_IMG_DIR
-    # ① 绝对路径直接判存在
     if os.path.isabs(raw) and os.path.isfile(raw):
         return raw
     safe = os.path.basename(raw.replace("/", os.sep).replace("\\", os.sep))
@@ -634,11 +498,9 @@ def mount_image_path(name: str, base_dir: str = "") -> str:
         return ""
     if not os.path.isdir(root):
         return ""
-    # ② 带扩展名
     p = os.path.join(root, safe)
     if os.path.isfile(p):
         return p
-    # ③ 只有名称：挨个扩展名试（大小写不敏感）
     stem = os.path.splitext(safe)[0]
     try:
         entries = os.listdir(root)
@@ -650,7 +512,6 @@ def mount_image_path(name: str, base_dir: str = "") -> str:
         if hit:
             return os.path.join(root, hit)
     return ""
-
 
 def render_greet(tpl: str, kv: dict) -> str:
     """
@@ -671,53 +532,19 @@ def render_greet(tpl: str, kv: dict) -> str:
     out = re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", _b, out)
     return out
 
-
-
 def plugin_dir() -> str:
     """当前插件根目录"""
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-
-# ============================================================
-# 指令「关键词 + 参数」解析（1.7.6）
-# ------------------------------------------------------------
-# ★ 空格可有可无：`坐骑查看 赤兔` 和 `坐骑查看赤兔` 都认。
-#   所有带参数的指令都走这里，统一行为。
-# ============================================================
-# ============================================================
-# ★★ 1.7.6：「紧挨着的参数」长度上限。
-#   为什么是 64：长英文歌名（`six forty seven` 15 字、
-#   `yesterday once more` 20 字）以前被 12 字上限挡掉，
-#   导致 `点歌six forty seven` 匹配不上任何分支、静默无反应。
-#   64 足够容纳正常歌名/名字，又能挡掉「整段话被误当参数」。
 ARG_MAX_CHARS = 64
 
-# ============================================================
-# 全局「已知指令名」登记表（1.7.6）
-# ------------------------------------------------------------
-# ★ 用途：不带空格时判断「紧挨着的这段到底是不是参数」。
-#   例：别名 `坐骑` + 输入 `坐骑查看赤兔`
-#       -> 「查看赤兔」以已知指令 `坐骑查看` 开头，说明这不是参数，
-#          于是 `坐骑` 这个别名不算命中，交给 `坐骑查看` 处理。
-#   由 checkin 模块每次构造 / reload 时自动登记。
-#
-# ★ 为什么用 sys.modules 存：万一这个模块被加载成多份副本
-#   （测试里 `spec_from_file_location` 会这样），登记表仍是
-#   全进程唯一的一份，不会出现「这边登记了那边看不到」。
-# ============================================================
 _REG_KEY = "__apix_known_cmd_names__"
 
-# ★★ 1.7.6：可组合的**音源前缀**（音乐指令专用）。
-#   `QQ点歌` / `网易搜歌` 这类是「音源名 + 基础指令名」拼出来的，
-#   逐个登记既啰嗦又容易漏（音源别名太多）。
-#   这里登记前缀名，`_starts_with_known_cmd` 再按
-#   「前缀 + 已登记指令名」组合识别。
 _REG_SRC_KEY = "__apix_cmd_src_prefixes__"
 
 _SRC_PREFIX_DEFAULT = ("qq", "netease", "qq音乐", "网易", "网易云", "wy",
                        "kugou", "kuwo", "migu", "qianqian",
                        "酷狗", "酷我", "咪咕", "千千", "千千音乐")
-
 
 def _src_store() -> set:
     """拿到全进程唯一的「音源前缀」集合"""
@@ -728,7 +555,6 @@ def _src_store() -> set:
         sys.modules[_REG_SRC_KEY] = m
     return m.names
 
-
 def _reg_store() -> set:
     """拿到全进程唯一的指令名集合"""
     m = sys.modules.get(_REG_KEY)
@@ -737,7 +563,6 @@ def _reg_store() -> set:
         m.names = set()
         sys.modules[_REG_KEY] = m
     return m.names
-
 
 def register_cmd_names(names) -> int:
     """登记一批已知指令名（可反复调用，只增不减）"""
@@ -750,11 +575,9 @@ def register_cmd_names(names) -> int:
             n += 1
     return n
 
-
 def known_cmd_names():
     """当前已登记的指令名（拷贝）"""
     return set(_reg_store())
-
 
 def _starts_with_known_cmd(rest: str) -> bool:
     """
@@ -780,16 +603,11 @@ def _starts_with_known_cmd(rest: str) -> bool:
             continue
         if s.startswith(nm) or nm.endswith(s):
             return True
-    # ★ 嵌入判断放在最后，且要求命中的指令名够长，
-    #   否则短名（如别名 `坐骑`）会把正常参数全挡掉。
     for nm in store:
         if len(nm) < 3 or nm == s:
             continue
         if nm in s:
             return True
-    # ★★ 1.7.6：组合形式「音源前缀 + 指令名」
-    #   （`QQ点歌` / `qq搜歌` …），前缀表是动态的。
-    #   ★ 音源别名大小写不敏感（`QQ点歌` 和 `qq点歌` 都要认）。
     _s_low = s.lower()
     for _p in _src_store():
         _p = str(_p or "")
@@ -804,7 +622,6 @@ def _starts_with_known_cmd(rest: str) -> bool:
             if nm and _rest.startswith(nm):
                 return True
     return False
-
 
 def _looks_like_arg(rest: str) -> bool:
     """
@@ -836,15 +653,12 @@ def _looks_like_arg(rest: str) -> bool:
         return False
     if _starts_with_known_cmd(s):
         return False
-    # ★★ 1.7.6：以**音源前缀**开头（`QQ不要说话` / `网易…`）也不是参数 ——
-    #   说明用户想打「QQ点歌 歌名」，只是把指令名打反了/漏了。
     _s_low = s.lower()
     for _p in _src_store():
         _p = str(_p or "")
         if _p and _s_low.startswith(_p.lower()):
             return False
     return True
-
 
 def cmd_arg(text: str, names):
     """
@@ -881,25 +695,11 @@ def cmd_arg(text: str, names):
                 continue
             rest = t[len(_p):]
             if not rest:
-                return ""           # 只有关键词
-            # 带空格的参数：`坐骑查看 赤兔` —— 参数就是空格后面那段
+                return ""
             if rest[0].isspace():
                 _a = rest.strip()
                 if not _a:
-                    return ""       # 只有关键词 + 空格 -> 没参数
-                # ★ 但「空格的另一边是别人家的指令」时不算命中：
-                #   `坐骑 查看 测试坐骑` -> 「查看 测试坐骑」以 `坐骑查看`
-                #   相关指令开头，说明这是「坐骑查看 测试坐骑」被拆开。
-                #
-                # ★★ 1.7.6 修正：这里改成**精确匹配**已知指令名才拒绝。
-                #   原来用「以已知指令**开头**」判断，太激进：
-                #   已注册指令里有 `工种`，于是
-                #       `打工 工种1` -> 首段 `工种1` 以 `工种` 开头 -> 被拒
-                #   结果**凡是以指令名开头的数据名都用不了**
-                #   （工种/坐骑/宠物…名字里带「工种」两字就废）。
-                #   真正的歧义只有一种：空格右边**整段就是一个指令名**，
-                #   那才可能是「长指令被空格拆开」。精确比即可，
-                #   上面那条 `坐骑 查看` 的修复依然有效。
+                    return ""
                 _known = known_cmd_names()
                 if _a in _known:
                     continue
@@ -907,13 +707,10 @@ def cmd_arg(text: str, names):
                 if _first and _first in _known and _first != _a:
                     continue
                 return _a
-            # 紧挨着的参数：`坐骑查看赤兔`（要像参数）
             if _looks_like_arg(rest):
                 return rest.strip()
-            # 不像参数 -> 这个别名不算命中，试下一个
             continue
     return None
-
 
 def _find_astrbot_root() -> str:
     """定位 AstrBot 根目录（仅用于确定 data/ 的父级，不用于直接写数据）"""
@@ -930,20 +727,15 @@ def _find_astrbot_root() -> str:
         pass
     cur = plugin_dir()
     for _ in range(6):
-        # 优先认 data/plugin_data（新规范），其次兼容老的 data/config
         if (os.path.isdir(os.path.join(cur, "data", "plugin_data"))
                 or os.path.isdir(os.path.join(cur, "data", "config"))):
             return cur
         cur = os.path.dirname(cur)
     return os.getcwd()
 
-
-# 旧版本的数据目录（data/config），仅用于一次性迁移
 def _legacy_cfg_dir() -> str:
     return os.path.join(_find_astrbot_root(), "data", "config")
 
-
-# ★ 规范要求：插件持久化数据统一放在 data/plugin_data/<插件名>/
 def _plugin_data_dir() -> str:
     """
     返回本插件的数据目录，并确保存在。
@@ -951,23 +743,21 @@ def _plugin_data_dir() -> str:
     """
     candidates = []
 
-    # ① AstrBot 4.x 提供的接口
     try:
-        from astrbot.core.utils.astrbot_path import get_astrbot_data_path  # type: ignore
+        from astrbot.core.utils.astrbot_path import get_astrbot_data_path
         p = get_astrbot_data_path()
         if p:
             candidates.append(os.path.join(str(p), "plugin_data", PLUGIN_ID))
     except Exception:
         pass
     try:
-        from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path  # type: ignore
+        from astrbot.core.utils.astrbot_path import get_astrbot_plugin_data_path
         p = get_astrbot_plugin_data_path()
         if p:
             candidates.append(str(p))
     except Exception:
         pass
 
-    # ② 按规范路径推导
     candidates.append(
         os.path.join(_find_astrbot_root(), "data", "plugin_data", PLUGIN_ID)
     )
@@ -979,15 +769,11 @@ def _plugin_data_dir() -> str:
         except Exception:
             continue
 
-    # ③ 兜底：插件目录下的 data/（极端情况下也不能丢数据）
     fallback = os.path.join(plugin_dir(), "data")
     os.makedirs(fallback, exist_ok=True)
     return fallback
 
-
-# 迁移只跑一次的标记
 _MIGRATED = [False]
-
 
 def _migrate_legacy_data():
     """
@@ -1044,12 +830,10 @@ def _migrate_legacy_data():
     except Exception:
         pass
 
-
 def _cfg_dir() -> str:
     """本插件数据目录（data/plugin_data/<插件名>/）"""
     _migrate_legacy_data()
     return _plugin_data_dir()
-
 
 def astrbot_panel_config_path() -> str:
     """
@@ -1065,7 +849,6 @@ def astrbot_panel_config_path() -> str:
     except Exception:
         return ""
 
-
 def read_astrbot_panel_config() -> dict:
     """直读 AstrBot 面板配置（读不到返回 {}）"""
     try:
@@ -1079,90 +862,69 @@ def read_astrbot_panel_config() -> dict:
     except Exception:
         return {}
 
-
 def config_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_CONFIG_FILENAME)
-
 
 def fortune_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_FORTUNE_DATA_FILENAME)
 
-
 def husband_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_HUSBAND_DATA_FILENAME)
-
 
 def luck_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_LUCK_DATA_FILENAME)
 
-
 def greeting_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_GREETING_DATA_FILENAME)
-
 
 def minecraft_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_MINECRAFT_DATA_FILENAME)
 
-
 def checkin_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_CHECKIN_DATA_FILENAME)
-
 
 def hourly_chime_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_HOURLY_CHIME_DATA_FILENAME)
 
-
 def status_push_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_STATUS_PUSH_DATA_FILENAME)
-
 
 def daily_news_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_DAILY_NEWS_DATA_FILENAME)
 
-
 def nickname_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_NICKNAME_DATA_FILENAME)
 
-
 def speak_stats_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_SPEAK_STATS_DATA_FILENAME)
-
 
 def auth_data_path() -> str:
     """★★ 1.3.0：授权功能数据（按群到期时间）"""
     return os.path.join(_cfg_dir(), PLUGIN_AUTH_DATA_FILENAME)
 
-
 def pet_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_PET_DATA_FILENAME)
-
 
 def rps_data_path() -> str:
     """猜拳数据文件"""
     return os.path.join(_cfg_dir(), PLUGIN_RPS_DATA_FILENAME)
 
-
 def guess_data_path() -> str:
     """★ 1.7.7：猜数游戏数据文件"""
     return os.path.join(_cfg_dir(), PLUGIN_GUESS_DATA_FILENAME)
-
 
 def msg_stats_path() -> str:
     """★ 1.7.7：收发消息计数文件（落盘，重载插件不归零）"""
     return os.path.join(_cfg_dir(), PLUGIN_MSG_STATS_FILENAME)
 
-
 def bird_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_BIRD_DATA_FILENAME)
-
 
 def racing_data_path() -> str:
     """赛车数据文件路径（市场版 1.1 新增）"""
     return os.path.join(_cfg_dir(), PLUGIN_RACING_DATA_FILENAME)
 
-
 BIRD_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
-
 
 def bird_image_path(name: str, base_dir: str = "") -> str:
     """
@@ -1178,7 +940,6 @@ def bird_image_path(name: str, base_dir: str = "") -> str:
     if not raw:
         return ""
     root = str(base_dir or "").strip()
-    # ① 绝对路径直接判存在
     if os.path.isabs(raw) and os.path.isfile(raw):
         return raw
     safe = os.path.basename(raw.replace("/", os.sep).replace("\\", os.sep))
@@ -1186,11 +947,9 @@ def bird_image_path(name: str, base_dir: str = "") -> str:
         return ""
     dirs = [d for d in (root,) if d and os.path.isdir(d)]
     for d in dirs:
-        # ② 带扩展名
         p = os.path.join(d, safe)
         if os.path.isfile(p):
             return p
-        # ③ 只有昵称：挨个扩展名试（大小写不敏感）
         stem = os.path.splitext(safe)[0]
         try:
             entries = os.listdir(d)
@@ -1203,10 +962,8 @@ def bird_image_path(name: str, base_dir: str = "") -> str:
                 return os.path.join(d, hit)
     return ""
 
-
 def data_store_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_DATA_STORE_FILENAME)
-
 
 def read_plugin_version(star_obj=None) -> str:
     """读取插件版本号（优先 metadata → star 对象属性 → yaml）"""
@@ -1244,7 +1001,6 @@ def read_plugin_version(star_obj=None) -> str:
 
     return "未知"
 
-
 def read_disk_config() -> dict:
     """读取插件磁盘配置，失败返回 {}"""
     path = config_path()
@@ -1255,7 +1011,6 @@ def read_disk_config() -> dict:
             return json.load(f)
     except Exception:
         return {}
-
 
 def parse_gid_list(raw) -> list:
     """
@@ -1277,7 +1032,6 @@ def parse_gid_list(raw) -> list:
         seen.add(gid)
         out.append(gid)
     return out
-
 
 def write_disk_config(data: dict) -> bool:
     """原子写入插件磁盘配置"""

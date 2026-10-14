@@ -17,7 +17,6 @@ def parse_line_list(raw) -> list:
             result.append(line)
     return result
 
-
 def parse_group_block_keywords(raw) -> dict:
     result = {}
     if not raw:
@@ -47,7 +46,6 @@ def parse_group_block_keywords(raw) -> dict:
             if k not in result[group_id]:
                 result[group_id].append(k)
     return result
-
 
 def parse_gid_whitelist(raw) -> list:
     """
@@ -79,7 +77,6 @@ def parse_gid_whitelist(raw) -> list:
                 out.append(gid)
     return out
 
-
 def group_allowed(group_id: str, blocked: list) -> bool:
     """
     统一的群号过滤（**黑名单语义**）：
@@ -93,7 +90,6 @@ def group_allowed(group_id: str, blocked: list) -> bool:
         return True
     return str(group_id) not in [str(x) for x in blocked]
 
-
 def is_group_allowed(group_id: str, mode: str, whitelist: list, blacklist: list) -> bool:
     """旧接口，保留兼容（mode/whitelist/blacklist 形式）"""
     if not group_id:
@@ -104,7 +100,6 @@ def is_group_allowed(group_id: str, mode: str, whitelist: list, blacklist: list)
     if mode == "blacklist":
         return group_id not in blacklist
     return True
-
 
 def is_keyword_blocked(group_id: str, keyword: str, group_block_map: dict) -> bool:
     if not group_id or not group_block_map:

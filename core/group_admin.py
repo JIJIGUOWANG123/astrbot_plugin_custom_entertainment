@@ -3,10 +3,7 @@ import time
 
 from astrbot.api import logger
 
-
-# 调用平台 API 失败时的哨兵值，用于区分「失败」和「成功但无返回值」
 _API_FAILED = object()
-
 
 async def _call_group_api(event, action: str, **params):
     """
@@ -25,7 +22,6 @@ async def _call_group_api(event, action: str, **params):
 
     last_err = None
 
-    # 优先直接用同名方法
     if hasattr(bot, action):
         try:
             res = getattr(bot, action)(**params)
@@ -36,7 +32,6 @@ async def _call_group_api(event, action: str, **params):
             last_err = e
             logger.warning(f"[moderation] 直接方法 {action} 调用失败: {e}")
 
-    # 其次 call_action
     if hasattr(bot, "call_action"):
         try:
             res = bot.call_action(action, **params)
@@ -62,7 +57,6 @@ async def _call_group_api(event, action: str, **params):
         logger.warning(f"[moderation] {action} 全部调用方式失败: {last_err}")
     return _API_FAILED
 
-
 def get_group_id(event) -> str:
     try:
         mo = getattr(event, "message_obj", None)
@@ -79,7 +73,6 @@ def get_group_id(event) -> str:
     except Exception:
         pass
     return ""
-
 
 async def _get_member_list(event):
     """通过 aiocqhttp API 拉取群成员列表"""
@@ -128,7 +121,6 @@ async def _get_member_list(event):
 
     return None
 
-
 class GroupAdminModule:
     """
     群主/管理员识别模块（只在本插件内生效，不改 AstrBot 全局配置）。
@@ -137,7 +129,7 @@ class GroupAdminModule:
 
     def __init__(self):
         self.cache = {}
-        self.cache_ttl = 600   # 默认 10 分钟
+        self.cache_ttl = 600
 
     def set_ttl(self, ttl_seconds):
         try:
@@ -191,9 +183,6 @@ class GroupAdminModule:
             return True
         return False
 
-    # ============================================================
-    # ★ 机器人自身在群里的权限（踢人/禁言的前提）
-    # ============================================================
     async def get_bot_role(self, event, force: bool = False):
         """
         返回机器人在当前群的权限：{"role": "owner"|"admin"|"member", "can": bool}
@@ -206,7 +195,6 @@ class GroupAdminModule:
         info = await self.get_group_admins(event, force=force)
         role = info.get("bot_role")
 
-        # 缓存里没有机器人角色时，主动查一次成员信息
         if role is None:
             role = await self._query_bot_role(event, group_id)
             info["bot_role"] = role
@@ -224,7 +212,6 @@ class GroupAdminModule:
         if not bot_id:
             return ""
 
-        # 1) get_group_member_info
         try:
             res = await _call_group_api(
                 event,
@@ -240,7 +227,6 @@ class GroupAdminModule:
         except Exception:
             pass
 
-        # 2) 退回成员列表里找自己
         members = await _get_member_list(event)
         if members:
             for m in members:
@@ -275,7 +261,6 @@ class GroupAdminModule:
             dur = int(duration)
         except Exception:
             dur = 600
-        # 0 是合法的「解除禁言」，其余不低于 60
         if dur != 0 and dur < 60:
             dur = 60
         res = await _call_group_api(

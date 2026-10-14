@@ -37,7 +37,6 @@ from .path_utils import (
 
 PLUGIN_ID = "astrbot_plugin_custom_entertainment"
 
-
 def all_data_files() -> list:
     """返回 [(展示名, 绝对路径)] 的全部数据文件清单。"""
     return [
@@ -57,14 +56,12 @@ def all_data_files() -> list:
         ("数据集合", data_store_path()),
     ]
 
-
 def default_backup_dir() -> str:
     """
     默认备份根目录：本插件数据目录下的 backups/
     （即 data/plugin_data/<插件名>/backups/，符合数据落盘规范）
     """
     return os.path.join(os.path.dirname(os.path.abspath(config_path())), "backups")
-
 
 def _unique_dir(base: str, name: str) -> str:
     """
@@ -88,7 +85,6 @@ def _unique_dir(base: str, name: str) -> str:
             return candidate
     return os.path.join(base, f"{name}_{int(time.time())}")
 
-
 def create_backup(target_dir: str = "") -> dict:
     """
     创建一次备份。
@@ -107,7 +103,6 @@ def create_backup(target_dir: str = "") -> dict:
         else:
             user_dir = default_backup_dir()
 
-        # 若指定路径本身已存在或是已存在的目录，则在其下建子目录；否则直接用它
         if os.path.exists(user_dir) and os.path.isdir(user_dir):
             backup_dir = _unique_dir(user_dir, f"{PLUGIN_ID}_{stamp}")
         else:
@@ -183,7 +178,6 @@ def create_backup(target_dir: str = "") -> dict:
             "msg": f"备份失败：{e}",
         }
 
-
 def build_bundle() -> dict:
     """
     把全部数据文件读成一个大 JSON，供「下载到浏览器」使用。
@@ -201,7 +195,6 @@ def build_bundle() -> dict:
                         "content": json.load(f),
                     }
             except Exception:
-                # 非 json 或损坏的文件跳过，不让整个导出失败
                 logger.warning(f"[backup] 跳过无法解析的文件: {src}")
 
         bundle = {
@@ -216,13 +209,7 @@ def build_bundle() -> dict:
         logger.exception("[backup] 生成下载包失败")
         return {"ok": False, "bundle": {}, "msg": f"生成失败：{e}"}
 
-
-# ============================================================
-# 导入 / 还原
-# ============================================================
-# 数据文件名 -> 展示名（导入时只认这些文件，其余一律忽略）
 _DATA_NAME_TO_LABEL = {}
-
 
 def _known_files() -> dict:
     """返回 {文件名: 展示名}"""
@@ -230,7 +217,6 @@ def _known_files() -> dict:
         for label, path in all_data_files():
             _DATA_NAME_TO_LABEL[os.path.basename(path)] = label
     return _DATA_NAME_TO_LABEL
-
 
 def _resolve_source(source: str) -> tuple:
     """
@@ -246,7 +232,6 @@ def _resolve_source(source: str) -> tuple:
     if os.path.isfile(src):
         return "file", src
     return "", None
-
 
 def preview_import(source: str) -> dict:
     """
@@ -265,7 +250,6 @@ def preview_import(source: str) -> dict:
         found = []
 
         if kind == "file":
-            # 单个文件：要么是导出包（含 files 字典），要么是某个数据文件本身
             try:
                 with open(path, "r", encoding="utf-8-sig") as f:
                     raw = json.load(f)
@@ -276,7 +260,6 @@ def preview_import(source: str) -> dict:
                 }
             base = os.path.basename(path)
             if isinstance(raw, dict) and isinstance(raw.get("files"), dict):
-                # 导出包格式
                 for name, item in raw["files"].items():
                     if name not in known:
                         continue
@@ -301,7 +284,6 @@ def preview_import(source: str) -> dict:
                     "msg": f"不认识这个文件：{base}。请选择导出的备份包，或备份目录。",
                 }
         else:
-            # 目录：逐个人名匹配的数据文件
             for name, label in known.items():
                 p = os.path.join(path, name)
                 if not os.path.isfile(p):
@@ -339,7 +321,6 @@ def preview_import(source: str) -> dict:
         return {"ok": False, "source": source, "kind": "", "files": [], "total": 0,
                 "msg": f"预检失败：{e}"}
 
-
 def import_data(source: str, mode: str = "replace") -> dict:
     """
     从备份目录或备份包还原数据。
@@ -366,11 +347,9 @@ def import_data(source: str, mode: str = "replace") -> dict:
             return {"ok": False, "imported": [], "skipped": pre["files"], "backup_dir": "",
                     "msg": "没有可导入的有效数据文件"}
 
-        # ① 先备份当前数据
         safety = create_backup(os.path.join(default_backup_dir(), "before_restore"))
         backup_dir = safety.get("path", "") if safety.get("ok") else ""
 
-        # ② 读取来源内容
         payload = {}
         if kind == "file":
             with open(src_path, "r", encoding="utf-8-sig") as f:
@@ -395,7 +374,6 @@ def import_data(source: str, mode: str = "replace") -> dict:
         os.makedirs(target_dir, exist_ok=True)
 
         imported, skipped = [], []
-        # 预检阶段就判定不可用的文件，一并计入跳过报告，便于用户定位
         for x in pre["files"]:
             if not x.get("valid"):
                 skipped.append({
@@ -454,4 +432,3 @@ def import_data(source: str, mode: str = "replace") -> dict:
         logger.exception("[backup] 导入失败")
         return {"ok": False, "imported": [], "skipped": [], "backup_dir": "",
                 "msg": f"导入失败：{e}"}
-

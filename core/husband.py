@@ -12,17 +12,14 @@ import aiohttp
 from astrbot.api import logger
 from .path_utils import title_bar, title_foot
 
-
 def _today_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d")
-
 
 def _parse_names(raw: str) -> list:
     if not raw:
         return []
     text = str(raw)
     return [x.strip() for x in text.split(",") if x.strip()]
-
 
 def _parse_lines(raw) -> list:
     if not raw:
@@ -35,7 +32,6 @@ def _parse_lines(raw) -> list:
     else:
         out = str(raw).splitlines()
     return [x.strip() for x in out if x.strip() and not x.strip().startswith("#")]
-
 
 def get_group_id(event) -> str:
     try:
@@ -54,7 +50,6 @@ def get_group_id(event) -> str:
         pass
     return ""
 
-
 def get_user_id(event) -> str:
     try:
         uid = event.get_sender_id() or ""
@@ -70,13 +65,11 @@ def get_user_id(event) -> str:
         pass
     return "unknown"
 
-
 def get_avatar_url(qq: str) -> str:
     """QQ 头像 URL（640x640）"""
     if not qq:
         return ""
     return f"https://q1.qlogo.cn/g?b=qq&nk={qq}&s=640"
-
 
 async def download_avatar(qq: str, timeout: int = 10) -> str:
     """下载 QQ 头像到临时文件，返回本地路径；失败返回空串"""
@@ -105,7 +98,6 @@ async def download_avatar(qq: str, timeout: int = 10) -> str:
         logger.exception("[husband] 下载头像失败")
         return ""
 
-
 class HusbandModule:
     """
     今日老公模块：每个人每天各抽一次，结果互不相同。
@@ -117,9 +109,8 @@ class HusbandModule:
         self.trigger_names = ["今日老公", "老公"]
         self.force_trigger_names = ["逼迫"]
         self.enable = True
-        # ★ 随机抽取选项
-        self.allow_bot = False      # 机器人是否参与随机
-        self.exclude_ids = []       # 排除的 QQ 号（永不参与随机）
+        self.allow_bot = False
+        self.exclude_ids = []
         self.allowed_groups = []
         self.group_mode = "off"
         self.group_whitelist = []
@@ -133,22 +124,17 @@ class HusbandModule:
         names = _parse_names(raw)
         self.trigger_names = names if names else ["今日老公"]
 
-        # ★ 逼迫指令：强行指定某人成为自己的老公（多个用英文逗号分隔）
         raw_force = str(cfg.get("husband_force_trigger_names", "逼迫") or "").strip()
         fnames = _parse_names(raw_force)
         self.force_trigger_names = fnames if fnames else ["逼迫"]
 
-        # ★ 随机抽取选项：机器人是否参与 / 排除的 QQ 号
         self.allow_bot = bool(cfg.get("husband_allow_bot", False))
         self.exclude_ids = _parse_names(
             str(cfg.get("husband_exclude_ids", "") or "")
         )
-        # 统一成字符串，便于比较
         self.exclude_ids = [str(x).strip() for x in self.exclude_ids if str(x).strip()]
 
-        # ★ 群号黑名单：留空 = 所有群都生效；填了群号则这些群不生效
         self.allowed_groups = parse_gid_whitelist(cfg.get("husband_groups", ""))
-        # 兼容旧的黑/白名单配置（未填新白名单时仍按旧逻辑生效）
         self.group_mode = str(cfg.get("husband_group_mode", "off") or "off").strip().lower()
         if self.group_mode not in ("off", "whitelist", "blacklist"):
             self.group_mode = "off"
@@ -178,7 +164,6 @@ class HusbandModule:
         """群号黑名单：留空 = 所有群都生效；填了群号则这些群不生效"""
         if self.allowed_groups:
             return group_allowed(group_id, self.allowed_groups)
-        # 未填新白名单：回退到旧的黑/白名单逻辑
         return is_group_allowed(
             group_id, self.group_mode, self.group_whitelist, self.group_blacklist
         )
@@ -204,7 +189,6 @@ class HusbandModule:
                 continue
             if t == name or t == f"/{name}":
                 return True
-            # 带参数：逼迫 @某人 / 逼迫 QQ号
             if t.startswith(name + " ") or t.startswith(f"/{name} "):
                 return True
         return False
@@ -231,7 +215,6 @@ class HusbandModule:
         except Exception:
             pass
 
-        # 文本里的纯数字（QQ号），排除机器人自己
         if not target_id:
             import re as _re
             for m in _re.finditer(r"\d{5,12}", str(text or "")):
@@ -252,8 +235,6 @@ class HusbandModule:
                     }
             return {"user_id": target_id, "name": f"QQ{target_id}"}
 
-        # 随机抽一个：走与「今日老公」同一套过滤（机器人开关 + 排除列表），
-        # 另外永远排除发起者自己
         me = str(get_user_id(event) or "")
         pool = [m for m in self.filter_candidates(members, event, self_id)
                 if str(m.get("user_id", "")) != me]

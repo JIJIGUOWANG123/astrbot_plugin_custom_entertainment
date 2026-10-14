@@ -22,10 +22,6 @@ import time
 from astrbot.api import logger
 from .path_utils import title_bar, title_foot
 
-
-# ============================================================
-# 五类提示
-# ============================================================
 NOTICE_KINDS = ("card", "mute", "leave", "admin", "title")
 
 NOTICE_LABEL = {
@@ -36,8 +32,6 @@ NOTICE_LABEL = {
     "title": "专属称号变动",
 }
 
-# 默认输出模板（后台可逐条自定义）
-#   ★ 占位符用 $名字 写法，同时兼容 {名字} 写法
 NOTICE_DEFAULT_TEXT = {
     "card": (
         "📝 群昵称变更\n"
@@ -74,7 +68,6 @@ NOTICE_DEFAULT_TEXT = {
     ),
 }
 
-# 默认开关指令短名（完整指令 = 「开启提示」+ 短名）
 NOTICE_DEFAULT_CMD = {
     "card":  "昵称",
     "mute":  "禁言",
@@ -82,7 +75,6 @@ NOTICE_DEFAULT_CMD = {
     "admin": "管理员",
     "title": "称号",
 }
-
 
 def _fmt_dur(sec) -> str:
     """秒 -> 人话时长"""
@@ -103,7 +95,6 @@ def _fmt_dur(sec) -> str:
     if s >= 60:
         return f"{s // 60} 分钟"
     return f"{s} 秒"
-
 
 def _render(tpl: str, kv: dict) -> str:
     """
@@ -126,7 +117,6 @@ def _render(tpl: str, kv: dict) -> str:
     out = re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", _sub_brace, out)
     return out
 
-
 def _g(d, *names, default=""):
     """从 dict 里按多个候选键名取值（不同协议端字段名不一样）"""
     if not isinstance(d, dict):
@@ -136,7 +126,6 @@ def _g(d, *names, default=""):
         if v not in (None, "", 0, "0"):
             return v
     return default
-
 
 class NoticeModule:
     """
@@ -150,27 +139,16 @@ class NoticeModule:
 
     def __init__(self, data_store=None):
         self.data_store = data_store
-        # ★ 白名单语义：每类提示各自一份允许的群号清单。
-        #   留空 = 该类谁都不提示（默认全部关闭）。
         self.whitelist = {k: set() for k in NOTICE_KINDS}
         self.cmds = dict(NOTICE_DEFAULT_CMD)
         self.texts = dict(NOTICE_DEFAULT_TEXT)
-        # ★ 诊断模式：打开后**不按白名单过滤**，把收到的 Notice 原始数据发出来
         self.debug = False
-        # 内存昵称缓存：{群号: {用户号: 显示名}}
         self._name_cache = {}
-        # 内存群人数缓存：{群号: 人数}（notice 事件不带总人数，靠增减推算）
         self._count_cache = {}
-        # 机器人自己的 QQ 与昵称（notice 的 operator_id 常是机器人自己，
-        #   但事件里不带操作人昵称，所以靠普通消息顺手缓存）
         self.bot_id = ""
         self.bot_name = ""
-        # ★ 改名去重表：{(群,人,旧,新): 上次发送时间}
         self._dedup = {}
 
-    # ------------------------------------------------------------
-    # 配置
-    # ------------------------------------------------------------
     def reload(self, cfg: dict):
         cfg = cfg if isinstance(cfg, dict) else {}
 
@@ -198,9 +176,6 @@ class NoticeModule:
             if t.strip():
                 self.texts[k] = t
 
-    # ------------------------------------------------------------
-    # 白名单
-    # ------------------------------------------------------------
     @staticmethod
     def _norm(text) -> set:
         return {x.strip() for x in str(text or "").replace("，", ",")
@@ -226,9 +201,6 @@ class NoticeModule:
         """某一类白名单的可读内容（后台/自检用）"""
         return self.whitelist_state(kind)
 
-    # ------------------------------------------------------------
-    # 昵称缓存（notice 事件里不一定带全昵称，内存缓存一份兜底）
-    # ------------------------------------------------------------
     def remember_name(self, group_id, uid, name: str):
         if not name:
             return
@@ -259,7 +231,6 @@ class NoticeModule:
                 return
             cur = self._count_cache.get(g)
             if cur is None:
-                # 还没基线：只用增量记个大致值（首次会有偏差）
                 self._count_cache[g] = max(0, int(delta))
             else:
                 self._count_cache[g] = max(0, int(cur) + int(delta))
@@ -278,9 +249,6 @@ class NoticeModule:
         nm = (self._name_cache.get(g) or {}).get(str(uid))
         if nm:
             return nm
-        # ★ 事件里的 operator_id 常常就是机器人自己，
-        #   但 notice 不带操作人昵称；这时用记下来的机器人昵称，
-        #   否则会显示成一串 QQ 号。
         if self.bot_id and str(uid) == str(self.bot_id) and self.bot_name:
             return self.bot_name
         return fallback or f"QQ{uid}"
@@ -297,14 +265,6 @@ class NoticeModule:
         except Exception:
             pass
 
-    # ------------------------------------------------------------
-    # 去重：同一次改名可能被同一事件重复投递，
-    #       这里保证同一个 (群, 人, 旧→新) 只发一次。
-    # ------------------------------------------------------------
-    # ------------------------------------------------------------
-    # 去重：同一次变化可能被「notice 事件」和「群名片比对」两条路各发现一次，
-    #       这里做闸门，保证同一个 (群, 人, 旧→新) 只发一次。
-    # ------------------------------------------------------------
     def _dedup_hit(self, group_id, uid, old, new,
                    window: float = 90.0) -> bool:
         """
@@ -319,7 +279,6 @@ class NoticeModule:
         now = _t.time()
         key = (g, u, str(old or ""), str(new or ""))
         last = self._dedup.get(key)
-        # 顺手清掉过期项，避免无限增长
         if len(self._dedup) > 200:
             for k in [k for k, v in self._dedup.items()
                       if now - float(v) > window]:
@@ -348,7 +307,6 @@ class NoticeModule:
             return []
         if not self.group_allow("card", g):
             return []
-        # 名字进缓存，供 $user / $operator 用
         self.remember_name(g, u, new)
         if self._dedup_hit(g, u, old, new):
             logger.debug("[notice] 同一次改名已提示过，跳过：%s %s->%s",
@@ -364,9 +322,6 @@ class NoticeModule:
         txt = _render(tpl, kv).strip()
         return [txt] if txt else []
 
-    # ------------------------------------------------------------
-    # 指令（只读查询）
-    # ------------------------------------------------------------
     def kind_of(self, text: str):
         """
         把一个短名/别名解析成 kind（不认返回 None）。
@@ -450,14 +405,12 @@ class NoticeModule:
                 return True, "absent"
             cur.discard(g)
             note = "removed"
-        # 保持稳定顺序：数字升序，方便后台看
         try:
             cfg[key] = ",".join(sorted(cur, key=lambda x: int(x)))
         except Exception:
             cfg[key] = ",".join(sorted(cur))
         if not write_disk_config(cfg):
             return False, "写入配置文件失败"
-        # 立刻更新内存里的白名单，不用等重载
         self.whitelist[kind] = cur
         return True, note
 
@@ -529,9 +482,6 @@ class NoticeModule:
             lines.append(f"　 白名单：{self.whitelist_text(k)}")
         return "\n".join(lines)
 
-    # ------------------------------------------------------------
-    # notice 事件解析
-    # ------------------------------------------------------------
     @staticmethod
     def parse_notice(raw) -> dict:
         """
@@ -550,7 +500,6 @@ class NoticeModule:
         op = str(raw.get("operator_id") or "")
         gid = str(raw.get("group_id") or "")
 
-        # ---- 群成员减少：退群 / 被踢 ----
         if nt == "group_decrease":
             return {
                 "kind": "leave",
@@ -560,11 +509,9 @@ class NoticeModule:
                 "raw": raw,
             }
 
-        # ---- 群成员增加：只用来维护人数缓存，不单独提示 ----
         if nt == "group_increase":
             return {"kind": "_count", "uid": uid, "raw": raw}
 
-        # ---- 禁言 / 解除禁言 ----
         if nt == "group_ban":
             dur = raw.get("duration")
             try:
@@ -580,19 +527,15 @@ class NoticeModule:
                 "raw": raw,
             }
 
-        # ---- 管理员变动 ----
         if nt == "group_admin":
             return {
                 "kind": "admin",
                 "uid": uid,
                 "operator": op,
-                # sub_type: set = 成为管理员 / unset = 取消管理员
                 "action": ("被取消管理员" if sub == "unset" else "成为管理员"),
                 "raw": raw,
             }
 
-        # ---- 改群名片 / 改群昵称（不同端/不同版本的 notice_type 不一样）----
-        #   ★ 改昵称**保留 notice 路**（发言路已移除）。
         if nt in ("group_card", "group_card_change", "group_nickname",
                   "group_member_card"):
             new = _g(raw, "card_new", "card", "nickname_new", "nickname",
@@ -609,10 +552,7 @@ class NoticeModule:
                 }
             return {}
 
-        # ---- notify 家族：昵称 / 称号 / 戳一戳等 ----
         if nt == "notify":
-            # 群昵称变更：NapCat 的 sub_type 常见为 "title"，
-            #   靠「有没有 nickname_new」来区分是改名还是改称号
             new_nick = _g(raw, "nickname_new", "nickname", "card_new",
                           "card", "new_card")
             new_title = _g(raw, "title_new", "title", "special_title",
@@ -644,17 +584,11 @@ class NoticeModule:
             return ""
         uid = str(info.get("uid") or "")
         raw = info.get("raw") or {}
-        # 昵称：优先用事件里带的，其次本地缓存，最后 QQ 号
         nm = str(_g(raw, "nickname_new", "card_new", "card", "nickname")
                  or "") or self.name_of(group_id, uid)
         op = str(info.get("operator") or "")
-        # ★ 1.7.6：操作人昵称拿不到时**显示 QQ 号**，不要显示「（未知）」。
-        #   以前的坑：notice 事件里 operator_id 常常是**机器人自己**，
-        #   而事件不带它的昵称，于是操作人一栏全变成「（未知）」，
-        #   看起来像「没识别出是谁操作的」。
         if op:
             _opn = self.name_of(group_id, op)
-            # name_of 兜底是 "QQ<号>"；只有实在拿不到任何信息才算未知
             op_name = _opn if _opn and _opn != "（未知）" else f"QQ{op}"
         else:
             op_name = "（未知）"
@@ -666,11 +600,6 @@ class NoticeModule:
             "operator": op_name, "operator_id": op,
         }
         if kind == "card":
-            # ★ 改群昵称走统一出口（含去重，避免两条检测路各报一次）。
-            #   ★ 注意 config_card 返回的是**列表**，而 build_message 的
-            #     契约是返回**字符串** —— 这里必须取 [0]，
-            #     否则会把整个 list 的 repr 当成文本发出去
-            #     （表现为「不换行 + 带 [' '] 括号」）。
             _old = str(info.get("old") or "")
             if not _old:
                 _old = self.name_of(group_id, uid, "（未知）")
@@ -707,7 +636,6 @@ class NoticeModule:
         if uid and nm:
             self.remember_name(group_id, uid, str(nm))
         op = str(raw.get("operator_id") or "")
-        # ★ 操作人是机器人自己时，事件里没有它的昵称 —— 不知道就显示 QQ 号
         if op and str(op) == str(self.bot_id) and not self.bot_name:
             logger.debug("[notice] 操作人是机器人自己，但还没缓存到它的昵称")
         onm = _g(raw, "operator_nickname", "operator_name")

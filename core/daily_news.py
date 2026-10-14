@@ -23,26 +23,18 @@ from astrbot.api import logger
 
 from .path_utils import parse_gid_list as _parse_gid_list
 
-# ★ 模块级全局锁，防止多实例并发覆盖
 _GLOBAL_NEWS_LOCK = threading.Lock()
 
 DEFAULT_TIME = "08:00"
 
-# 读报接口
 NEWS_API_IMAGE = "https://cyapi.top/API/60s.php?type=image"
 NEWS_API_TEXT = "https://cyapi.top/API/60s.php?type=text"
 
-
-# ============================================================
-# 工具
-# ============================================================
 def now_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-
 def today_str() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d")
-
 
 def parse_hhmm(raw) -> str:
     """把 8 / 8:5 / 08:00 / 8：00 等输入规范成 HH:MM；非法返回空串。"""
@@ -51,7 +43,6 @@ def parse_hhmm(raw) -> str:
     text = str(raw).strip()
     if not text:
         return ""
-    # 统一全角冒号与点号
     text = text.replace("：", ":").replace(".", ":").replace("。", ":")
     if ":" not in text:
         if text.isdigit():
@@ -70,7 +61,6 @@ def parse_hhmm(raw) -> str:
         return ""
     return f"{h:02d}:{m:02d}"
 
-
 class DailyNewsModule:
     """每日读报模块"""
 
@@ -78,30 +68,21 @@ class DailyNewsModule:
         self.plugin_dir = plugin_dir
         self.data_path = data_path
 
-        # 全局配置（由 reload 注入）
         self.enable = False
         self.default_time = DEFAULT_TIME
         self.interval = 30
 
-        # 每群状态：{group_id: {"on": bool, "time": "HH:MM"}}
         self.groups = {}
-        # 已推送记录：{group_id: "YYYY-MM-DD"}
         self.last_push = {}
-        # 主动推送用：{group_id: unified_msg_origin}
         self.umos = {}
-        # 后台「手动读报名单」与「自动推送名单」（都是白名单）
         self.manual_groups = []
         self.auto_groups = []
         self.use_backend_groups = False
-        # 由 main.py 注入：把「群号+是否生效」写回后台配置
         self._manual_cfg_write = None
         self._cfg_write = None
 
         self._load_state()
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         cfg = cfg if isinstance(cfg, dict) else {}
         self.enable = bool(cfg.get("daily_news_enable", False))
@@ -115,9 +96,6 @@ class DailyNewsModule:
             itv = 30
         self.interval = max(10, itv)
 
-        # ★ 两份名单完全独立（都是白名单：填了才生效）
-        #   manual_groups = 手动读报（发指令立刻推）
-        #   auto_groups   = 自动推送（到点自动推）
         self.manual_groups = _parse_gid_list(cfg.get("daily_news_groups", ""))
         self.auto_groups = _parse_gid_list(cfg.get("daily_news_auto_groups", ""))
         self.use_backend_groups = bool(self.auto_groups)
@@ -150,9 +128,6 @@ class DailyNewsModule:
                 f"自动名单 {len(self.auto_groups)} 个群"
             )
 
-    # ============================================================
-    # 状态持久化（加锁由调用方保证）
-    # ============================================================
     def _load_state(self):
         if not self.data_path or not os.path.exists(self.data_path):
             return
@@ -185,9 +160,6 @@ class DailyNewsModule:
         except Exception:
             logger.exception("[daily_news] 保存状态失败")
 
-    # ============================================================
-    # UMO 记录
-    # ============================================================
     def record_context(self, group_id, umo: str = ""):
         gid = str(group_id or "").strip()
         umo = str(umo or "").strip()
@@ -204,13 +176,9 @@ class DailyNewsModule:
     def get_umo(self, group_id) -> str:
         return str(self.umos.get(str(group_id), "") or "")
 
-    # ============================================================
-    # 每群配置
-    # ============================================================
     def _group_cfg(self, group_id) -> dict:
         gid = str(group_id)
         cfg = self.groups.get(gid)
-        # 白名单语义：名单内的群默认开启
         if not isinstance(cfg, dict):
             cfg = {"on": True, "time": ""}
         return cfg
@@ -239,7 +207,6 @@ class DailyNewsModule:
         with _GLOBAL_NEWS_LOCK:
             self._load_state()
             changed = False
-            # 黑名单：allowed=True 表示可用 -> 从名单移除；False 表示不可用 -> 加入名单
             if allowed:
                 if gid in self.manual_groups:
                     self.manual_groups.remove(gid)
@@ -275,13 +242,11 @@ class DailyNewsModule:
             cfg["on"] = bool(on)
             cfg.setdefault("time", "")
             self.groups[gid] = cfg
-            # 同步内存里的自动名单
             if on and gid not in self.auto_groups:
                 self.auto_groups.append(gid)
             elif not on and gid in self.auto_groups:
                 self.auto_groups.remove(gid)
             self._save_state()
-        # ★ 同步写回后台配置，重启后依然生效
         try:
             if self._cfg_write:
                 self._cfg_write(gid, bool(on))
@@ -325,9 +290,6 @@ class DailyNewsModule:
             })
         return sorted(out, key=lambda x: x["group_id"])
 
-    # ============================================================
-    # 到点判定 + 防重（原子）
-    # ============================================================
     def check_and_mark(self, group_id, hhmm: str) -> bool:
         """
         在全局锁内完成：重载磁盘 -> 校验开关 -> 校验时间是否到点 -> 标记今日已推。
@@ -347,7 +309,6 @@ class DailyNewsModule:
             if self.last_push.get(gid) == today:
                 return False
             self.last_push[gid] = today
-            # 清理过期记录，避免无限增长
             if len(self.last_push) > 500:
                 stale = [k for k, v in self.last_push.items() if str(v) != today]
                 for k in stale:

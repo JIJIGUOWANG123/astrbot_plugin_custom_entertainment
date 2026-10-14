@@ -25,36 +25,28 @@ from astrbot.api import logger
 def _today_str() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
-
 class GuessModule:
     """猜数数据层（群共享局 + 每人次数 + 历史战绩）"""
 
     def __init__(self, data_path: str):
         self.data_path = data_path
         self.groups = {}
-        # 配置（由 main.py 注入）
         self.enable = True
         self.score_name = "积分"
-        # ★ 参与指令名（默认「猜数」，可后台改）
         self.trigger_names = ["猜数"]
-        # ★ 开新局指令名由 main.py 那边管（cmd_guess_start）
-        self.guess_min = 1              # 题目下限
-        self.guess_max = 100            # 题目上限
-        self.max_tries = 3              # 每人每局最多猜几次
-        self.timeout_sec = 60           # 多少秒没人猜就关闭（0 = 不自动关）
-        self.reward_min = 100           # 猜对奖励下限
-        self.reward_max = 500           # 猜对奖励上限
-        self.penalty = 1000             # 猜错扣多少
-        self.allow_negative = True      # 允许扣成负分
-        # 兼容旧字段（旧版单机猜数用，保留避免 AttributeError）
+        self.guess_min = 1
+        self.guess_max = 100
+        self.max_tries = 3
+        self.timeout_sec = 60
+        self.reward_min = 100
+        self.reward_max = 500
+        self.penalty = 1000
+        self.allow_negative = True
         self.guess_cost = 0
         self.guess_reward = 100
         self.daily_limit = 0
         self._load()
 
-    # ------------------------------------------------------------
-    # 持久化
-    # ------------------------------------------------------------
     def _load(self):
         try:
             if not os.path.isfile(self.data_path):
@@ -80,9 +72,6 @@ class GuessModule:
         except Exception:
             logger.exception("[guess] 保存猜数数据失败")
 
-    # ------------------------------------------------------------
-    # 访问
-    # ------------------------------------------------------------
     @staticmethod
     def _gid(group_id) -> str:
         return str(group_id or "").strip()
@@ -95,9 +84,6 @@ class GuessModule:
             self.groups[gid] = b
         return b
 
-    # ------------------------------------------------------------
-    # 当前局
-    # ------------------------------------------------------------
     def current_round(self, group_id) -> dict:
         """取当前这一局（没有返回空 dict）"""
         r = self._bucket(group_id).get("round")
@@ -121,13 +107,13 @@ class GuessModule:
             "lo": lo,
             "hi": hi,
             "start_ts": int(time.time()),
-            "last_ts": int(time.time()),   # 最后一次猜测时间（用于超时）
-            "tries": {},                   # {uid: 猜了几次}
-            "guessed": [],                 # [[uid, num], ...] 便于回显
-            "finished": False,             # 是否已结束（猜中/超时）
+            "last_ts": int(time.time()),
+            "tries": {},
+            "guessed": [],
+            "finished": False,
             "winner": "",
             "reward": 0,
-            "closed_by": "",               # "win" / "timeout" / "restart"
+            "closed_by": "",
         }
         self._bucket(group_id)["round"] = r
         self._bucket(group_id)["last_round"] = r
@@ -163,7 +149,7 @@ class GuessModule:
             return
         g = r.setdefault("guessed", [])
         g.append([str(uid), int(num)])
-        if len(g) > 60:            # 防止无限增长
+        if len(g) > 60:
             del g[:-60]
         r["last_ts"] = int(time.time())
 
@@ -176,7 +162,6 @@ class GuessModule:
         r["winner"] = str(winner_uid or "")
         r["reward"] = int(reward or 0)
         r["closed_by"] = closed_by
-        # 战绩累计
         try:
             st = self._bucket(group_id).setdefault("stats", {})
             w = st.setdefault(str(winner_uid), {"win": 0, "lose": 0})
@@ -194,9 +179,6 @@ class GuessModule:
         except Exception:
             logger.debug("[guess] 累计败绩失败", exc_info=True)
 
-    # ------------------------------------------------------------
-    # 超时
-    # ------------------------------------------------------------
     def idle_sec(self, group_id) -> int:
         """当前局已经多少秒没人猜（没有局返回 0）"""
         r = self.current_round(group_id)
@@ -242,9 +224,6 @@ class GuessModule:
             return f"{t // 60} 分钟"
         return f"{t} 秒"
 
-    # ------------------------------------------------------------
-    # 随机奖励
-    # ------------------------------------------------------------
     def roll_reward(self) -> int:
         """摇一个奖励金额（后台配区间）"""
         try:
@@ -256,9 +235,6 @@ class GuessModule:
             lo, hi = hi, lo
         return random.randint(lo, hi) if hi > lo else lo
 
-    # ------------------------------------------------------------
-    # 战绩
-    # ------------------------------------------------------------
     def stats_text(self, group_id, uid) -> str:
         st = (self._bucket(group_id).get("stats") or {})
         w = st.get(str(uid)) or {}

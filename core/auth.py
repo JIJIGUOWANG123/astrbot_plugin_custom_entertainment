@@ -42,10 +42,8 @@ from .path_utils import auth_data_path
 NEVER = 0
 DISABLED = -1
 
-
 def _now() -> int:
     return int(time.time())
-
 
 def fmt_ts(ts: int) -> str:
     """把时间戳格式化成人看的样子"""
@@ -61,7 +59,6 @@ def fmt_ts(ts: int) -> str:
         return time.strftime("%Y-%m-%d %H:%M", time.localtime(t))
     except Exception:
         return str(t)
-
 
 def parse_duration(text: str):
     """
@@ -87,7 +84,7 @@ def parse_duration(text: str):
         n = float(m.group(1))
     except Exception:
         return None
-    unit = m.group(2) or "d"          # 不带单位默认「天」
+    unit = m.group(2) or "d"
     if unit in ("d", "day", "days", "天", "日"):
         sec = n * 86400
     elif unit in ("h", "hour", "hours", "小时", "时"):
@@ -99,7 +96,6 @@ def parse_duration(text: str):
     sec = int(sec)
     return sec if sec > 0 else NEVER
 
-
 class AuthModule:
     """按群授权 + 到期关闭整个插件"""
 
@@ -107,25 +103,18 @@ class AuthModule:
         self.plugin_dir = str(plugin_dir or "")
         self.data_path = str(data_path or "") or auth_data_path()
         self.enable = True
-        self.default_days = -1           # -1=没记录的群不授权（默认）/ 0=永久 / N=试用N天
-        self.warn_days = 3.0             # 到期前多少天开始提醒
-        self.groups = {}                 # gid -> {"expire_ts": int, "note": str}
-        self.seen = {}                   # gid -> 首次见到的时间戳
-        # ★★ 1.3.0：外部注入的群列表，供「授权列表」展示
-        #   joined_groups —— 机器人**已加入**的群（最权威，有就优先用）
-        #   known_groups  —— 插件见过的群（发过消息的群，main.py 会同步）
+        self.default_days = -1
+        self.warn_days = 3.0
+        self.groups = {}
+        self.seen = {}
         self.joined_groups = None
         self.known_groups = None
-        self._log_cache = {}             # gid -> 上次记日志的日期
+        self._log_cache = {}
         self.reload({})
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         cfg = cfg or {}
         self.enable = bool(cfg.get("auth_enable", True))
-        # ★ 远程指令名（一行一个，也认英文逗号）
         try:
             from .path_utils import parse_cmd_names as _pcn
             self.cmd_names = _pcn(cfg.get("auth_remote_commands", "授权"))
@@ -133,27 +122,15 @@ class AuthModule:
             raw = str(cfg.get("auth_remote_commands", "授权") or "授权")
             self.cmd_names = [x.strip() for x in
                               re.split(r"[\n,，]", raw) if x.strip()] or ["授权"]
-        # ★★ 「授权状态」独立指令名（不带群号 = 查当前群）
         raw2 = str(cfg.get("auth_status_commands", "授权状态") or "授权状态")
         self.status_names = [x.strip() for x in
                              re.split(r"[\n,，]", raw2) if x.strip()] or ["授权状态"]
-        # ★★ 「授权列表」独立指令名（不带空格），输出**每个群的状态**
         raw3 = str(cfg.get("auth_list_commands", "授权列表") or "授权列表")
         self.list_names = [x.strip() for x in
                            re.split(r"[\n,，]", raw3) if x.strip()] or ["授权列表"]
-        try:
-            from .path_utils import parse_gid_list as _pgl
-            self.admin_groups = set(_pgl(cfg.get("auth_admin_groups", "")))
-        except Exception:
-            raw = str(cfg.get("auth_admin_groups", "") or "")
-            self.admin_groups = {x.strip() for x in
-                                 re.split(r"[,，、;；\s]+", raw) if x.strip().isdigit()}
+        self.admin_groups = set()
 
         def _int(key, dflt):
-            # ★★ 1.3.0 修 bug：以前写 `cfg.get(key, dflt) or dflt`，
-            #   而 `0` 是假值 -> 会被换成默认值，
-            #   导致「auth_default_days = 0（永久）」永远设不上。
-            #   现在只在「缺失 / None / 空串」时才用默认值。
             try:
                 v = cfg.get(key, None)
                 if v is None or str(v).strip() == "":
@@ -162,39 +139,25 @@ class AuthModule:
             except Exception:
                 return dflt
 
-        # ★★ 1.3.0：**授权默认全部关闭**
-        #   -1 不授权（默认） / 0 永久 / N>0 试用 N 天
         self.default_days = _int("auth_default_days", -1)
         try:
             self.warn_days = max(0.0, float(str(
                 cfg.get("auth_warn_days", 3) or 3)))
         except Exception:
             self.warn_days = 3.0
-        # ★ 先加载数据（下面的兼容迁移要根据「有没有授权记录」判断）
         self._load()
 
-        # ★★ 1.3.0 兼容迁移：老版本的 schema 默认值是 `0`（= 永久），
-        #   升级后配置里若还残留 `0`，就会「所有群永久授权」——
-        #   和「默认全部关闭」正好相反。
-        #   只在**一个授权记录都没有**（说明从没授权过任何群）时才纠正；
-        #   已经手工把 0 当「永久」用的场景不会被覆盖。
         if self.default_days == 0 and not self.groups:
             logger.info(
                 "[auth] 检测到旧默认值 auth_default_days=0（=全部永久），"
                 "已按「授权默认全部关闭」纠正为 -1")
             self.default_days = -1
 
-        # ★★ 1.3.0：清掉**过期很久**的记录（默认 30 天）。
-        #   ⚠️ 不能一到期就删 —— 删了会回落到「未设置的群」规则，
-        #      `default_days=0` 时等于又给它永久授权，那是安全漏洞。
         try:
             self.cleanup_expired(30)
         except Exception:
             logger.debug("[auth] 清理过期记录失败", exc_info=True)
 
-    # ============================================================
-    # 存储
-    # ============================================================
     def _load(self):
         if not self.data_path or not os.path.exists(self.data_path):
             self.groups, self.seen = {}, {}
@@ -206,7 +169,6 @@ class AuthModule:
             s = d.get("seen")
             self.groups = g if isinstance(g, dict) else {}
             self.seen = s if isinstance(s, dict) else {}
-            # 规范化
             clean = {}
             for k, v in self.groups.items():
                 if not isinstance(v, dict):
@@ -235,9 +197,6 @@ class AuthModule:
         except Exception:
             logger.exception("[auth] 保存授权数据失败")
 
-    # ============================================================
-    # 授权判定
-    # ============================================================
     def default_rule_text(self, markdown: bool = True) -> str:
         """
         「未设置的群」规则文案（两处以上要用，集中一处避免各写各的）。
@@ -270,10 +229,7 @@ class AuthModule:
         r = self.groups.get(gid)
         if isinstance(r, dict):
             return r
-        # ★ 没记录：按 default_days 决定
         if self.default_days <= 0:
-            # -1（默认）= 不授权；0 = 永久。
-            # 都**不落盘**，保持「未设置」状态，免得数据文件被灌满。
             return {"expire_ts": (NEVER if self.default_days == 0 else DISABLED),
                     "note": ""}
         first = self.seen.get(gid)
@@ -289,7 +245,7 @@ class AuthModule:
             return True
         r = self.record(group_id)
         if r is None:
-            return True                 # 非群聊 / 拿不到群号 -> 放行
+            return True
         ts = int(r.get("expire_ts", NEVER))
         if ts == NEVER:
             return True
@@ -309,9 +265,6 @@ class AuthModule:
             return -1
         return ts - _now()
 
-    # ============================================================
-    # 授权操作
-    # ============================================================
     def set_group(self, group_id, spec, note: str = ""):
         """
         设置一个群的授权。`spec` 可以是：
@@ -327,7 +280,6 @@ class AuthModule:
         s = str(spec or "").strip()
         if not s:
             return False, "缺少时长（如 30d / 12h / 永久）"
-        # 纯时间戳
         if re.match(r"^\d{10,}$", s):
             ts = int(s)
         else:
@@ -380,9 +332,6 @@ class AuthModule:
             logger.info(f"[auth] 已清理 {len(dead)} 条过期很久的授权记录")
         return len(dead)
 
-    # ============================================================
-    # 提醒 / 统计
-    # ============================================================
     def deny_text(self, group_id) -> str:
         """
         ★★ 1.3.0：**未授权时**给用户的提示。
@@ -421,7 +370,7 @@ class AuthModule:
         if left == 0 or left == -1:
             return ""
         if left <= 0:
-            return ""                    # 已过期 -> deny_text 负责
+            return ""
         if left > self.warn_days * 86400:
             return ""
         gid = str(group_id or "")
@@ -434,9 +383,6 @@ class AuthModule:
         return (f"⏰ 本群授权还有 {days} 天到期\n"
                 f"💡 续期：「{cmd} 30d」或「{cmd} 永久」")
 
-    # ============================================================
-    # 远程指令
-    # ============================================================
     def match_cmd(self, text: str) -> str:
         """
         是不是授权指令？是就返回指令名，否则空串。
@@ -462,16 +408,12 @@ class AuthModule:
         return ""
 
     def cmd_allowed(self, group_id) -> bool:
-        """本群能不能用授权指令（白名单，留空 = 都能用）"""
-        allow = getattr(self, "admin_groups", None)
-        if not allow:
-            return True
-        return str(group_id or "").strip() in allow
+        """
+        ★★ 1.3.0：**已废弃** —— 现在只按「AstrBot 全局管理员」判定，
+          不再看群白名单。永远返回 True（老调用点不会因此失效）。
+        """
+        return True
 
-    # ============================================================
-    # 「授权状态」独立指令
-    #   ★ 不带群号 = 查**当前群**（用户要求）
-    # ============================================================
     def match_status_cmd(self, text: str) -> str:
         """
         是不是「授权状态」指令？是就返回指令名，否则空串。
@@ -515,7 +457,6 @@ class AuthModule:
         elif left > 0:
             lines.append(f"　 状态：✅ **本群已授权**（剩 {left / 86400:.1f} 天）")
         elif left == -1:
-            # -1 = 从没授权过（默认），也可能是管理员手工停用
             _rec = self.groups.get(gid)
             if isinstance(_rec, dict) and int(_rec.get("expire_ts", 0)) < 0:
                 lines.append("　 状态：🚫 **本群未授权**（已被停用）")
@@ -526,10 +467,8 @@ class AuthModule:
 
         lines.append("──────────")
         if left >= 0:
-            # 已授权 -> 续期提示（保留）
             lines.append(f"💡 续期：「{cmd} 30d」或「{cmd} 永久」")
         else:
-            # 未授权 -> 怎么授权
             lines.append("⚠️ 本群尚未授权，插件无法使用")
             lines.append(f"💡 授权本群：「{cmd} 永久」或「{cmd} 30d」")
             lines.append(f"💡 指定群：「{cmd} 群号 30d」")
@@ -561,11 +500,9 @@ class AuthModule:
             授权 查 [群号]        同上（兼容写法）
             授权 帮助             用法
         """
-        # ---- 「授权列表」独立指令（不带空格）----
         if self.match_list_cmd(text):
             return self.list_text()
 
-        # ---- 「授权状态」独立指令 ----
         _sc = self.match_status_cmd(text)
         if _sc:
             _a = self._arg_after(text, _sc).split()
@@ -580,18 +517,13 @@ class AuthModule:
         parts = arg.split()
         head = parts[0]
 
-        # ---- 列表 ----
         if head in ("列表", "list", "全部"):
             return self.list_text()
 
-        # ---- 状态 / 查（不带群号 -> 当前群）----
         if head in ("状态", "查", "查询", "query", "check", "status"):
             gid = parts[1] if len(parts) > 1 and parts[1].isdigit() else group_id
             return self.status_text(gid)
 
-        # ---- 设置授权 ----
-        # ★★ 1.3.0：`授权 群号 时长` 或 **`授权 时长`**（不带群号 = 当前群）
-        #   `授权` 单独发（没参数）在上面已经走「帮助」了。
         if head.isdigit():
             gid, spec_parts = head, parts[1:]
         else:
@@ -602,7 +534,6 @@ class AuthModule:
         spec = spec_parts[0] if spec_parts else ""
         note = " ".join(spec_parts[1:]) if len(spec_parts) > 1 else ""
         if not spec:
-            # 不带时长 -> 告知当前状态（不误改）
             left = self.remaining_sec(gid)
             state = ("永久" if left == 0 else
                      "已停用" if left == -1 else
@@ -611,7 +542,6 @@ class AuthModule:
                     f"💡 改：「{cmd} {gid} 永久」/「{cmd} {gid} 30d」/"
                     f"「{cmd} {gid} 停用」\n"
                     f"💡 也可以省掉群号：「{cmd} 永久」（= 本群）")
-        # 删除
         if spec in ("删除", "删", "del", "delete", "移除"):
             ok = self.remove_group(gid)
             return (f"✅ 已删除群 {gid} 的授权记录"
@@ -682,7 +612,6 @@ class AuthModule:
             lines.append("　 ♻️ 授权机制已停用（所有群都能用）")
             return "\n".join(lines)
 
-        # ---- 收集要展示的群 ----
         gids = []
         for src in (getattr(self, "joined_groups", None),
                     getattr(self, "known_groups", None),
@@ -711,7 +640,6 @@ class AuthModule:
         if len(gids) > limit:
             lines.append(f"…… 还有 {len(gids) - limit} 个群")
 
-        # ---- 如何授权 ----
         lines.append("──────────")
         lines.append(f"💡 授权「{cmd} 永久」或「{cmd} 30d」（= 本群）")
         lines.append(f"💡 指定群：「{cmd} 群号 30d」")

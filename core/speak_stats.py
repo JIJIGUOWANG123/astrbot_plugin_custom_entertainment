@@ -31,21 +31,15 @@ import os
 import re as _re
 import threading
 from .path_utils import title_bar, title_foot
-# ★★ 1.7.7：昵称截断（长名字用省略号，别把榜单行撑宽）
 from .path_utils import nick_display as _nick_display
-# ★★ 1.7.7：榜单行带「🥇 」前缀和「 — 90 条」后缀，
-#   可用宽度比整行少，所以用**窄档**预算。
 from .path_utils import nick_display_narrow as _nick_narrow
 from .path_utils import clean_display as _clean_display
-# ★★ 1.7.7：榜单名次前缀（前三名奖牌 + 两空格列分隔）
 from .path_utils import rank_tag as _rank_tag
 
 from astrbot.api import logger
 _LOCK = threading.RLock()
 
-# 保留天数（比最长统计窗口 30 天多留一些余量）
 KEEP_DAYS = 45
-
 
 def _parse_names(raw) -> list:
     """解析后台配置的指令名（英文逗号分隔，支持多个）"""
@@ -58,14 +52,11 @@ def _parse_names(raw) -> list:
         return out
     return [x.strip() for x in _re.split(r"[,，]", str(raw)) if x.strip()]
 
-
 def _today() -> datetime.date:
     return datetime.datetime.now().date()
 
-
 def _dstr(d: datetime.date) -> str:
     return d.strftime("%Y-%m-%d")
-
 
 class SpeakStatsModule:
     """每个群独立的发言统计"""
@@ -77,28 +68,22 @@ class SpeakStatsModule:
         self.data_path = data_path
 
         self.enable = True
-        # 每个指令都支持后台自定义多个名字
         self.rank_yesterday_names = ["本群发言排行", "发言排行", "群里发言排行"]
         self.rank_active_names = ["本群活跃排行", "活跃排行"]
         self.rank_week_names = ["本群上周排行", "上周排行"]
         self.rank_month_names = ["本群上月排行", "上月排行"]
         self.my_stat_names = ["个人发言统计", "我的发言统计", "发言统计"]
 
-        # 群号黑名单（留空 = 所有群都生效）
         self.allowed_groups = []
         self.group_mode = "off"
         self.group_whitelist = []
         self.group_blacklist = []
 
-        # 后台总开关（由「启用发言统计」注入）
         self.feature_enable = True
 
         self.groups = {}
         self._load()
 
-    # ============================================================
-    # 配置
-    # ============================================================
     def reload(self, cfg: dict):
         cfg = cfg if isinstance(cfg, dict) else {}
         self.enable = bool(cfg.get("speak_stats_enable", True))
@@ -150,9 +135,6 @@ class SpeakStatsModule:
             group_id, self.group_mode, self.group_whitelist, self.group_blacklist
         )
 
-    # ============================================================
-    # 指令匹配
-    # ============================================================
     @staticmethod
     def _hit(text: str, names) -> bool:
         for n in (names or []):
@@ -175,9 +157,6 @@ class SpeakStatsModule:
     def match_my_stat(self, text: str) -> bool:
         return self._hit(text, self.my_stat_names)
 
-    # ============================================================
-    # 数据层
-    # ============================================================
     @staticmethod
     def _gid(group_id) -> str:
         g = str(group_id or "").strip()
@@ -191,9 +170,6 @@ class SpeakStatsModule:
                 data = json.load(f) or {}
             groups = data.get("groups", {})
             self.groups = groups if isinstance(groups, dict) else {}
-            # ★★ 1.3.0：顺手洗掉历史脏昵称（protobuf 残留）。
-            #   显示侧 `_nick()` 已经会清洗，这里再兜一层，
-            #   免得脏值一直躺在数据文件里。
             _fixed = 0
             for _g, _bucket in list(self.groups.items()):
                 if not isinstance(_bucket, dict):
@@ -246,19 +222,14 @@ class SpeakStatsModule:
             u = {"days": {}, "total": 0, "streak": 0, "best_streak": 0,
                  "last": "", "name": ""}
             bucket[uid] = u
-        # 历史最长不低于当前连续，避免外部写入 streak 后数据不一致
         if int(u.get("streak", 0)) > int(u.get("best_streak", 0)):
             u["best_streak"] = int(u["streak"])
         if name:
-            # ★★ 1.3.0：写入前清洗 —— 脏值（protobuf 残留）不入库
             _c = _clean_display(name)
             if _c:
                 u["name"] = _c
         return u
 
-    # ============================================================
-    # 记录发言（每次消息调用）
-    # ============================================================
     def record(self, group_id, user_id, name: str = ""):
         if not self.enable or not user_id:
             return
@@ -280,7 +251,7 @@ class SpeakStatsModule:
         """更新连续活跃天数（断一天就归 1）"""
         last = str(u.get("last", "") or "")
         if last == today:
-            return                      # 今天已经记过，连续天数不变
+            return
         streak = int(u.get("streak", 0))
         if last:
             try:
@@ -304,9 +275,6 @@ class SpeakStatsModule:
         for k in sorted(days.keys())[:-KEEP_DAYS]:
             days.pop(k, None)
 
-    # ============================================================
-    # 统计辅助
-    # ============================================================
     @staticmethod
     def _sum_range(days: dict, start: datetime.date, end: datetime.date) -> int:
         """[start, end] 闭区间内的发言总数"""
@@ -379,18 +347,12 @@ class SpeakStatsModule:
             lines.append("（暂无数据）")
             return "\n".join(lines)
         for i, (uid, u, val) in enumerate(rows[:topn], start=1):
-            # ★★ 1.7.7：名次前缀统一走 `rank_tag` ——
-            #   前三名奖牌 + **两个空格**做列分隔，渲染端会把
-            #   「🥇 名字」和「4.  名字」排成同一列，左边缘自动对齐。
             lines.append(f"{_rank_tag(i)}{self._nick(group_id, uid, u)}"
                          f" — {val} {unit}")
         lines.append("")
         lines.append("💡 只统计本群数据")
         return "\n".join(lines)
 
-    # ============================================================
-    # 五个排行榜
-    # ============================================================
     def rank_yesterday_text(self, group_id) -> str:
         """
         ★★ 1.7.7：**昨日**发言前十（隔日结算）。
@@ -448,17 +410,14 @@ class SpeakStatsModule:
         days = u.get("days") if isinstance(u, dict) else {}
         days = days if isinstance(days, dict) else {}
         today = _today()
-        w_start = today - datetime.timedelta(days=6)      # 近 7 天（含今天）
-        m_start = today - datetime.timedelta(days=29)     # 近 30 天（含今天）
+        w_start = today - datetime.timedelta(days=6)
+        m_start = today - datetime.timedelta(days=29)
 
         total = int(u.get("total", 0)) if isinstance(u, dict) else 0
         best = int(u.get("best_streak", 0)) if isinstance(u, dict) else 0
         cur = self._cur_streak(u) if isinstance(u, dict) else 0
         week = self._sum_range(days, w_start, today)
         month = self._sum_range(days, m_start, today)
-        # ★★ 1.7.7：用户要求去掉「近 7 天 / 近 30 天」后面的
-        #   「（活跃 N 天）」括号内容，所以这里不再算活跃天数
-        #   （`_active_days` 仍保留，供别处/以后使用）。
         today_cnt = int(days.get(_dstr(today), 0) or 0)
 
         shown = name or self._nick(group_id, user_id, u)
@@ -476,4 +435,3 @@ class SpeakStatsModule:
             "",
             "💡 只统计本群数据；断一天连续活跃会重新计算",
         ])
-
