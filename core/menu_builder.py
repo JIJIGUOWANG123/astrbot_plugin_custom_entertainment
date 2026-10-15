@@ -264,6 +264,19 @@ def _foot_bar(lines) -> str:
     """
     return FOOT_CH * FOOT_W
 
+def _cmd1(raw, dflt: str = "") -> str:
+    """
+    ★★ 1.5.0：后台指令名可能配了**多个**（英文逗号分隔）。
+
+    菜单里**只显示第一个**，其余作为别名照常可用。
+    """
+    for x in str(raw or "").replace("\u3001", ",").split(","):
+        x = str(x).strip()
+        if x:
+            return x
+    return dflt
+
+
 def _sv(v, dflt: str = "") -> str:
     """
     把插件属性安全转成可显示的字符串。
@@ -320,6 +333,28 @@ def _finish(title: str, rows) -> list:
     _foot = [_foot_bar(_head + _rows)]
     return _head + _rows + _foot
 
+# ★★ 1.9.0：菜单 id -> 承载「入口名」的插件属性。
+#   有些菜单的入口名存在 `cmd_*_menu` 这类属性上（不是 `menu_*_names`
+#   配置键），`_entry_name()` 靠这张表也能实时同步后台改名。
+_MENU_ATTR = {
+    "admin": "cmd_admin_name",
+    "checkin": "cmd_checkin_menu_name",
+    "daily": "cmd_daily_menu_name",
+    "entertain": "cmd_entertain_menu_name",
+    "greeting": "cmd_greeting_menu_name",
+    "greeting_rank": "cmd_greeting_rank_name",
+    "main": "cmd_main_name",
+    "mc": "cmd_mc_menu_name",
+    "mc_player": "cmd_mc_player_menu_name",
+    "mc_push": "cmd_mc_push_menu_name",
+    "mc_server": "cmd_mc_server_menu_name",
+    "mc_version": "cmd_mc_version_menu_name",
+    "meme": "cmd_meme_menu_name",
+    "qqinfo": "cmd_qqinfo_menu_name",
+    "weather": "cmd_weather_menu_name",
+}
+
+
 def _entry_name(plugin, menu_id: str, dflt: str) -> str:
     """
     ★★ 1.7.7：取**菜单入口名**（后台可自定义）。
@@ -345,11 +380,24 @@ def _entry_name(plugin, menu_id: str, dflt: str) -> str:
             n = f(menu_id)
             if n:
                 return str(n[0]).strip() or dflt
-        f2 = getattr(plugin, "_mount_menu_names", None)
-        if callable(f2):
-            n2 = [str(x).strip() for x in (f2() or []) if str(x).strip()]
-            if n2:
-                return n2[0]
+        # ★★ 1.9.0：配置键没有 -> 退回**属性**（cmd_*_menu 那一类），
+        #   这样后台改了名字，菜单标题会立刻跟着变。
+        _at = _MENU_ATTR.get(str(menu_id))
+        if _at:
+            _raw = str(getattr(plugin, _at, "") or "")
+            for _x in _raw.replace("，", ",").split(","):
+                _x = _x.strip()
+                if _x:
+                    return _x
+        # ★★ 1.5.0 修复：「坐骑兜底」以前对**所有** menu_id 生效 ——
+        #   任何不在 MENU_ENTRY_DEFS 里的菜单（接口管理 / 状态管理…）
+        #   都会显示成「坐骑功能」。现在**只**给坐骑入口用。
+        if str(menu_id) == "checkin_mount":
+            f2 = getattr(plugin, "_mount_menu_names", None)
+            if callable(f2):
+                n2 = [str(x).strip() for x in (f2() or []) if str(x).strip()]
+                if n2:
+                    return n2[0]
     except Exception:
         pass
     return dflt
@@ -407,19 +455,37 @@ def build_main_menu(plugin) -> str:
     """
     主菜单（两列排布，收尾横线与标题等宽）。
 
-    ★顺序：接口 / MC / 打卡 / 签到 / 每日 / 娱乐 / 管理 / 发言
-    ★★ 市场版：原版最后一行是「音乐功能 + 小鸟图鉴」，
-       这两个功能已整体移除，所以主菜单现在收在这一行。
+    ★★ 1.5.0：**全部改为读后台配置**（以前是硬编码字符串，
+      所以后台改了名字主菜单不跟着变）。指令名取**第一个**。
+    ★ 顺序：接口 / 世界 / 打卡 / 签到 / 每日 / 娱乐 / 管理 / 授权 / 发言
     """
-    title = "主菜单"
-    ent = _sv(getattr(plugin, "cmd_entertain_menu_name", "")) or "娱乐功能"
+    def _n(mid: str, dflt: str) -> str:
+        try:
+            return _entry_name(plugin, mid, dflt) or dflt
+        except Exception:
+            return dflt
+
+    meme = _cmd1(getattr(plugin, "cmd_meme_menu_name", ""), "接口系统")
+    mc = _cmd1(getattr(plugin, "cmd_mc_menu_name", ""), "世界系统")
+    gree = _cmd1(getattr(plugin, "cmd_greeting_menu_name", ""), "打卡系统")
+    ckin = _cmd1(getattr(plugin, "cmd_checkin_menu_name", ""), "签到系统")
+    daily = _cmd1(getattr(plugin, "cmd_daily_menu_name", ""), "每日系统")
+    ent = _cmd1(getattr(plugin, "cmd_entertain_menu_name", ""), "娱乐系统")
+    try:
+        adm = _entry_name(plugin, "admin", "管理系统") or "管理系统"
+    except Exception:
+        adm = "管理系统"
+    auth = _n("auth", "授权系统")
+    speak = _cmd1(getattr(plugin, "cmd_speak_menu_name", ""), "发言功能")
+
     rows = [
-        ("🎭接口系统", "⛏️MC系统"),
-        ("📅打卡系统", "💰签到系统"),
-        ("🎲每日系列", "🎈" + ent),
-        ("🔧管理系统", "💬发言功能"),
+        (f"🎭{meme}", f"🌍{mc}"),
+        (f"📅{gree}", f"💰{ckin}"),
+        (f"🎲{daily}", f"🎈{ent}"),
+        (f"🔧{adm}", f"🔑{auth}"),
+        (f"💬{speak}", ""),
     ]
-    return _grid(rows, title=title)
+    return _grid(rows, title=_entry_name(plugin, "main", "主菜单"))
 
 def build_meme_menu(plugin) -> str:
     def _names(raw, fallback):
@@ -429,7 +495,7 @@ def build_meme_menu(plugin) -> str:
     vids = _names(_sv(getattr(plugin, "cmd_meme_video_name", "")), "视频接口")
     txts = _names(_sv(getattr(plugin, "cmd_meme_text_name", "")), "文本接口")
 
-    lines = [_bar("接口系统")]
+    lines = [_bar(_entry_name(plugin, "meme", "接口系统"))]
     lines.append(f"🖼️{imgs[0]}［页数］")
     if len(imgs) > 1:
         lines.append(f"　 别名：{' / '.join(imgs[1:])}")
@@ -447,26 +513,75 @@ def build_meme_menu(plugin) -> str:
 
 def build_mc_menu(plugin) -> str:
     """
-    MC系统：列出全部 MC 相关指令（版本查询 / 自动检测 / 测试推送）。
+    ★★ 1.5.0：世界系统（原名「MC系统」）—— **简约版**四宫格。
 
-    ★ 以前这三个指令挂在 `build_mc_version_menu` 下，而那个 id 的匹配名
-      是硬编码的「MC版本功能」（永远匹配不到），已删除；
-      内容合并到这里，避免「MC系统」只剩一个空壳入口。
+    只列 4 个子功能入口；指令名取后台自定义的**第一个**。
     """
-    ver = _sv(getattr(plugin, "cmd_minecraft_name", "")) or "MC版本"
-    auto = _sv(getattr(plugin, "cmd_mc_auto_name", "")) or "MC自动检测"
-    test = _sv(getattr(plugin, "cmd_mc_test_name", "")) or "MC测试推送"
+    ver = _cmd1(getattr(plugin, "cmd_mc_version_menu_name", ""), "版本查询")
+    srv = _cmd1(getattr(plugin, "cmd_mc_server_menu_name", ""), "服务查询")
+    ply = _cmd1(getattr(plugin, "cmd_mc_player_menu_name", ""), "玩家信息")
+    psh = _cmd1(getattr(plugin, "cmd_mc_push_menu_name", ""), "版本推送")
+    rows = [
+        (f"📋{ver}", f"🔍{srv}"),
+        (f"🧑{ply}", f"🔔{psh}"),
+    ]
+    return _grid(rows, title=_entry_name(plugin, "mc", "世界系统"))
+
+
+def build_mc_version_menu(plugin) -> str:
+    """版本查询：查询 MC 版本相关的指令与提示"""
+    ver = _cmd1(getattr(plugin, "cmd_minecraft_name", ""), "MC版本")
     return "\n".join([
-        _bar("MC系统"),
-        f"⛏️{ver}",
-        "　 查询最新 Java 正式版 / 测试版",
+        _bar(_entry_name(plugin, "mc_version", "版本查询")),
+        f"📋{ver}",
+        "　 查询最新版本（Java + 基岩版）",
+        "　 ☕ Java：Mojang 官方 Version Manifest",
+        "　 🪨 基岩：mcappx 版本库（含预览版）",
+        _bar_plain(),
+    ])
+
+
+def build_mc_server_menu(plugin) -> str:
+    """服务查询：两种版本（Java / 基岩）的服务器信息查询指令与提示"""
+    mj = _cmd1(getattr(plugin, "cmd_mc_java_name", ""), "MCJ")
+    mb = _cmd1(getattr(plugin, "cmd_mc_be_name", ""), "MCB")
+    return "\n".join([
+        _bar(_entry_name(plugin, "mc_server", "服务查询")),
+        f"☕{mj}［域名或IP:端口］",
+        "　 查询 MC **Java 版**服务器状态",
+        "　 不写端口默认 25565",
         "",
+        f"🪨{mb}［域名或IP:端口］",
+        "　 查询 MC **基岩版**服务器状态",
+        "　 不写端口默认 19132",
+        _bar_plain(),
+    ])
+
+
+def build_mc_player_menu(plugin) -> str:
+    """玩家信息：玩家信息查询 / 皮肤预览图指令与提示"""
+    skin = _cmd1(getattr(plugin, "cmd_mc_skin_name", ""), "玩家查询")
+    return "\n".join([
+        _bar(_entry_name(plugin, "mc_player", "玩家信息")),
+        f"🧑{skin}［玩家ID］",
+        "　 查询玩家的 **UUID** 和**皮肤预览图**",
+        "",
+        "💡 玩家ID 就是正版账号名（不分大小写）",
+        _bar_plain(),
+    ])
+
+
+def build_mc_push_menu(plugin) -> str:
+    """版本推送：开启/关闭 MC 推送、测试推送的指令与提示"""
+    auto = _cmd1(getattr(plugin, "cmd_mc_auto_name", ""), "MC自动推送")
+    test = _cmd1(getattr(plugin, "cmd_mc_test_name", ""), "MC测试推送")
+    return "\n".join([
+        _bar(_entry_name(plugin, "mc_push", "版本推送")),
         f"🔔{auto}",
-        "　 开启/关闭本群自动检测推送",
+        "　 开启 / 关闭**本群**的版本自动推送",
         "",
         f"🚀{test}",
-        "　 手动拉取最新版本并推送",
-        "　 推送范围可在后台「MC测试推送指定群」里指定",
+        "　 手动拉取最新版本并**立即推送一次**",
         _bar_plain(),
     ])
 
@@ -476,7 +591,7 @@ def build_greeting_menu(plugin) -> str:
         ("🌅早安打卡", "🌙晚安打卡"),
         ("🏆打卡排行", "📊打卡统计"),
     ]
-    return _grid(rows, title="打卡系统")
+    return _grid(rows, title=_entry_name(plugin, "greeting", "打卡系统"))
 
 def build_checkin_menu(plugin) -> str:
     """
@@ -499,7 +614,7 @@ def build_checkin_menu(plugin) -> str:
         (f"🧰{_shop_label(plugin)}",
          f"❓{_entry_name(plugin,'checkin_shop_help','商店帮助')}"),
     ]
-    return _grid(rows, title="签到系统")
+    return _grid(rows, title=_entry_name(plugin, "checkin", "签到系统"))
 
 def build_daily_menu(plugin) -> str:
     """每日系列：四个子菜单入口"""
@@ -507,7 +622,7 @@ def build_daily_menu(plugin) -> str:
         ("🔮运势功能", "💑老公功能"),
         ("🍀人品功能", "📰读报功能"),
     ]
-    return _grid(rows, title="每日系列")
+    return _grid(rows, title=_entry_name(plugin, "daily", "每日系列"))
 
 def _daily_names(mod, attr="trigger_names", fallback="") -> str:
     """取模块的指令名（逗号/列表都兼容），失败回退"""
@@ -539,7 +654,7 @@ def build_fortune_menu(plugin) -> str:
     names = _daily_names(mod, "trigger_names", "今日运势")
     main = _daily_first(mod, "trigger_names", "今日运势")
     return "\n".join([
-        _bar("运势功能"),
+        _bar(_entry_name(plugin, "fortune", "运势功能")),
         f"🔮{names}",
         "　 查看今日运势（宜 / 忌 / 幸运指数）",
         "",
@@ -556,7 +671,7 @@ def build_husband_menu(plugin) -> str:
     names = _daily_names(hmod, "trigger_names", "今日老公")
     force = _daily_first(hmod, "force_trigger_names", "逼迫")
     return "\n".join([
-        _bar("老公功能"),
+        _bar(_entry_name(plugin, "husband", "老公功能")),
         f"💑{names}",
         "　 随机抽出今日老公（可配排除名单 / 允许机器人）",
         "",
@@ -574,7 +689,7 @@ def build_luck_menu(plugin) -> str:
     names = _daily_names(mod, "trigger_names", "今日人品")
     main = _daily_first(mod, "trigger_names", "今日人品")
     return "\n".join([
-        _bar("人品功能"),
+        _bar(_entry_name(plugin, "luck", "人品功能")),
         f"🍀{names}",
         "　 查看今日人品值（含评语）",
         "",
@@ -609,7 +724,7 @@ def build_news_menu(plugin) -> str:
     t_name = _names("cmd_daily_news_time_name", "读报推送时间")[0]
     l_name = _names("cmd_daily_news_list_name", "读报推送列表")[0]
     return "\n".join([
-        _bar("读报功能"),
+        _bar(_entry_name(plugin, "news", "读报功能")),
         f"📰{m_names}",
         f"　 手动读一次今日新闻（{m_main}，60 秒内同一群去重）",
         "",
@@ -638,7 +753,7 @@ def build_output_mode_menu(plugin) -> str:
     except Exception:
         lbl, cur = "文本模式", "text"
     return "\n".join([
-        _bar("输出模式"),
+        _bar(_entry_name(plugin, "output_mode", "输出模式")),
         f"📌本群当前：{lbl}",
         "",
         f"📝{cmd} 文本　— 直接发文字",
@@ -654,7 +769,7 @@ def build_weather_menu(plugin) -> str:
     """
     天气查询：当天天气的用法说明。
 
-    ★ 数据由 MemeAPI 的 /api/weather 提供（weather.com.cn），
+    ★ 数据由本地渲染服务的 /api/weather 提供（weather.com.cn），
       指令关键词在后台「接口系统 → 接口配置列表」里改。
     """
     t1 = _sv(getattr(plugin, "cmd_weather_text_name", "")) or "天气"
@@ -662,7 +777,7 @@ def build_weather_menu(plugin) -> str:
     t3 = _sv(getattr(plugin, "cmd_weather_check_name", "")) or "查天气"
     i1 = _sv(getattr(plugin, "cmd_weather_img_name", "")) or "天气图片"
     i2 = _sv(getattr(plugin, "cmd_weather_card_name", "")) or "天气卡片"
-    title = "天气查询"
+    title = _entry_name(plugin, "weather", "天气查询")  # ★ 1.9.0：标题跟随后台
     lines = [
         "🌤️文字版",
         f"　 {t1} 城市名　{t2} 城市名",
@@ -695,7 +810,7 @@ def build_entertain_menu(plugin) -> str:
     guess = _entry_name(plugin, "guess", "猜数功能")
     wea = _sv(getattr(plugin, "cmd_weather_menu_name", "")) or "天气查询"
     qq = _sv(getattr(plugin, "cmd_qqinfo_menu_name", "")) or "查询功能"
-    title = "娱乐功能"
+    title = _entry_name(plugin, "entertain", "娱乐功能")  # ★ 1.9.0：标题跟随后台
     return _grid([
         (f"🔢{guess}", f"☁️{wea}"),
         (f"🔍{qq}", ""),
@@ -799,16 +914,34 @@ def build_qqinfo_menu(plugin) -> str:
     return "\n".join(_finish(title, rows))
 
 def build_admin_menu(plugin) -> str:
+    """
+    管理系统：后台管理类子菜单入口。
+
+    ★★ 1.9.0：
+      · 入口名**真正读配置**了（以前 docstring 说读配置、代码是硬编码）。
+      · **移除「授权功能」** —— 它已独立成主菜单里的「授权系统」。
+      · 每个入口都支持**多个自定义名**（逗号分隔，显示第一个）。
+    """
+    def _n(mid: str, dflt: str) -> str:
+        try:
+            return _entry_name(plugin, mid, dflt) or dflt
+        except Exception:
+            return dflt
+
     rows = [
-        ("🖼️接口管理", "📚词库管理"),
-        ("✅签到管理", "🖥️状态管理"),
-        ("🔀开关管理", "🕐整点管理"),
-        ("📣艾特设置", "👑超管设置"),
-        ("📰读报管理", "🚫成员管理"),
-        ("🎨输出模式", "🔔提示功能"),
-        ("🔑授权功能", ""),
+        (f"🖼️{_n('meme_admin', '接口管理')}",
+         f"📚{_n('word_admin', '词库管理')}"),
+        (f"✅{_n('checkin_admin', '签到管理')}",
+         f"🖥️{_n('status_admin', '状态管理')}"),
+        (f"🔀{_n('switch_admin', '开关管理')}",
+         f"🕐{_n('chime_admin', '整点管理')}"),
+        (f"📣{_n('must_at_admin', '艾特设置')}",
+         f"👑{_n('super_admin', '超管设置')}"),
+        (f"📰{_n('news_admin', '读报管理')}",
+         f"🎨{_n('output_mode', '输出模式')}"),
+        (f"🔔{_n('notice', '提示功能')}", ""),
     ]
-    return _grid(rows, title="管理系统")
+    return _grid(rows, title=_entry_name(plugin, "admin", "管理系统"))
 
 def _ga_help_lines():
     """「全局管理员」设置说明（授权指令菜单 / 权限不足提示共用）"""
@@ -843,20 +976,20 @@ def build_auth_menu(plugin, group_id: str = "") -> str:
     """
     am = getattr(plugin, "auth_module", None)
     if am is None:
-        lines = [_bar("授权功能"), "⚠️ 授权模块未加载"]
+        lines = [_bar(_entry_name(plugin, "auth", "授权功能")), "⚠️ 授权模块未加载"]
         lines.append(_foot_bar(lines))
         return "\n".join(lines)
 
     left = f"📝{_entry_name(plugin, 'auth_cmd', '授权指令')}"
     right = f"🔍{_entry_name(plugin, 'auth_query', '授权查询')}"
     try:
-        out = _grid([(left, right)], title="授权功能")
+        out = _grid([(left, right)], title=_entry_name(plugin, "auth", "授权功能"))
         if str(out or "").strip():
             return out
     except Exception:
         logger.debug("[auth] _grid 生成授权菜单失败，回落简单排版",
                      exc_info=True)
-    lines = [_bar("授权功能"), f"{left}　　{right}"]
+    lines = [_bar(_entry_name(plugin, "auth", "授权功能")), f"{left}　　{right}"]
     lines.append(_foot_bar(lines))
     return "\n".join(lines)
 
@@ -951,7 +1084,7 @@ def build_notice_menu(plugin) -> str:
     nm = getattr(plugin, "notice_module", None)
     cmds = getattr(nm, "cmds", {}) or {}
     lines = [
-        _bar("提示功能"),
+        _bar(_entry_name(plugin, "notice", "提示功能")),
         "🔔 群事件提示（**默认全部关闭**）",
         "",
     ]
@@ -992,7 +1125,7 @@ def build_notice_menu(plugin) -> str:
 
 def build_member_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("成员管理"),
+        _bar(_entry_name(plugin, "member_admin", "成员管理")),
         f"👢{_sv(plugin.cmd_kick_name)} @某人",
         f"🔇{_sv(plugin.cmd_mute_name)} @某人 ［秒数］",
         f"🔊{_sv(plugin.cmd_unmute_name)} @某人",
@@ -1007,7 +1140,7 @@ def build_member_admin_menu(plugin) -> str:
 
 def build_news_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("读报管理"),
+        _bar(_entry_name(plugin, "news_admin", "读报管理")),
         f"🔔{_sv(plugin.cmd_daily_news_on_name)} ［群号］",
         f"🔕{_sv(plugin.cmd_daily_news_off_name)} ［群号］",
         f"🕐{_sv(plugin.cmd_daily_news_time_name)} ［群号］ 08:00",
@@ -1019,7 +1152,7 @@ def build_news_admin_menu(plugin) -> str:
 
 def build_meme_feature_menu(plugin) -> str:
     return "\n".join([
-        _bar("接口功能"),
+        _bar(_entry_name(plugin, "meme_feature", "接口功能")),
         f"📋{_sv(plugin.cmd_list_name)} ［页码］",
         "　 查看接口规则列表（支持分页）",
         "",
@@ -1035,7 +1168,7 @@ def build_meme_feature_menu(plugin) -> str:
 def build_greeting_morning_menu(plugin) -> str:
     mn = " / ".join(plugin.greeting_module.morning_names) if plugin.greeting_module else "早安 / 早上好 / 起床"
     return "\n".join([
-        _bar("早安打卡"),
+        _bar(_entry_name(plugin, "greeting_morning", "早安打卡")),
         f"🌅指令：{mn}",
         "　 记录起床时间，并显示睡眠时长",
         "",
@@ -1047,7 +1180,7 @@ def build_greeting_morning_menu(plugin) -> str:
 def build_greeting_night_menu(plugin) -> str:
     nn = " / ".join(plugin.greeting_module.night_names) if plugin.greeting_module else "晚安 / 睡觉 / 睡了"
     return "\n".join([
-        _bar("晚安打卡"),
+        _bar(_entry_name(plugin, "greeting_night", "晚安打卡")),
         f"🌙指令：{nn}",
         "　 记录睡觉时间，并显示清醒时长",
         "",
@@ -1066,7 +1199,7 @@ def build_greeting_rank_menu(plugin) -> str:
         return dflt
 
     return "\n".join([
-        _bar("打卡查询"),
+        _bar(_entry_name(plugin, "greeting_rank", "打卡查询")),
         f"🏆{_n('rank_days_names', '打卡天数排行 / 天数排行')}",
         "　 完整打卡天数榜 · 前十（早晚都打才算一天）",
         "",
@@ -1238,7 +1371,7 @@ def build_racing_menu(plugin, page=1) -> str:
 def build_checkin_signin_menu(plugin) -> str:
     ck = " / ".join(plugin.checkin_module.trigger_names) if plugin.checkin_module else "签到"
     return "\n".join([
-        _bar("签到指令"),
+        _bar(_entry_name(plugin, "checkin_signin", "签到指令")),
         f"✅{ck}",
         f"　 每日签到，随机 {_ck_score_min(plugin)}-{_ck_score_max(plugin)} "
         f"{_sn(plugin)}",
@@ -1280,7 +1413,7 @@ def build_checkin_query_menu(plugin) -> str:
         return str(int(round(f))) if abs(f - round(f)) < 1e-9 else f"{f:g}"
 
     _lines = [
-        _bar("查询指令"),
+        _bar(_entry_name(plugin, "checkin_query", "查询指令")),
         f"📊{inf}",
         "　 不跟参数 = 查自己",
         "",
@@ -1370,7 +1503,7 @@ def build_checkin_bank_menu(plugin) -> str:
     _rob_on = bool(getattr(ck, "rob_enable", True))
     _fund_on = bool(getattr(ck, "fund_enable", True))
     return "\n".join([
-        _bar("银行功能"),
+        _bar(_entry_name(plugin, "checkin_bank", "银行功能")),
         f"🏦{c['bk']}",
         f"　 查看持有{sn} / 银行余额 / 欠款 / 净值 / 总资产",
         "",
@@ -1401,7 +1534,7 @@ def build_checkin_bank_save_menu(plugin) -> str:
     c = _bank_common(plugin)
     sn = c["sn"]
     return "\n".join([
-        _bar("存钱取钱"),
+        _bar(_entry_name(plugin, "checkin_bank_save", "存钱取钱")),
         f"📥{c['dp']} 数量",
         f"　 把{sn}存入银行（钱包 -> 银行）",
         f"　 也可以：{c['dp']} all（全存）",
@@ -1438,7 +1571,7 @@ def build_checkin_bank_loan_menu(plugin) -> str:
         _od_hint = (f"⚠️ 逾期：每 {_od_step} 小时加收本金 "
                     f"{_od_rate * 100:.1f}% 罚息，越拖越多")
     lines = [
-        _bar("借款还款"),
+        _bar(_entry_name(plugin, "checkin_bank_loan", "借款还款")),
         f"💸{c['ln']} 数量",
         f"　 向银行借款（单次上限 {_lmax}，利息 {_lr:.0f}%）",
         "　 不带数量 = 直接借满上限",
@@ -1471,7 +1604,7 @@ def build_checkin_bank_fund_menu(plugin) -> str:
     _fpmax = getattr(ck, "fund_profit_max", 8.0)
     _flmax = getattr(ck, "fund_loss_max", 6.0)
     lines = [
-        _bar("理财功能"),
+        _bar(_entry_name(plugin, "checkin_bank_fund", "理财功能")),
         f"📈{c['fd']}",
         "　 查看自己的理财亏盈，**并显示今天是亏还是盈**",
         "",
@@ -1506,7 +1639,7 @@ def build_checkin_bank_rob_menu(plugin) -> str:
     _days = getattr(ck, "rob_freeze_days", 3)
     _pen = getattr(ck, "rob_fail_penalty_rate", 0.5)
     lines = [
-        _bar("抢银行"),
+        _bar(_entry_name(plugin, "checkin_bank_rob", "抢银行")),
         f"🚨{c['rb']}",
         "　 **没有参数**，每天只能抢一次",
         "",
@@ -1574,7 +1707,7 @@ def build_checkin_lottery_menu(plugin) -> str:
     _pen_on = bool(getattr(ck, "pool_enable", True))
     _ptimeout = getattr(ck, "pool_timeout_hours", 1)
     lines = [
-        _bar("抽奖功能"),
+        _bar(_entry_name(plugin, "checkin_lottery", "抽奖功能")),
         f"🎰{lt}",
         "　 **不带参数**，直接发就行",
         f"　 抽一次：花 {_cost} {_sn(plugin)}",
@@ -1614,7 +1747,7 @@ def build_checkin_steal_menu(plugin) -> str:
 
     st = " / ".join(plugin.checkin_module.steal_trigger_names) if plugin.checkin_module else "偷积分"
     return "\n".join([
-        _bar("神偷功能"),
+        _bar(_entry_name(plugin, "checkin_steal", "神偷功能")),
         f"🦸{st} @某人",
         f"🦸{st} QQ号",
         "",
@@ -1701,7 +1834,7 @@ def build_checkin_mount_manage_menu(plugin) -> str:
     """坐骑下级菜单：坐骑管理（装备 / 查看 / 翻页）"""
     c = _mount_common(plugin)
     return "\n".join([
-        _bar("坐骑管理"),
+        _bar(_entry_name(plugin, "mount_manage", "坐骑管理")),
         f"🎽{c['me']} 坐骑名 / 序号",
         "　 装备坐骑（必须已购买）",
         "　 序号按「已拥有列表」的编号",
@@ -1724,7 +1857,7 @@ def build_checkin_mount_admin_menu(plugin) -> str:
     """坐骑下级菜单：坐骑设置（管理员指令 / 图片 / 登场提示）"""
     c = _mount_common(plugin)
     return "\n".join([
-        _bar("坐骑设置"),
+        _bar(_entry_name(plugin, "mount_admin", "坐骑设置")),
         f"🛠 管理员指令",
         f"　 添加：{c['ma']} 名|价格|描述",
         f"　 删除：{c['md']} 名/序号",
@@ -1784,7 +1917,7 @@ def build_checkin_shop_menu(plugin) -> str:
 
     _n_items = len(getattr(ck, "shop_list", None) or [])
     return "\n".join([
-        _bar("签到商店"),
+        _bar(_entry_name(plugin, "checkin_shop", "签到商店")),
         f"🛒{_shop}",
         "　 查看可买的东西（含价格与效果）",
         f"　 共 {_n_items} 件商品（后台可增删改）",
@@ -1978,7 +2111,7 @@ def build_speak_menu(plugin) -> str:
         return " / ".join(v) if v else dflt
 
     return "\n".join([
-        _bar("发言功能"),
+        _bar(_entry_name(plugin, "speak", "发言功能")),
         f"\U0001f4ac{names('rank_yesterday_names', '本群发言排行')}",
         "\u3000**昨日**的发言次数前十（隔日结算）",
         "",
@@ -2044,7 +2177,7 @@ def build_pet_menu(plugin) -> str:
     d = _pet_common(plugin)
     sn = d["sn"]
     return "\n".join([
-        _bar("宠物功能"),
+        _bar(_entry_name(plugin, "pet", "宠物功能")),
         f"\U0001f6d2{d['shop']} [页码]",
         "\u3000浏览宠物商店（每页 20 种）",
         "",
@@ -2066,7 +2199,7 @@ def build_pet_care_menu(plugin) -> str:
     d = _pet_common(plugin)
     sn = d["sn"]
     return "\n".join([
-        _bar("宠物养成"),
+        _bar(_entry_name(plugin, "pet_care", "宠物养成")),
         f"\U0001f4b0{d['buy']} 宠物名",
         f"\u3000消耗{sn}购买（每种每人都能买一只）",
         "",
@@ -2092,7 +2225,7 @@ def build_pet_fight_menu(plugin) -> str:
     d = _pet_common(plugin)
     sn = d["sn"]
     return "\n".join([
-        _bar("宠物玩法"),
+        _bar(_entry_name(plugin, "pet_fight", "宠物玩法")),
         f"\U0001f5fa{d['adv']} [宠物名]",
         "\u3000冒险获得经验（消耗体力血量，有概率直升一级）",
         "",
@@ -2116,7 +2249,7 @@ def build_pet_item_menu(plugin) -> str:
     d = _pet_common(plugin)
     sn = d["sn"]
     return "\n".join([
-        _bar("宠物道具"),
+        _bar(_entry_name(plugin, "pet_item", "宠物道具")),
         f"\U0001f9ea{d['ishop']}",
         "\u3000查看可购买的道具",
         "",
@@ -2135,7 +2268,7 @@ def build_checkin_job_menu(plugin) -> str:
         getattr(plugin.checkin_module, "job_all_trigger_names", None)
         or ["全部打工"]) if plugin.checkin_module else "全部打工"
     return "\n".join([
-        _bar("打工功能"),
+        _bar(_entry_name(plugin, "checkin_job", "打工功能")),
         f"🔨{jw} 工种名",
         f"　 打工赚{_sn(plugin)}（各工种有独立冷却）",
         "",
@@ -2297,7 +2430,7 @@ def build_checkin_job_refill_status_menu(plugin) -> str:
 
 def build_meme_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("接口管理"),
+        _bar(_entry_name(plugin, "meme_admin", "接口管理")),
         f"➕{_sv(plugin.cmd_add_name)} 关键词1,关键词2 | URL模板 | 参数个数 | 返回类型",
         f"🗑{_sv(plugin.cmd_del_name)} 序号",
         f"💾{_sv(plugin.cmd_save_name)}",
@@ -2308,7 +2441,7 @@ def build_meme_admin_menu(plugin) -> str:
 
 def build_word_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("词库管理"),
+        _bar(_entry_name(plugin, "word_admin", "词库管理")),
         f"➕{_sv(plugin.cmd_word_add_name)} 关键词 | 回复内容",
         f"🗑{_sv(plugin.cmd_word_del_name)} 序号",
         f"📋{_sv(plugin.cmd_word_list_name)}",
@@ -2339,7 +2472,7 @@ def build_checkin_admin_menu(plugin) -> str:
     md = _split(_sv(getattr(plugin, "cmd_mount_del_name", ""))) or ["删除坐骑"]
 
     lines = [
-        _bar("签到管理"),
+        _bar(_entry_name(plugin, "checkin_admin", "签到管理")),
         f"➕{add} @某人 数量",
         f"　 给某人增加{_sn(plugin)}（也可写「QQ号 数量」）",
         f"➖{sub} @某人 数量",
@@ -2368,7 +2501,7 @@ def build_checkin_admin_menu(plugin) -> str:
 def build_status_admin_menu(plugin) -> str:
     names = " / ".join(plugin.cmd_status_names)
     return "\n".join([
-        _bar("状态管理"),
+        _bar(_entry_name(plugin, "status_admin", "状态管理")),
         f"🖥️电脑状态：{names}",
         f"🔔{_sv(plugin.cmd_daily_push_on_name)} ［群号］",
         f"🔕{_sv(plugin.cmd_daily_push_off_name)} ［群号］",
@@ -2379,7 +2512,7 @@ def build_status_admin_menu(plugin) -> str:
 
 def build_switch_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("开关管理"),
+        _bar(_entry_name(plugin, "switch_admin", "开关管理")),
         f"🟢{_sv(plugin.cmd_enable_name)}",
         f"🔴{_sv(plugin.cmd_disable_name)}",
         f"🟢{_sv(plugin.cmd_enable_feature_name)} 运势 ［群号］",
@@ -2390,7 +2523,7 @@ def build_switch_admin_menu(plugin) -> str:
 
 def build_chime_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("整点管理"),
+        _bar(_entry_name(plugin, "chime_admin", "整点管理")),
         f"🟢{_sv(plugin.cmd_chime_on_name)} ［群号］",
         f"🔴{_sv(plugin.cmd_chime_off_name)} ［群号］",
         f"📊{_sv(plugin.cmd_chime_status_name)} ［群号］",
@@ -2403,7 +2536,7 @@ def build_chime_admin_menu(plugin) -> str:
 
 def build_must_at_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("艾特设置"),
+        _bar(_entry_name(plugin, "must_at_admin", "艾特设置")),
         f"🟢{_sv(plugin.cmd_must_at_bot_on_name)} ［群号］",
         f"🔴{_sv(plugin.cmd_must_at_bot_off_name)} ［群号］",
         f"📊{_sv(plugin.cmd_must_at_bot_status_name)} ［群号］",
@@ -2412,7 +2545,7 @@ def build_must_at_admin_menu(plugin) -> str:
 
 def build_super_admin_menu(plugin) -> str:
     return "\n".join([
-        _bar("超管设置"),
+        _bar(_entry_name(plugin, "super_admin", "超管设置")),
         f"➕{_sv(plugin.cmd_add_admin_name)} QQ号",
         f"🗑{_sv(plugin.cmd_del_admin_name)} QQ号",
         f"📋{_sv(plugin.cmd_admin_list_name)}",
@@ -2424,7 +2557,12 @@ def build_super_admin_menu(plugin) -> str:
 MENU_REGISTRY = {
     "main":            ("主菜单",         "build_main_menu"),
     "meme":            ("接口系统",       "build_meme_menu"),
-    "mc":              ("MC系统",         "build_mc_menu"),
+    "mc":              ("世界系统",       "build_mc_menu"),
+    # ★★ 1.5.0：世界系统 4 个子功能（MC系统改名而来）
+    "mc_version":      ("版本查询",       "build_mc_version_menu"),
+    "mc_server":       ("服务查询",       "build_mc_server_menu"),
+    "mc_player":       ("玩家信息",       "build_mc_player_menu"),
+    "mc_push":         ("版本推送",       "build_mc_push_menu"),
     "greeting":        ("打卡系统",       "build_greeting_menu"),
     "checkin":         ("签到系统",       "build_checkin_menu"),
     "daily":           ("每日系列",       "build_daily_menu"),

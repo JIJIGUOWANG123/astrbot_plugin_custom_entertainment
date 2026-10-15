@@ -24,6 +24,8 @@ PLUGIN_RPS_DATA_FILENAME = f"{PLUGIN_ID}_rps.json"
 PLUGIN_GUESS_DATA_FILENAME = f"{PLUGIN_ID}_guess.json"
 PLUGIN_RACING_DATA_FILENAME = f"{PLUGIN_ID}_racing.json"
 PLUGIN_MSG_STATS_FILENAME = f"{PLUGIN_ID}_msg_stats.json"
+# ★★ 1.5.0：接口测试结果（落盘，重载插件 / 重进后台页面都还能看到上次结果）
+PLUGIN_API_TEST_FILENAME = f"{PLUGIN_ID}_api_test.json"
 
 TITLE_PREFIX_DEFAULT = "铁剑娘系统："
 TITLE_PREFIX = TITLE_PREFIX_DEFAULT
@@ -484,7 +486,7 @@ def mount_image_path(name: str, base_dir: str = "") -> str:
     支持：
       · 纯名称      赤兔       -> 找 赤兔.png / 赤兔.jpg / ...
       · 带扩展名    赤兔.png
-      · 绝对路径    D:\\MemeAPI\\car\\赤兔.png
+      · 绝对路径    <素材目录>\\赤兔.png
     找不到返回 ""。
     """
     raw = str(name or "").strip().strip('"').strip("'")
@@ -917,6 +919,19 @@ def msg_stats_path() -> str:
     """★ 1.7.7：收发消息计数文件（落盘，重载插件不归零）"""
     return os.path.join(_cfg_dir(), PLUGIN_MSG_STATS_FILENAME)
 
+def api_test_path() -> str:
+    """
+    ★★ 1.5.0：接口测试结果文件（落盘）。
+
+    为什么落盘：以前结果只存在内存里，**重载插件就没了**，
+    再进后台「接口测试」页看不到上次的测试数据。
+    现在写进本文件，重载 / 重进页面都能显示上次结果。
+
+    ★ 只存**测试结论**（成功/失败/原因/耗时），不存任何图片，
+      也不含用户隐私内容。
+    """
+    return os.path.join(_cfg_dir(), PLUGIN_API_TEST_FILENAME)
+
 def bird_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_BIRD_DATA_FILENAME)
 
@@ -933,7 +948,7 @@ def bird_image_path(name: str, base_dir: str = "") -> str:
     支持：
       · 纯昵称      仓鸮      -> 找 仓鸮.png / 仓鸮.jpg / ...
       · 带扩展名    仓鸮.png
-      · 绝对路径    D:\\MemeAPI\\bird\\仓鸮.png
+      · 绝对路径    <素材目录>\\仓鸮.png
     找不到返回 ""。
     """
     raw = str(name or "").strip().strip('"').strip("'")

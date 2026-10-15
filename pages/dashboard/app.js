@@ -23,6 +23,12 @@ let BANK_FROZEN_ERR = "";
 // ★★ 1.4.0：授权状态列表（授权功能后台展示）
 let AUTH_STATUS = null;       // null=未加载；{rows:[...], stats:{...}}
 let AUTH_STATUS_ERR = "";
+// ★★ 1.4.2：接口测试（只读探活）。走插件 `/apiTest` 路由。
+//   APITEST = { total, ok_count, bad_count, untested, at, items:[...] }
+let APITEST = null;
+let APITEST_ERR = "";
+let APITEST_RUNNING = false;   // 测试进行中（按钮禁用 + 提示）
+let APITEST_FILTER = "all";    // all / ok / bad / untested
 let CONFIG = {};
 // ★★ 市场版 1.4.0：默认打开「数据统计」页（左侧第一个按钮）
 let currentView = "botstats";
@@ -1391,6 +1397,219 @@ async function loadStats() {
   return null;
 }
 
+// ============================================================
+// ★★ 1.4.2：接口测试（只读探活）
+// ------------------------------------------------------------
+// 为什么需要：接口规则里**没有**「成功/失败」标记，
+// 「正常/错误接口数」只能靠**真发请求测一遍**才知道。
+// 这里把每条规则拿去实际调一次（和真实回复走同一条链路），
+// 结果由后端缓存在内存里，统计页就能显示出来。
+//
+// ★ 全程**只读**：只发请求探活，不修改任何配置或数据。
+// ★ 请求直接发往**用户自己配置的接口地址**，不经过第三方中转。
+// ============================================================
+
+async function loadApiTest() {
+  if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
+    try {
+      const res = await Promise.race([
+        bridge.apiGet("apiTest"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('bridge.apiGet("apiTest") 超时')), 8000)),
+      ]);
+      if (res && typeof res === "object" && res.ok !== false) {
+        APITEST = res;
+        APITEST_ERR = "";
+        return APITEST;
+      }
+      APITEST_ERR = (res && (res.error || res.msg)) || "桥接返回异常";
+      console.warn('[apitest] bridge.apiGet("apiTest") 返回异常:', res);
+    } catch (e) {
+      APITEST_ERR = `${e.name || "错误"}: ${e.message || e}`;
+      console.warn('[apitest] bridge.apiGet("apiTest") 失败:', e);
+    }
+  }
+  for (const url of buildRouteUrls("apiTest")) {
+    try {
+      const j = await tryFetchJSON(url);
+      if (j && typeof j === "object" && j.ok !== false) {
+        APITEST = j;
+        APITEST_ERR = "";
+        return APITEST;
+      }
+    } catch (e) {
+      APITEST_ERR = `${e.name || "错误"}: ${e.message || e}`;
+      console.warn(`[apitest] fetch GET ${url} 失败:`, e);
+    }
+  }
+  if (!APITEST_ERR) APITEST_ERR = "无法连接插件";
+  return null;
+}
+
+/**
+ * 触发测试。keys 为空/不传 = 测全部。
+ */
+async function runApiTest(keys) {
+  if (APITEST_RUNNING) return null;
+  APITEST_RUNNING = true;
+  render();                       // 立刻显示「测试中」
+  try {
+    const body = { timeout: 15, concurrency: 6 };
+    if (Array.isArray(keys) && keys.length) body.keys = keys;
+    let r = null;
+    // ① 桥接 POST
+    if (bridgeReady && bridge && typeof bridge.apiPost === "function") {
+      try {
+        r = await Promise.race([
+          bridge.apiPost("apiTest", body),
+          // ★ 要真发几十个请求，超时放宽（默认几秒太短）
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error("桥接超时（180s）")), 180000)),
+        ]);
+      } catch (e) {
+        console.warn("[apitest] bridge.apiPost 失败:", e);
+      }
+    }
+    if (!r || typeof r !== "object" || r.ok === false
+        || !Object.keys(r).length) {
+      // ② 兜底：同源 fetch
+      for (const url of buildRouteUrls("apiTest")) {
+        try {
+          const j = await tryFetchJSON(url, {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify(body),
+          });
+          if (j && typeof j === "object") { r = j; break; }
+        } catch (e) {
+          console.warn(`[apitest] fetch POST ${url} 失败:`, e);
+        }
+      }
+    }
+    if (r && typeof r === "object" && r.ok !== false) {
+      APITEST = r;
+      APITEST_ERR = "";
+    } else {
+      APITEST_ERR = (r && (r.error || r.msg)) || "测试失败";
+    }
+  } finally {
+    APITEST_RUNNING = false;
+    render();
+  }
+  return APITEST;
+}
+
+function buildApiTestHtml() {
+  if (APITEST === null) {
+    return `<div class="muted">正在读取接口列表…${
+      APITEST_ERR ? `（读取失败：${esc(APITEST_ERR)}）` : ""}</div>`;
+  }
+  const t = APITEST;
+  const items = Array.isArray(t.items) ? t.items : [];
+  const okN = Number(t.ok_count || 0);
+  const badN = Number(t.bad_count || 0);
+  const untN = Number(t.untested != null ? t.untested
+                                         : (items.length - okN - badN));
+
+  let html = `<div class="muted" style="margin-bottom:10px;line-height:1.9">
+    📖 <b>只读探活</b>：点「全部测试」后，插件会按真实调用链
+    逐条请求这些接口（只发请求，<b>不改任何配置</b>）。<br>
+    🔢 共 <b>${items.length}</b> 条　·　
+    <span style="color:#16a34a">正常 ${okN}</span>　·　
+    <span style="color:#dc2626">错误 ${badN}</span>　·　
+    未测 ${untN}<br>
+    🕐 上次测试：<code>${esc(t.at || "—")}</code>
+  </div>`;
+
+  const runBtn = APITEST_RUNNING
+    ? `<button class="btn btn-primary btn-sm" disabled>⏳ 测试中…（请稍候）</button>`
+    : `<button class="btn btn-primary btn-sm" data-action="apitest-run-all">🚀 全部测试</button>`;
+  const reBtn = (!APITEST_RUNNING && t.at)
+    ? `<button class="btn btn-info btn-sm" data-action="apitest-refresh">↻ 刷新结果</button>`
+    : ``;
+
+  const fbtn = (k, label, n) =>
+    `<button class="btn btn-sm ${
+      APITEST_FILTER === k ? "btn-primary" : "btn-info"
+    }" data-action="apitest-filter" data-filter="${k}"
+      style="margin-right:6px">${label} ${n}</button>`;
+  html += `<div style="margin-bottom:12px">
+    ${runBtn} ${reBtn}
+    <span style="display:inline-block;margin-left:14px">
+      ${fbtn("all", "全部", items.length)}
+      ${fbtn("ok", "✅ 正常", okN)}
+      ${fbtn("bad", "❌ 错误", badN)}
+      ${fbtn("untested", "⬜ 未测", untN)}
+    </span>
+  </div>`;
+
+  const shown = items.filter((it) => {
+    if (APITEST_FILTER === "ok") return it.tested && it.ok;
+    if (APITEST_FILTER === "bad") return it.tested && !it.ok;
+    if (APITEST_FILTER === "untested") return !it.tested;
+    return true;
+  });
+  if (!shown.length) {
+    html += `<div class="muted">${
+      APITEST_FILTER === "all"
+        ? "没有接口规则（去「接口系统」页添加）"
+        : "这个分类下没有接口"
+    }</div>`;
+    return html;
+  }
+
+  html += `<div style="overflow:auto"><table class="data-table"
+    style="width:100%;font-size:13px">
+    <thead><tr>
+      <th style="width:64px">状态</th>
+      <th style="min-width:150px">关键词</th>
+      <th style="width:70px">类型</th>
+      <th style="width:74px">耗时</th>
+      <th>结果 / 接口地址</th>
+      <th style="width:96px">操作</th>
+    </tr></thead><tbody>`;
+
+  const _typeLabel = (m) => {
+    const s = String(m || "").toLowerCase();
+    if (s === "video") return "🎬 视频";
+    if (s === "text") return "📝 文本";
+    return "🖼 图片";
+  };
+  const _badge = (it) => {
+    if (!it.tested) return `<span class="badge">⬜ 未测</span>`;
+    return it.ok
+      ? `<span class="badge" style="background:#16a34a">✅ 正常</span>`
+      : `<span class="badge" style="background:#dc2626">❌ 错误</span>`;
+  };
+
+  for (const it of shown) {
+    const kwAll = String(it.keywords || "").split(",").filter(Boolean);
+    const kw = kwAll.slice(0, 3).join(" / ");
+    const kwMore = kwAll.length > 3 ? " …" : "";
+    const status = _badge(it);
+    const ms = it.tested && it.ms ? `${it.ms} ms` : "—";
+    const msg = it.tested
+      ? `<div style="color:${it.ok ? "#16a34a" : "#dc2626"}">${esc(it.msg || "")}</div>`
+      : `<div class="muted">还没测过</div>`;
+    const url = esc(String(it.url_template || "").slice(0, 110));
+    const one = APITEST_RUNNING
+      ? `<button class="btn btn-sm" disabled>⏳</button>`
+      : `<button class="btn btn-info btn-sm" data-action="apitest-run-one"
+           data-key="${esc(it.key)}">测试</button>`;
+    html += `<tr>
+      <td>${status}</td>
+      <td>${esc(kw)}${kwMore}</td>
+      <td>${_typeLabel(it.media_type)}</td>
+      <td>${esc(ms)}</td>
+      <td>${msg}<div class="muted" style="font-size:11px;word-break:break-all">
+            ${url}</div></td>
+      <td>${one}</td>
+    </tr>`;
+  }
+  html += `</tbody></table></div>`;
+  return html;
+}
+
 async function loadCollections() {
   // 桥接优先（与其余配置读写走同一套通道）
   if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
@@ -2257,6 +2476,30 @@ function bindDataAction(btn) {
 // ============================================================
 const VIEWS = {
   // ★★ 市场版 1.1：机器人数据（左侧第一个按钮）
+  // ★★ 1.4.2：接口测试（只读探活）
+  apitest: {
+    title: "接口测试",
+    groups: [
+      { title: "🧪 接口可用性测试（只读）", type: "apitest" },
+      { title: "这一页是干什么的", type: "hint", tone: "info", text:
+        "🔍 接口规则里**没有**「能不能用」的标记，所以只能**真测一遍**。\n" +
+        "　 点「🚀 全部测试」后，插件会按**真实调用链**逐条请求：\n" +
+        "　 　 · 把 `{qq}` / `{text}` 等占位符填上\n" +
+        "　 　 · 图片/视频：**真的下载下来**，确认不是空文件\n" +
+        "　 　 · 文本：真的取一次文本，确认不是空内容\n" +
+        "\n✅ **正常** = 请求成功且拿到了有效内容\n" +
+        "❌ **错误** = 超时 / HTTP 报错 / 返回空 / 证书错误等（下方写明原因）\n" +
+        "⬜ **未测** = 还没跑过（换了新接口后点一次「全部测试」即可）\n" +
+        "\n📊 测试结果会同步到左侧「**数据统计**」页的\n" +
+        "　 「正常接口数 / 错误接口数」两个格子里。\n" +
+        "\n⚠️ 本页**只读**：只发请求探活，**不会修改任何配置或数据**。\n" +
+        "　 请求直接发往**你自己配置的接口地址**，不经过任何第三方中转，\n" +
+        "　 测试结果也**不上报**。\n" +
+        "\n💡 测试用的 QQ 是假号（10001），所以\n" +
+        "　 「需要真实 QQ 才能出图」的接口可能显示失败 —— 属正常现象。\n" +
+        "\n🔧 测出来是「错误」的接口，去「接口系统」页改地址或删掉它。" },
+    ],
+  },
   botstats: {
     title: "数据统计",
     groups: [
@@ -2290,6 +2533,9 @@ const VIEWS = {
   menu: {
     title: "菜单指令",
     groups: [
+      // ★★ 1.5.0：**所有**菜单入口名集中到这里（可逗号分隔多个）
+      { title: "★ 菜单入口名（其余未列出的子菜单）",
+        keys: ["cmd_entertain_menu", "cmd_guess_menu", "cmd_qqinfo_menu", "cmd_race_menu", "cmd_weather_menu", "menu_auth_names", "menu_bank_fund_names", "menu_bank_loan_names", "menu_bank_rob_names", "menu_bank_save_names", "menu_checkin_bank_names", "menu_checkin_job_names", "menu_checkin_lottery_names", "menu_checkin_query_names", "menu_checkin_shop_help_names", "menu_checkin_signin_names", "menu_checkin_steal_names", "menu_mount_admin_names", "menu_mount_manage_names", "menu_pet_care_names", "menu_pet_fight_names", "menu_pet_item_names", "menu_pet_names", "menu_stats_names"] },
       { title: "全局标题前缀（影响所有指令输出的标题）",
         keys: ["title_prefix"] },
       { title: "全局标题前缀说明", type: "hint", tone: "info",
@@ -2323,8 +2569,93 @@ const VIEWS = {
       { title: "群号黑名单（留空=所有群都生效）", keys: ["meme_groups"] },
       { title: "指令配置", keys: ["cmd_meme_image", "cmd_meme_video", "cmd_meme_text"] },
       { title: "每群屏蔽关键词", keys: ["group_block_keywords"] },
-      { title: "基础配置", keys: ["cmd_list", "cmd_add", "cmd_del", "cmd_save", "default_key"] },
+      { title: "基础配置", keys: ["cmd_list", "cmd_add", "cmd_del", "cmd_save"] },
       { title: "接口配置列表", type: "data-selector", keys: ["api_image", "api_video", "api_text"] },
+      { title: "📝 接口怎么填（先看这个）", type: "hint", tone: "tip", text:
+        "★ 本插件**不内置任何接口**，也**不提供默认 KEY** ——\n" +
+        "　 `URL 模板` 请填**完整地址**（该带的 key / 参数都自己写全）。\n" +
+        "\n**① 五个字段**\n" +
+        "```\n" +
+        "关键词     触发词，多个用英文逗号分隔\n" +
+        "URL 模板   完整接口地址，参数用 {占位符} 表示\n" +
+        "参数个数   这条接口需要用户额外传几个参数（0 / 1 / 2）\n" +
+        "返回类型   接口返回什么：image / video / text\n" +
+        "JSON 字段  接口返回 JSON 时，内容在哪个字段（见下方 ④）\n" +
+        "```\n" +
+        "\n**② 三种返回类型怎么填**\n" +
+        "```\n" +
+        "image  直接返回图片 → 返回类型选 image\n" +
+        "       例：https://api.xx.com/sv1?meme=abc&key=你的key&pic={qq}\n" +
+        "\n" +
+        "video  直接返回视频 → 返回类型选 video\n" +
+        "       例：https://api.xx.com/video?id={qq}\n" +
+        "\n" +
+        "text   返回纯文本   → 返回类型选 text\n" +
+        "       例：https://api.xx.com/weather?city={text}\n" +
+        "```\n" +
+        "★ **接口直接给图片/视频文件**（不是 JSON）时，`JSON 字段` **留空**即可。\n" +
+        "★ 地址要以 `http://` 或 `https://` 开头，**结尾不要加逗号**。\n" +
+        "\n**③ 参数占位符（写在 URL 模板里）**\n" +
+        "```\n" +
+        "{qq}      第 1 个参数，按 QQ 号处理\n" +
+        "{qq1}~{qq5}   第 1~5 个参数，按 QQ 号处理\n" +
+        "{text}    第 1 个参数，按「文本」处理（如城市名）\n" +
+        "{text1}~{text5}  第 1~5 个参数，按文本处理\n" +
+        "{pic}     兼容旧写法，不校验类型\n" +
+        "```\n" +
+        "★ 还可以在**参数值**里写引用（插件自动换成 QQ 号）：\n" +
+        "　 `{qq}` / `{me}` / `{at}` / `{user}` / `{sender}` → **发送者** QQ\n" +
+        "　 `{bot}` → **机器人自己**的 QQ\n" +
+        "　 例：`pic={qq}` + 用户发「家人们谁懂啊」→ 自动带上**他自己**的头像。\n" +
+        "\n**④ JSON 字段怎么填**\n" +
+        "接口返回的是 JSON（如 `{\"code\":0,\"data\":{\"url\":\"...\"}}`）时，\n" +
+        "在 `JSON 字段` 里写内容所在路径：\n" +
+        "```\n" +
+        "data.url     取 data 里的 url\n" +
+        "data.video   取 data 里的 video\n" +
+        "content      顶层字段 content\n" +
+        "```\n" +
+        "★ 留空 = 插件**自动搜索**常见字段名（url / image / video / data 等），\n" +
+        "　 大多数接口留空就行；不认的时候再手填。\n" +
+        "\n**⑤ 参数个数怎么定（最容易填错的一项）**\n" +
+        "```\n" +
+        "0   不需要参数   用户发「关键词」即可\n" +
+        "1   要 1 个参数  用户发「关键词 参数」\n" +
+        "2   要 2 个参数  用户发「关键词 参数1 参数2」\n" +
+        "```\n" +
+        "⚠️ **只要参数个数 ≥ 1，用户就必须在关键词后面带上参数** ——\n" +
+        "　 哪怕模板里写的是 `{qq}`（想用发送者自己的 QQ），也**不能只发关键词**。\n" +
+        "```\n" +
+        "参数个数 1 + 模板 …&pic={qq}\n" +
+        "  用户发「家人们谁懂啊」          -> 不触发\n" +
+        "  用户发「家人们谁懂啊 10001」    -> ✅ 触发（用 10001）\n" +
+        "  用户发「家人们谁懂啊 @某人」    -> ✅ 触发（用被 @ 的人的 QQ）\n" +
+        "```\n" +
+        "★ 想「只发关键词就用自己 QQ」→ 把 **参数个数设为 0**，\n" +
+        "　 但那样模板里就不能再依赖用户输入的 QQ（`{qq}` 会变空）。\n" +
+        "★ 参数**只允许**是：QQ 号（纯数字）、@某人、逗号/空格等分隔符。\n" +
+        "　 多写了别的字（如「关键词 今天天气不错」）→ 这条接口**不触发**（防误触发）。\n" +
+        "★ 参数个数 2 时，若用户只给了 1 个 QQ，第 2 个 QQ 槽位\n" +
+        "　 会**自动补上发送者自己的 QQ**，不必手输两遍。\n" +
+        "\n**⑥ 例子：三种都写全**\n" +
+        "```\n" +
+        "关键词     家人们谁懂啊,谁懂啊,避雷\n" +
+        "URL 模板   https://apix.xxx.top/api/sv1?meme=family_know&key=自己的key&pic={qq}\n" +
+        "参数个数   1        返回类型 image      JSON 字段 （留空）\n" +
+        "\n" +
+        "关键词     天气图片,查天气\n" +
+        "URL 模板   https://你的服务/api/weather_image?city={text}\n" +
+        "参数个数   1        返回类型 image      JSON 字段 url\n" +
+        "\n" +
+        "关键词     天气\n" +
+        "URL 模板   https://你的服务/api/weather?city={text}&fmt=text\n" +
+        "参数个数   1        返回类型 text       JSON 字段 （留空）\n" +
+        "```\n" +
+        "在群里发「天气 北京」→ 插件把 `{text}` 换成 `北京` 再请求。\n" +
+        "第一条（参数个数 1）要发「家人们谁懂啊 10001」或「家人们谁懂啊 @某人」，\n" +
+        "只发「家人们谁懂啊」是**不触发**的。\n" +
+        "\n💡 配好之后建议去左侧「**接口测试**」页点一次\n" +
+        "　 「🚀 全部测试」，确认每条接口都真能用。" },
       { title: "群号黑名单怎么用", type: "hint", tone: "info", text:
         "· **留空 = 所有群都生效**；填了群号 = 这些群**不生效**\n" +
         "· 多个群号用**英文逗号**隔开，例如：`123456,789012`\n" +
@@ -2376,16 +2707,7 @@ const VIEWS = {
       { title: "群号黑名单（留空=所有群都生效）", keys: ["checkin_groups"] },
       { title: "指令配置", keys: ["checkin_trigger_names", "checkin_rank_trigger_names", "checkin_info_trigger_names"] },
       { title: "🧭 菜单入口名（1.7.7，改了立刻生效）",
-        keys: ["menu_checkin_signin_names", "menu_checkin_query_names",
-               "menu_checkin_bank_names", "menu_checkin_lottery_names",
-               "menu_checkin_steal_names",
-               "menu_checkin_job_names", "menu_checkin_shop_help_names",
-               "menu_job_list_names", "menu_job_refill_names",
-               "menu_stamina_names", "menu_stamina_eat_names",
-               "menu_bank_save_names", "menu_bank_loan_names",
-               "menu_bank_fund_names", "menu_bank_rob_names",
-               "menu_pet_names", "menu_pet_care_names",
-               "menu_pet_fight_names", "menu_pet_item_names"] },
+        keys: ["menu_job_list_names", "menu_job_refill_names", "menu_stamina_names", "menu_stamina_eat_names"] },
       { title: "菜单入口名怎么用", type: "hint", tone: "tip", text:
         "🧭 **改完立刻生效**（不用重载插件）—— 群里发新名字就能打开，\n" +
         "　 菜单里显示的入口名也会同步跟着变。\n" +
@@ -2501,11 +2823,7 @@ const VIEWS = {
         "\n" +
         "⚠️ 冻结是**按群**记的：同一个 QQ 在多个群可能各有一条冻结。\n" +
         "　 填 QQ 号 = 全解；只想解某一个群，用上面列表里的按钮。" },
-      { title: "🧭 菜单入口名（1.7.7，改了立刻生效）",
-        keys: ["menu_checkin_bank_names", "menu_bank_save_names",
-               "menu_bank_loan_names", "menu_bank_fund_names",
-               "menu_bank_rob_names"] },
-      { title: "入口名怎么用", type: "hint", tone: "tip", text:
+            { title: "入口名怎么用", type: "hint", tone: "tip", text:
         "🧭 **改完立刻生效**（不用重载插件）：群里发新名字就能打开，\n" +
         "　 菜单里显示的入口名也同步跟着变。\n" +
         "· 可填**多个名字**，英文逗号分隔（都认）；留空 = 用默认名\n" +
@@ -2613,8 +2931,7 @@ const VIEWS = {
         "· 文案可改：`mount_greet_text`，占位符 `$name` `$mount` `$group` `$uid`\n" +
         "· 关掉：`mount_greet_enable` 设为 false" },
       { title: "🧭 菜单入口名（1.7.7，改了立刻生效）",
-        keys: ["mount_menu_names", "menu_mount_manage_names",
-               "menu_mount_admin_names"] },
+        keys: ["mount_menu_names"] },
       { title: "入口名怎么用", type: "hint", tone: "tip", text:
         "🧭 **改完立刻生效**（不用重载插件）：群里发新名字就能打开，\n" +
         "　 菜单里显示的入口名也同步跟着变。\n" +
@@ -2687,9 +3004,7 @@ const VIEWS = {
         keys: ["shop_trigger_names", "shop_buy_trigger_names",
                "shop_save_trigger_names", "shop_take_trigger_names",
                "shop_equip_trigger_names", "my_equip_trigger_names"] },
-      { title: "🧭 菜单入口名（1.7.7，改了立刻生效）",
-        keys: ["menu_checkin_shop_help_names"] },
-      { title: "入口名怎么用", type: "hint", tone: "tip", text:
+            { title: "入口名怎么用", type: "hint", tone: "tip", text:
         "🧭 **改完立刻生效**（不用重载插件）：群里发新名字就能打开，\n" +
         "　 菜单里显示的入口名也同步跟着变。\n" +
         "· 可填**多个名字**，英文逗号分隔（都认）；留空 = 用默认名\n" +
@@ -2771,10 +3086,7 @@ const VIEWS = {
         "（按战力排序）\n" +
         "\n指定了不存在的宠物会提示，不会静默换别的。" },
       { title: "指令配置 · 物品", keys: ["cmd_item_shop_names", "cmd_item_buy_names", "cmd_item_use_names"] },
-      { title: "🧭 菜单入口名（1.7.7，改了立刻生效）",
-        keys: ["menu_pet_names", "menu_pet_care_names",
-               "menu_pet_fight_names", "menu_pet_item_names"] },
-      { title: "入口名怎么用", type: "hint", tone: "tip", text:
+            { title: "入口名怎么用", type: "hint", tone: "tip", text:
         "🧭 **改完立刻生效**（不用重载插件）：群里发新名字就能打开，\n" +
         "　 菜单里显示的入口名也同步跟着变。\n" +
         "· 可填**多个名字**，英文逗号分隔（都认）；留空 = 用默认名\n" +
@@ -2856,9 +3168,7 @@ const VIEWS = {
   entertain: {
     title: "娱乐功能",
     groups: [
-      { title: "菜单入口", keys: ["cmd_entertain_menu"] },
-      { title: "天气查询 · 菜单入口指令", keys: ["cmd_weather_menu"] },
-      { title: "名片功能", keys: ["cmd_card_menu", "cmd_card"] },
+                  { title: "名片功能", keys: ["cmd_card_menu", "cmd_card"] },
       { title: "名片功能 · 性别符号样式（♂/♀ 的样子）",
         keys: ["cmd_card_gender_style"] },
       { title: "名片功能 · 群号黑名单（留空=所有群都生效）",
@@ -2868,7 +3178,7 @@ const VIEWS = {
       { title: "查询功能 · 群号黑名单（留空=所有群都生效）",
         keys: ["qqinfo_groups"] },
       { title: "查询功能 · 指令配置",
-        keys: ["cmd_qqinfo", "cmd_qqinfo_menu"] },
+        keys: ["cmd_qqinfo"] },
       { title: "名片性别符号样式怎么选", type: "hint", tone: "tip", text:
         "名片右上角头像下方会画一个性别符号：**♂ 青蓝** / **♀ 少女粉**" +
         "（性别取不到时画灰色 ?）。\n" +
@@ -2912,8 +3222,7 @@ const VIEWS = {
       { title: "猜拳功能 · 积分规则",
         keys: ["rps_bet_max", "rps_daily_limit", "rps_allow_negative"] },
       { title: "🔢 猜数游戏 · 开关与指令（1.7.7 新增）",
-        keys: ["guess_enable", "cmd_guess_start", "cmd_guess",
-               "cmd_guess_menu", "guess_groups"] },
+        keys: ["guess_enable", "cmd_guess_start", "cmd_guess", "guess_groups"] },
       { title: "🔢 猜数游戏 · 规则与积分",
         keys: ["guess_min", "guess_max", "guess_max_tries",
                "guess_timeout_sec", "guess_reward_min",
@@ -3745,6 +4054,120 @@ function render() {
  * ★ 隐私：所有数字都在插件**本地**算出来，
  *   不采集用户隐私、不上报、不发送到任何第三方。
  */
+// ★★ 1.5.0：指令冲突检查（只读）。走插件 `/cmdCheck` 路由。
+let CMDCHECK = null;
+let CMDCHECK_ERR = "";
+
+/**
+ * ★★ 1.5.0：拉取指令冲突检查结果（后台「数据统计」页最下方）。
+ *
+ * 骨架和 `loadStats` 完全一致：先桥接、再同源 fetch 兜底。
+ * ★ 只读：只扫配置里的指令名，不修改任何东西、不上报。
+ */
+async function loadCmdCheck() {
+  CMDCHECK_ERR = "";
+  if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
+    try {
+      const res = await Promise.race([
+        bridge.apiGet("cmdCheck"),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('bridge.apiGet("cmdCheck") 超时')), 4000)),
+      ]);
+      if (res && typeof res === "object" && res.ok !== false) {
+        CMDCHECK = res;
+        return CMDCHECK;
+      }
+      CMDCHECK_ERR = (res && (res.error || res.msg)) || "桥接返回异常";
+    } catch (e) {
+      CMDCHECK_ERR = `${e.name || "错误"}: ${e.message || e}`;
+      console.warn('[data] bridge.apiGet("cmdCheck") 失败:', e);
+    }
+  }
+  for (const url of buildRouteUrls("cmdCheck")) {
+    try {
+      const j = await tryFetchJSON(url);
+      if (j && typeof j === "object" && j.ok !== false) {
+        CMDCHECK = j;
+        CMDCHECK_ERR = "";
+        return CMDCHECK;
+      }
+    } catch (e) {
+      CMDCHECK_ERR = `${e.name || "错误"}: ${e.message || e}`;
+    }
+  }
+  CMDCHECK = null;
+  return null;
+}
+
+/**
+ * ★★ 1.5.0：指令检查区块（数据统计页最下方）。
+ *
+ * 列出：
+ *   · **真冲突** —— 不同配置用了同一个指令名（实际只有先匹配到的生效）
+ *   · 同键内重复 —— 一个配置里同一个名字写了两次
+ *   · 空配置     —— 指令名是空的（用默认名，一般不用管）
+ */
+function buildCmdCheckHtml() {
+  const num2 = (v) => {
+    const n = Number(v);
+    if (!isFinite(n)) return "—";
+    return n.toLocaleString("en-US");
+  };
+  let h = `<div class="section-header" style="margin-top:22px">
+    <div class="section-title">🔍 指令检查</div></div>`;
+
+  if (CMDCHECK_ERR) {
+    h += `<div class="muted small">读取失败：${esc(CMDCHECK_ERR)}</div>`;
+  } else if (!CMDCHECK) {
+    h += `<div class="muted small">正在读取…</div>`;
+  } else {
+    const cc = CMDCHECK.conflict_count || 0;
+    const dk = (CMDCHECK.dup_in_key || []).length;
+    const ek = (CMDCHECK.empty_keys || []).length;
+    h += `<div class="muted small" style="margin-bottom:8px">
+      共 <b>${num2(CMDCHECK.total_names)}</b> 个指令名 /
+      <b>${num2(CMDCHECK.total_keys)}</b> 项配置 ——
+      <span class="badge">冲突 ${num2(cc)}</span>
+      <span class="badge">同键重复 ${num2(dk)}</span>
+      <span class="badge">空配置 ${num2(ek)}</span>
+      <button class="btn btn-secondary btn-sm" data-action="cmdcheck-refresh"
+              style="margin-left:8px">重新检查</button>
+    </div>`;
+
+    if (cc) {
+      h += `<div class="muted small" style="margin-bottom:6px">
+        ⚠️ <b>冲突</b>：同一个名字被多个配置使用 ——
+        实际只有<b>先匹配到</b>的那个生效，建议改名区分。</div>
+        <div style="line-height:2">`;
+      (CMDCHECK.conflicts || []).forEach((c) => {
+        const srcs = (c.sources || []).map((x) =>
+          `<span class="badge">${esc(x.key)}</span>
+           <span class="muted small">${esc((x.desc || "").slice(0, 28))}</span>`
+        ).join(" &nbsp; ");
+        h += `<div style="margin-bottom:4px">
+          「<b>${esc(c.name)}</b>」 &larr; ${srcs}</div>`;
+      });
+      h += `</div>`;
+    } else {
+      h += `<div class="muted small">✅ 没有发现指令冲突。</div>`;
+    }
+
+    if (dk) {
+      h += `<div class="muted small" style="margin-top:10px">
+        ⚠️ <b>同一配置内重复</b>：</div><div style="line-height:1.9">`;
+      (CMDCHECK.dup_in_key || []).forEach((d) => {
+        h += `<div>· <span class="badge">${esc(d.key)}</span> 「${esc(d.name)}」</div>`;
+      });
+      h += `</div>`;
+    }
+    if (ek) {
+      h += `<div class="muted small" style="margin-top:10px">
+        💡 <b>空配置</b>（${ek} 项，用默认名）：${esc((CMDCHECK.empty_keys || []).slice(0, 20).join("、"))}</div>`;
+    }
+  }
+  return h;
+}
+
 function buildBotStatsHtml() {
   const st = STATS || BOT_STATS;
   if (!st) {
@@ -3778,13 +4201,36 @@ function buildBotStatsHtml() {
   html += card("指令执行数", num(st.cmds || 0), "真正执行并回复的指令");
   html += card("用户数量", num(st.users || 0), "去重后的活跃用户");
   html += card("错误次数", num(st.errs || 0), "ERROR 级日志累计");
+  // ★★ 1.5.0：接口运行时报错次数（用户在群里用接口失败）
+  html += card("接口错误次数", num(st.api_errs || 0), "群里用接口失败累计");
   html += card("目前加入群数量", num(st.live_count || 0), "见过消息 + 已授权");
-  html += card("加入群次数", num(st.join || 0), "累计入群事件");
-  html += card("退出群次数", num(st.leave || 0), "累计退群事件");
+  // ★★ 1.4.2：加群 / 退群改成「累计人数」口径
+  html += card("加群累计人数", num(st.join || 0), "累计入群人数");
+  html += card("退群累计人数", num(st.leave || 0), "累计退群人数");
+  // ★★ 1.4.2：新增三项（黑名单 / 接口可用性）
+  html += card("黑名单人数", num(st.blacklist_count || 0), "被拉黑的成员");
+  const apiSub = st.api_tested
+    ? `测试于 ${st.api_test_at || "—"}`
+    : "还没测试过（去「接口测试」页跑一次）";
+  html += card("接口总数", num(st.api_total || 0), apiSub);
+  html += card("正常接口数", st.api_tested ? num(st.api_ok || 0) : "—",
+               st.api_tested ? "上一次测试可用" : "未测试");
+  html += card("错误接口数", st.api_tested ? num(st.api_bad || 0) : "—",
+               st.api_tested ? "上一次测试失败" : "未测试");
   html += card("在线时长", st.uptime_text || "—", "自本次插件启动");
   html += card("未到期群数", num(st.auth_valid || 0), "有效 + 永久 + 未设置");
   html += card("到期群数", num(st.auth_expired || 0), "已过期，需续期");
   html += `</div>`;
+
+  // ★★ 1.4.2：接口统计的引导（没测过时给个直达按钮）
+  if (!st.api_tested) {
+    html += `<div class="muted small" style="margin-top:12px">
+      💡 「正常 / 错误接口数」需要**实测**才知道 ——
+      去左侧 <b>接口测试</b> 页点一下「🚀 全部测试」即可。
+      <button class="btn btn-primary btn-sm" data-action="goto-apitest"
+              style="margin-left:8px">前往接口测试</button>
+    </div>`;
+  }
 
   // 授权明细
   const as = st.auth_stats || {};
@@ -3827,6 +4273,17 @@ function buildBotStatsHtml() {
     });
     html += `</div>`;
   }
+
+  // ★★ 1.5.0：数据统计最下方 —— 指令检查
+  // ★ 用 try 包住：检查区出错也不能让统计本身空白
+  try {
+    html += buildCmdCheckHtml();
+  } catch (e) {
+    console.warn("[cmdCheck] 渲染失败:", e);
+    html += `<div class="muted small" style="margin-top:18px">
+      🔍 指令检查渲染失败：${esc(String(e && e.message || e))}</div>`;
+  }
+
   return html;
 }
 
@@ -3854,6 +4311,9 @@ function renderView(viewKey) {
 
     if (group.type === "botstats") {
       html += buildBotStatsHtml();
+    } else if (group.type === "apitest") {
+      // ★★ 1.4.2：接口测试（只读探活）
+      html += buildApiTestHtml();
     } else if (group.type === "menu-preview") {
       html += `<div class="menu-preview">${esc(menuPreviewText())}</div>`;
     } else if (group.type === "status-panel") {
@@ -4371,11 +4831,84 @@ document.addEventListener("click", async (e) => {
   btn.disabled = true;
   try {
     await loadStats();
+    loadCmdCheck().catch(() => {});
   } finally {
     btn.disabled = false;
   }
   render();
   toast("已刷新数据统计");
+  await loadCmdCheck();
+});
+
+// ★★ 1.4.2：接口测试页的交互（全部测试 / 单条测试 / 刷新 / 过滤 / 跳转）
+//   市场版统一用**事件委托**，所以新加的按钮不用逐个绑定。
+document.addEventListener("click", async (e) => {
+  const hit = (sel) => (e.target && e.target.closest
+    ? e.target.closest(`#content [data-action='${sel}']`) : null);
+
+  // ① 统计页 -> 跳到「接口测试」页
+  const go = hit("goto-apitest");
+  if (go) {
+    e.preventDefault();
+    const nav = document.querySelector('.nav-item[data-view="apitest"]');
+    if (nav) nav.click();
+    return;
+  }
+
+  // ② 全部测试
+  const all = hit("apitest-run-all");
+  if (all) {
+    e.preventDefault();
+    if (APITEST_RUNNING) return;
+    const n = (APITEST && APITEST.items) ? APITEST.items.length : 0;
+    if (!confirm(`要测试全部 ${n} 条接口吗？\n\n` +
+        `会真实请求每个接口（只读探活，不改配置）。\n` +
+        `条数多时大约需要几秒到几十秒。`)) return;
+    toast("开始测试，请稍候…");
+    await runApiTest(null);
+    const t = APITEST || {};
+    toast(`✅ 测试完成：正常 ${t.ok_count || 0} / 错误 ${t.bad_count || 0}`);
+    return;
+  }
+
+  // ③ 刷新结果（只重读缓存，不重测）
+  const rf = hit("apitest-refresh");
+  if (rf) {
+    e.preventDefault();
+    rf.disabled = true;
+    try {
+      await loadApiTest();
+    } finally {
+      rf.disabled = false;
+    }
+    render();
+    toast("已刷新接口列表");
+    return;
+  }
+
+  // ④ 单条测试
+  const one = hit("apitest-run-one");
+  if (one) {
+    e.preventDefault();
+    const key = one.getAttribute("data-key") || "";
+    if (!key) return;
+    toast("测试中…");
+    await runApiTest([key]);
+    const it = ((APITEST && APITEST.items) || []).find((x) => x.key === key);
+    if (it) {
+      toast(it.ok ? `✅ 正常：${it.msg}` : `❌ 失败：${it.msg}`);
+    }
+    return;
+  }
+
+  // ⑤ 过滤
+  const ft = hit("apitest-filter");
+  if (ft) {
+    e.preventDefault();
+    APITEST_FILTER = ft.getAttribute("data-filter") || "all";
+    render();
+    return;
+  }
 });
 
 // ============================================================
@@ -4401,6 +4934,11 @@ document.querySelectorAll(".nav-item").forEach(item => {
     if ((currentView === "bird" || currentView === "menu")
         && typeof loadBirdStatus === "function") {
       try { await loadBirdStatus(); } catch (e) { console.warn(e); }
+    }
+    // ★★ 1.4.2：切到接口测试页时拉一次接口列表 + 上次测试结果
+    if (currentView === "apitest"
+        && typeof loadApiTest === "function") {
+      try { await loadApiTest(); } catch (e) { console.warn(e); }
     }
     renderView(currentView);
   });

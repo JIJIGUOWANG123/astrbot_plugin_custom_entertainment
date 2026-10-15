@@ -83,13 +83,15 @@ class _StatsDict(dict):
 #   calls       调用次数（每条进插件处理的消息 +1）
 #   cmds        指令执行数（真正执行并回复了的指令数）
 #   errs        错误次数（ERROR 级日志累计）
+#   api_errs    ★★ 1.5.0：**接口运行时报错**次数（用户在群里用接口失败时 +1）
 #   用户数量不入库 —— 直接取昵称缓存的条数（见 _bot_stats 的 users）
 #
 # ★ 全部数据**只在本地计算与展示**，不上报、不外发。
-_PERSIST_KEYS = ("recv", "send", "join", "leave", "calls", "cmds", "errs")
+_PERSIST_KEYS = ("recv", "send", "join", "leave", "calls", "cmds", "errs",
+                 "api_errs")
 
 GLOBAL_STATS = _StatsDict({"recv": 0, "send": 0, "join": 0, "leave": 0,
-                           "calls": 0, "cmds": 0, "errs": 0})
+                           "calls": 0, "cmds": 0, "errs": 0, "api_errs": 0})
 
 # ============================================================
 # ★★ 1.4.0：错误计数 —— 纯本地统计，统计 ERROR 级日志条数。
@@ -113,13 +115,20 @@ GLOBAL_STATS = _StatsDict({"recv": 0, "send": 0, "join": 0, "leave": 0,
 #   · 只影响本插件持有的 logger 实例，不干扰任何其它插件
 #   · 包装一次即全覆盖，幂等（重复调用是空操作）
 #
-# ★ 防自增死循环：看到 "apix-meme" 字样的日志直接跳过不计数
-#   （统计自身出错时打的就是这个前缀）。
+# ★★ 1.5.0：**统计自身正在读写磁盘**的重入保护。
+#
+#   以前用「消息里含 apix-meme 就不计数」来防自增死循环，
+#   代价是**全插件日志几乎都带这个前缀**，于是「错误次数」永远是 0 ——
+#   这个卡片等于坏的。
+#
+#   现在改成精确判断：只有**统计模块自己**在落盘/读盘时产生的日志才跳过计数。
+#   这样既不会死循环，正常的 ERROR 也能如实计数。
 # ============================================================
 _ERR_FILTER_INSTALLED = False
 _ERR_LOCK = None
 _ERR_LAST_SAVE = [0.0]
 _ERR_SAVE_GAP = 3.0
+_STATS_BUSY = [False]
 
 
 def _bump_errs() -> None:
@@ -127,6 +136,30 @@ def _bump_errs() -> None:
     try:
         dict.__setitem__(GLOBAL_STATS, "errs",
                          int(dict.get(GLOBAL_STATS, "errs", 0) or 0) + 1)
+        now = time.time()
+        if now - _ERR_LAST_SAVE[0] >= _ERR_SAVE_GAP:
+            _ERR_LAST_SAVE[0] = now
+            save_msg_stats(force=True)
+    except Exception:
+        pass
+
+
+def bump_api_err() -> None:
+    """
+    ★★ 1.5.0：**接口运行时报错** +1。
+
+    什么时候用：用户在群里发关键词触发接口，而接口**没拿到东西**
+    （HTTP 报错 / 没解析出媒体地址 / 文本为空 / 下载失败 …）。
+    这时后台「数据统计」的「接口错误次数」会 +1。
+
+    ★ 只统计**运行时**（群里真实使用）；后台「接口测试」是主动探活，
+      不计入这里，免得「测一次坏接口」就把数字顶上去。
+
+    ★ 纯本地计数，不上报、不外发。
+    """
+    try:
+        dict.__setitem__(GLOBAL_STATS, "api_errs",
+                         int(dict.get(GLOBAL_STATS, "api_errs", 0) or 0) + 1)
         now = time.time()
         if now - _ERR_LAST_SAVE[0] >= _ERR_SAVE_GAP:
             _ERR_LAST_SAVE[0] = now
@@ -148,8 +181,9 @@ def _wrap_err_method(orig):
 
     def _wrapper(*args, **kwargs):
         try:
-            _msg = args[0] if args else kwargs.get("msg", "")
-            if "apix-meme" not in str(_msg or ""):
+            # ★★ 1.5.0：只在**统计模块自己读写磁盘**时跳过计数（防死循环）；
+            #   其它情况一律计数，不再看日志前缀 —— 见 `_STATS_BUSY` 的说明。
+            if not _STATS_BUSY[0]:
                 _bump_errs()
         except Exception:
             pass
@@ -240,6 +274,7 @@ def load_msg_stats() -> dict:
 
     ★ 只在插件加载时调一次；没文件就是全新开始（保持 0）。
     """
+    _STATS_BUSY[0] = True
     try:
         if not _MSG_STATS_PATH or not os.path.isfile(_MSG_STATS_PATH):
             return GLOBAL_STATS
@@ -257,43 +292,56 @@ def load_msg_stats() -> dict:
             f"退群 {GLOBAL_STATS.get('leave', 0)} / "
             f"调用 {GLOBAL_STATS.get('calls', 0)} / "
             f"指令 {GLOBAL_STATS.get('cmds', 0)} / "
-            f"错误 {GLOBAL_STATS.get('errs', 0)}")
+            f"错误 {GLOBAL_STATS.get('errs', 0)} / "
+            f"接口错误 {GLOBAL_STATS.get('api_errs', 0)}")
     except Exception:
         logger.exception("[apix-meme] 恢复收发计数失败")
+    finally:
+        _STATS_BUSY[0] = False
     return GLOBAL_STATS
 
 def save_msg_stats(force: bool = False) -> bool:
     """
     把收发计数写盘。**节流**：默认 5 秒最多写一次，
     避免每发一条消息就写一次磁盘。`force=True` 立即写（卸载/重载时用）。
+
+    ★★ 1.5.0：整段（含失败日志）都在 `_STATS_BUSY` 里 ——
+      失败日志必须在**忙标志还开着**的时候打，否则它会被自己计数，
+      然后又要写盘 -> 又失败 -> 雪崩。
     """
     global _MSG_STATS_TS
+    _STATS_BUSY[0] = True
     try:
-        if not _MSG_STATS_PATH:
+        try:
+            if not _MSG_STATS_PATH:
+                return False
+            now = time.time()
+            if not force:
+                if now - _MSG_STATS_TS < _MSG_STATS_SAVE_GAP:
+                    return False
+                if all(_MSG_STATS_LAST_SAVE.get(k) == GLOBAL_STATS.get(k)
+                       for k in _PERSIST_KEYS):
+                    _MSG_STATS_TS = now
+                    return False
+            d = os.path.dirname(_MSG_STATS_PATH)
+            if d and not os.path.isdir(d):
+                os.makedirs(d, exist_ok=True)
+            tmp = _MSG_STATS_PATH + ".tmp"
+            _out = {k: int(GLOBAL_STATS.get(k, 0) or 0)
+                    for k in _PERSIST_KEYS}
+            _out["ts"] = int(now)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(_out, f, ensure_ascii=False)
+            os.replace(tmp, _MSG_STATS_PATH)
+            _MSG_STATS_TS = now
+            _MSG_STATS_LAST_SAVE.update(GLOBAL_STATS)
+            return True
+        except Exception:
+            # ★ 此时 _STATS_BUSY 仍为 True -> 这条日志不会被计数（防雪崩）
+            logger.exception("[apix-meme] 保存收发计数失败")
             return False
-        now = time.time()
-        if not force:
-            if now - _MSG_STATS_TS < _MSG_STATS_SAVE_GAP:
-                return False
-            if all(_MSG_STATS_LAST_SAVE.get(k) == GLOBAL_STATS.get(k)
-                   for k in _PERSIST_KEYS):
-                _MSG_STATS_TS = now
-                return False
-        d = os.path.dirname(_MSG_STATS_PATH)
-        if d and not os.path.isdir(d):
-            os.makedirs(d, exist_ok=True)
-        tmp = _MSG_STATS_PATH + ".tmp"
-        _out = {k: int(GLOBAL_STATS.get(k, 0) or 0) for k in _PERSIST_KEYS}
-        _out["ts"] = int(now)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(_out, f, ensure_ascii=False)
-        os.replace(tmp, _MSG_STATS_PATH)
-        _MSG_STATS_TS = now
-        _MSG_STATS_LAST_SAVE.update(GLOBAL_STATS)
-        return True
-    except Exception:
-        logger.exception("[apix-meme] 保存收发计数失败")
-        return False
+    finally:
+        _STATS_BUSY[0] = False
 
 def bump_stat(key: str, n: int = 1, save: bool = True) -> int:
     """

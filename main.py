@@ -216,6 +216,8 @@ try:
         set_msg_stats_path as _set_msg_stats_path,
         load_msg_stats as _load_msg_stats,
         save_msg_stats as _save_msg_stats,
+        # ★★ 1.5.0：接口**运行时**报错计数（用户在群里用接口失败时 +1）
+        bump_api_err as _bump_api_err,
     )
     _HAS_STATUS = True
 except Exception as e:
@@ -233,6 +235,9 @@ except Exception as e:
 
     def _save_msg_stats(force=False):
         return False
+
+    def _bump_api_err():
+        pass
     logger.warning(f"[apix-meme] system_status 模块加载失败: {e}")
 
 def _fmt_uptime(sec) -> str:
@@ -546,6 +551,10 @@ try:
         build_main_menu,
         build_meme_menu,
         build_mc_menu,
+        build_mc_version_menu,
+        build_mc_server_menu,
+        build_mc_player_menu,
+        build_mc_push_menu,
         build_greeting_menu,
         build_checkin_menu,
         build_daily_menu,
@@ -697,6 +706,8 @@ from .core.path_utils import (
     pet_data_path as _pet_data_path,
     guess_data_path as _guess_data_path,
     msg_stats_path as _msg_stats_path,
+    # ★★ 1.5.0：接口测试结果文件（落盘）
+    api_test_path as _api_test_path,
     parse_gid_list,
     data_store_path as _data_store_path,
     fmt_num,
@@ -748,7 +759,6 @@ class ApixIqfkSimpleMeme(Star):
         self.config = config or {}
         self.rules = []
         self.must_at_bot = False
-        self.default_key = ""
         self.cmd_main_name = "自定义娱乐"
         self.cmd_admin_name = "管理员指令"
         self.cmd_list_name = "表情包列表"
@@ -765,8 +775,8 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_word_add_name = "加词"
         self.cmd_word_del_name = "删词"
         self.cmd_word_list_name = "词库列表"
-        self.cmd_enable_name = "娱乐系统开"
-        self.cmd_disable_name = "娱乐系统关"
+        self.cmd_enable_name = "自定义娱乐 开启"
+        self.cmd_disable_name = "自定义娱乐 关闭"
         self.cmd_view_admin_name = "查看管理员"
         self.cmd_refresh_admin_name = "刷新群管"
         self.cmd_add_admin_name = "加管理员"
@@ -790,11 +800,18 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_meme_image_name = "图片接口"
         self.cmd_meme_video_name = "视频接口"
         self.cmd_meme_text_name = "文本接口"
-        self.cmd_mc_menu_name = "MC系统"
+        self.cmd_mc_menu_name = "世界系统"
+        # ★★ 1.5.0：世界系统 4 个子功能入口
+        self.cmd_mc_version_menu_name = "版本查询"
+        self.cmd_mc_server_menu_name = "服务查询"
+        self.cmd_mc_player_menu_name = "玩家信息"
+        self.cmd_mc_push_menu_name = "版本推送"
+        self.cmd_mute_list_name = "禁言列表"
+        self.mute_unit_name = "秒"
         self.cmd_greeting_menu_name = "打卡系统"
         self.cmd_checkin_menu_name = "签到系统"
-        self.cmd_daily_menu_name = "每日系列"
-        self.cmd_entertain_menu_name = "娱乐功能"
+        self.cmd_daily_menu_name = "每日系统"
+        self.cmd_entertain_menu_name = "娱乐系统"
         self.qqinfo_enable = True
         self.cmd_qqinfo = "查询,查QQ,查qq,查用户"
         self.cmd_qqinfo_menu_name = "查询功能"
@@ -812,10 +829,10 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_daily_push_time_name = "状态推送间隔"
         self.cmd_daily_push_list_name = "状态推送列表"
 
-        self.cmd_kick_name = "踢出群员"
-        self.cmd_mute_name = "禁言群员"
+        self.cmd_kick_name = "踢出"
+        self.cmd_mute_name = "禁言"
         self.cmd_unmute_name = "解除禁言"
-        self.cmd_blacklist_name = "拉黑成员"
+        self.cmd_blacklist_name = "拉黑"
         self.cmd_unblacklist_name = "解除拉黑"
         self.cmd_blacklist_list_name = "黑名单列表"
 
@@ -846,6 +863,10 @@ class ApixIqfkSimpleMeme(Star):
         self._blacklist_raw = ""
         self.member_blacklist = {}
         self.blacklist_default_action = "ignore"
+        # ★★ 1.4.2：接口测试结果缓存（内存态，重载即清空）
+        #   { 规则键: {"ok": bool, "msg": str, "ms": int, "kind": str} }
+        self._api_test_cache = {}
+        self._api_test_at = ""
         self.mute_duration = 600
         self.group_feature_switches = {}
         self.group_must_at_bot = {}
@@ -887,6 +908,12 @@ class ApixIqfkSimpleMeme(Star):
             _load_msg_stats()
         except Exception:
             logger.exception("[apix-meme] 恢复收发计数失败")
+
+        # ★★ 1.5.0：恢复上次的**接口测试结果**（重载插件后后台还能看到）
+        try:
+            self._load_api_test_cache()
+        except Exception:
+            logger.exception("[apix-meme] 恢复接口测试结果失败")
 
         # ★★ 1.4.0：给 logger 挂上错误计数器（后台「数据统计」的「错误次数」）。
         #   纯本地统计，不上报、不外发。
@@ -1898,14 +1925,47 @@ class ApixIqfkSimpleMeme(Star):
             ★ 必须 await：AstrBot 桥接过来的请求，body/json 是协程，
               之前用同步 getattr(req, "_dsh_body") 永远拿不到内容，
               导致 POST /data 的 key 恒为空 -> 一直报「未知集合：」。
-              这里直接复用 /config 已验证可用的提取逻辑。
+
+            ★★ 1.4.2 加固：先走已验证的 `_extract_payload`；
+              它万一整体抛异常（例如 `_bound_request()` 返回的框架代理
+              在访问 reader 属性时出错），**再用传入的 request 自己读一遍**，
+              别直接返回空 dict —— 那会让调用方以为「请求体是空的」。
             """
             try:
                 body = await _extract_payload(request, kwargs=None)
+                if isinstance(body, dict) and body:
+                    return body
             except Exception:
-                logger.exception("[apix-meme] 读取 /data 请求体失败")
-                return {}
-            return body if isinstance(body, dict) else {}
+                logger.exception("[apix-meme] 读取请求体失败（走兜底）")
+
+            # ── 兜底：自己从 request 读 ──
+            try:
+                if isinstance(request, dict) and request:
+                    return request
+                for reader in ("json", "text", "body"):
+                    fn = getattr(request, reader, None)
+                    if not callable(fn):
+                        continue
+                    try:
+                        raw = fn()
+                        if inspect.isawaitable(raw):
+                            raw = await raw
+                    except Exception:
+                        continue
+                    if isinstance(raw, dict) and raw:
+                        return raw
+                    if isinstance(raw, (bytes, bytearray)):
+                        raw = bytes(raw).decode("utf-8", "ignore")
+                    if isinstance(raw, str) and raw.strip():
+                        try:
+                            _p = json.loads(raw)
+                        except Exception:
+                            continue
+                        if isinstance(_p, dict) and _p:
+                            return _p
+            except Exception:
+                logger.debug("[apix-meme] 兜底读取请求体失败", exc_info=True)
+            return {}
 
         async def _get_data_handler(request=None, **kwargs):
             if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
@@ -2383,6 +2443,24 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 读取授权状态失败")
                 return _with_cors(error_response(f"读取失败: {e}"),
                                   request)
+        async def _cmd_check_handler(request=None, **kwargs):
+            """
+            ★★ 1.5.0：GET /cmdCheck —— **指令冲突检查**（只读）。
+
+            返回：
+                { ok, total_names, total_keys, conflict_count,
+                  conflicts:  [{name, sources:[{key,desc}]}],  不同配置撞名
+                  dup_in_key: [{key, name, desc}],             同键内重复
+                  empty_keys: [ key ]                            空配置
+                }
+            """
+            try:
+                return _with_cors(json_response(self._check_cmd_conflicts()), request)
+            except Exception as e:
+                logger.exception("[apix-meme] 指令检查失败")
+                return _with_cors(error_response(f"检查失败: {e}",
+                                                 status_code=500), request)
+
         async def _stats_handler(request=None, **kwargs):
             """
             ★★ 1.4.0：GET /stats —— 后台「数据统计」页（**只读**）。
@@ -2423,7 +2501,17 @@ class ApixIqfkSimpleMeme(Star):
                     "calls": int(st.get("calls", 0) or 0),
                     "cmds": int(st.get("cmds", 0) or 0),
                     "errs": int(st.get("errs", 0) or 0),
+                    # ★★ 1.5.0：接口运行时报错次数
+                    "api_errs": int(st.get("api_errs", 0) or 0),
                     "users": int(st.get("users", 0) or 0),
+                    # ★★ 1.4.2：被拉黑的成员人数
+                    "blacklist_count": int(st.get("blacklist_count", 0) or 0),
+                    # ★★ 1.4.2：接口系统统计（来自「接口测试」页的实测结果）
+                    "api_total": int(st.get("api_total", 0) or 0),
+                    "api_ok": int(st.get("api_ok", 0) or 0),
+                    "api_bad": int(st.get("api_bad", 0) or 0),
+                    "api_tested": bool(st.get("api_tested", False)),
+                    "api_test_at": str(st.get("api_test_at") or ""),
                     "live_count": int(st.get("live_count",
                                               st.get("seen_count", 0)) or 0),
                     "uptime_sec": int(st.get("uptime_sec", 0) or 0),
@@ -2449,6 +2537,114 @@ class ApixIqfkSimpleMeme(Star):
                 return _with_cors(error_response(f"读取失败: {e}",
                                                  status_code=500), request)
 
+        async def _api_test_handler(request=None, **kwargs):
+            """
+            ★★ 1.4.2：接口测试（后台「接口测试」页面用）。
+
+            GET  /apiTest                 -> 列出全部接口规则 + 上次测试结果
+            POST /apiTest  {keys:[...]}   -> 测这些（不传或空 = **全部**）
+                                             {timeout:15, concurrency:6}
+
+            返回：
+                { ok: True, total, ok_count, bad_count, untested, at,
+                  items: [ {key, keywords, media_type, url_template, json_field,
+                            tested, ok, msg, ms, kind, url} ] }
+
+            ★ 只读操作：只发请求做探活，**不修改任何配置或数据**。
+            ★ 隐私说明：请求直接发往**用户自己配置的接口地址**，
+              不经过任何第三方中转，也不上报测试结果。
+            """
+            if _req_method(request) == "OPTIONS" or _req_method(_bound_request()) == "OPTIONS":
+                return _options_response(request)
+            denied = _reject_cross_origin(request)
+            if denied is not None:
+                return denied
+            try:
+                # ★★ 语义约定：
+                #   GET  -> 只读：返回当前列表 + 上次结果
+                #   POST -> **一定真测**（keys 不传/空 = 全部）
+                #
+                # ★ 注意：不能用 `if _keys is not None` 判断要不要测 ——
+                #   前端「全部测试」传的是空 keys，那样会**整个跳过测试**、
+                #   只回一份旧缓存，用户看到「测试完成」但数字没变。
+                _keys = None
+                _do_test = False
+                _timeout = 15
+                _conc = 6
+                _is_post = (_req_method(request) == "POST" or
+                            _req_method(_bound_request()) == "POST")
+                if _is_post:
+                    _do_test = True
+                    body = {}
+                    try:
+                        body = await _read_json_body(request)
+                    except Exception:
+                        body = {}
+                    if isinstance(body, dict):
+                        _k = body.get("keys")
+                        # 兼容外层包一层 {data: {...}} 的形态
+                        if _k is None and isinstance(body.get("data"), dict):
+                            _k = body["data"].get("keys")
+                        if isinstance(_k, list) and _k:
+                            _keys = [to_str(x) for x in _k if to_str(x)]
+                        try:
+                            _timeout = max(3, min(120, int(
+                                body.get("timeout", 15) or 15)))
+                        except Exception:
+                            _timeout = 15
+                        try:
+                            _conc = max(1, min(16, int(
+                                body.get("concurrency", 6) or 6)))
+                        except Exception:
+                            _conc = 6
+
+                _rules = self._api_list_for_test()
+                _cache = getattr(self, "_api_test_cache", None) or {}
+
+                if _do_test:
+                    logger.info(
+                        f"[apix-meme] 接口测试：开始测 "
+                        f"{len(_keys) if _keys else len(_rules)} 条"
+                        f"（超时 {_timeout}s，并发 {_conc}）")
+                    _r = await self._test_apis(keys=_keys, timeout=_timeout,
+                                               concurrency=_conc)
+                    _cache = getattr(self, "_api_test_cache", None) or {}
+                    logger.info(f"[apix-meme] 接口测试完成："
+                                f"正常 {_r.get('ok')} / 错误 {_r.get('bad')}")
+
+                items = []
+                for r in _rules:
+                    k = self._api_rule_key(r)
+                    _c = _cache.get(k) or {}
+                    items.append({
+                        "key": k,
+                        "keywords": to_str(r.get("keywords", "")),
+                        "media_type": to_str(r.get("media_type", "image")),
+                        "url_template": to_str(r.get("url_template", "")),
+                        "json_field": to_str(r.get("json_field", "")),
+                        "tested": bool(_c),
+                        "ok": bool(_c.get("ok", False)),
+                        "msg": to_str(_c.get("msg", "")),
+                        "ms": int(_c.get("ms", 0) or 0),
+                        "kind": to_str(_c.get("kind", "")),
+                        "url": to_str(_c.get("url", "")),
+                    })
+                _ok_n = sum(1 for x in items if x["tested"] and x["ok"])
+                _bad_n = sum(1 for x in items if x["tested"] and not x["ok"])
+                return _with_cors(json_response({
+                    "ok": True,
+                    "total": len(items),
+                    "ok_count": _ok_n,
+                    "bad_count": _bad_n,
+                    "untested": len(items) - _ok_n - _bad_n,
+                    "at": to_str(getattr(self, "_api_test_at", "") or ""),
+                    "items": items,
+                }), request)
+            except Exception as e:
+                logger.exception("[apix-meme] 接口测试失败")
+                return _with_cors(error_response(f"测试失败: {e}",
+                                                 status_code=500), request)
+
         routes = [
             (f"/{PLUGIN_ID}/config", _get_config_handler,  ["GET", "OPTIONS"],  "读取配置"),
             (f"/{PLUGIN_ID}/config", _save_config_handler, ["POST", "OPTIONS"], "保存配置"),
@@ -2467,7 +2663,10 @@ class ApixIqfkSimpleMeme(Star):
             (f"/{PLUGIN_ID}/dataOp",           _data_op_handler,           ["POST", "OPTIONS"], "单条数据增删改（POST）"),
             (f"/{PLUGIN_ID}/page",   _page_handler,        ["GET", "OPTIONS"],  "配置页面"),
             (f"/{PLUGIN_ID}/auth",   _auth_status_handler,  ["GET", "OPTIONS"],  "授权状态列表"),
+            (f"/{PLUGIN_ID}/apiTest", _api_test_handler,     ["GET", "POST", "OPTIONS"], "接口测试（只读探活）"),
             (f"/{PLUGIN_ID}/stats",  _stats_handler,        ["GET", "OPTIONS"],  "数据统计（只读，本地）"),
+            # ★★ 1.5.0：指令冲突检查（只读）
+            (f"/{PLUGIN_ID}/cmdCheck", _cmd_check_handler, ["GET", "OPTIONS"], "指令冲突检查（只读）"),
             (f"/{PLUGIN_ID}/page/{{name}}", _page_extra_handler,
              ["GET", "OPTIONS"], "专属设置页（独立HTML）"),
         ]
@@ -2488,6 +2687,87 @@ class ApixIqfkSimpleMeme(Star):
             pass
 
         return ok_count > 0
+
+    # ======================================================
+    # ★★ 1.5.0：**指令冲突检查**
+    #   扫描所有 `cmd_*` / `menu_*` 配置里的指令名，找出：
+    #     ① 不同配置用了**同一个名字**（真冲突 —— 谁先匹配谁生效）
+    #     ② 同一个配置里**名字重复**
+    #     ③ 空配置
+    #   数据取自**磁盘上的实际配置**（不是默认值），看到的就是运行时真实情况。
+    #   ★ 只读：不修改任何配置。
+    # ======================================================
+    def _check_cmd_conflicts(self) -> dict:
+        try:
+            cfg = self._read_disk_config() or {}
+        except Exception:
+            cfg = {}
+        sch = {}
+        try:
+            import json as _json
+            import os as _os
+            _p = _os.path.join(_os.path.dirname(__file__),
+                               "_conf_schema.json")
+            with open(_p, encoding="utf-8-sig") as _f:  # ★ 不用 io（main.py 没 import io）
+                sch = _json.load(_f)
+        except Exception:
+            sch = {}
+
+        def _desc(k):
+            try:
+                return str((sch.get(k) or {}).get("description", "") or k)
+            except Exception:
+                return k
+
+        names = {}
+        dup_in_key = []
+        empty_keys = []
+        dead_keys = []
+        n_keys = 0
+        for k, v in (cfg or {}).items():
+            ks = str(k)
+            if not (ks.startswith("cmd_") or ks.startswith("menu_")):
+                continue
+            # ★★ 1.9.0：跳过**已废弃的键**（不在 schema 里 = 功能已移除，
+            #   只剩残留值，不该报成「指令冲突」）。读不到 schema 就不跳。
+            if sch and ks not in sch:
+                dead_keys.append(ks)
+                continue
+            if v is None or isinstance(v, (dict, list, bool, int, float)):
+                continue
+            raw = str(v)
+            if not raw.strip():
+                empty_keys.append(ks)
+                continue
+            n_keys += 1
+            seen = []
+            for part in raw.replace("\u3001", ",").replace("，", ",").split(","):
+                nm = part.strip()
+                if not nm:
+                    continue
+                if nm in seen:
+                    dup_in_key.append({"key": ks, "name": nm,
+                                       "desc": _desc(ks)})
+                    continue
+                seen.append(nm)
+                names.setdefault(nm, []).append({"key": ks,
+                                                 "desc": _desc(ks)})
+
+        conflicts = []
+        for nm, srcs in names.items():
+            if len({s["key"] for s in srcs}) > 1:
+                conflicts.append({"name": nm, "sources": srcs})
+        conflicts.sort(key=lambda x: (-len(x["sources"]), x["name"]))
+        return {
+            "ok": True,
+            "total_names": len(names),
+            "total_keys": n_keys,
+            "conflict_count": len(conflicts),
+            "conflicts": conflicts,
+            "dup_in_key": dup_in_key,
+            "empty_keys": empty_keys,
+            "dead_keys": dead_keys,
+        }
 
     def _bot_stats(self) -> dict:
         """
@@ -2510,9 +2790,12 @@ class ApixIqfkSimpleMeme(Star):
             out["calls"] = max(0, int(GLOBAL_STATS.get("calls", 0) or 0))
             out["cmds"] = max(0, int(GLOBAL_STATS.get("cmds", 0) or 0))
             out["errs"] = max(0, int(GLOBAL_STATS.get("errs", 0) or 0))
+            # ★★ 1.5.0：接口**运行时**报错次数（用户在群里用接口失败）
+            out["api_errs"] = max(0, int(GLOBAL_STATS.get("api_errs", 0) or 0))
         except Exception:
             out["join"] = out["leave"] = 0
             out["calls"] = out["cmds"] = out["errs"] = 0
+            out["api_errs"] = 0
         # 用户数量 = 昵称缓存里去重后的用户条数
         try:
             _nc = getattr(self, "_nickname_cache", None)
@@ -2520,6 +2803,33 @@ class ApixIqfkSimpleMeme(Star):
             out["users"] = len([k for k in (_nd or {}) if str(k).strip()])
         except Exception:
             out["users"] = 0
+        # ★★ 1.4.2：**被拉黑的成员人数**（成员黑名单，纯本地统计）
+        try:
+            _mb = getattr(self, "member_blacklist", None)
+            out["blacklist_count"] = len(
+                [k for k in (_mb or {}) if str(k).strip()])
+        except Exception:
+            out["blacklist_count"] = 0
+        # ★★ 1.4.2：**接口系统统计**
+        #   api_total = 接口规则总条数
+        #   api_ok / api_bad = 最近一次「接口测试」的结果（内存缓存）
+        #   api_tested = 是否测过（页面区分「未测试」和「0 个正常」）
+        try:
+            out["api_total"] = len(self._api_list_for_test())
+        except Exception:
+            out["api_total"] = 0
+        try:
+            _cache = getattr(self, "_api_test_cache", None) or {}
+            out["api_tested"] = bool(_cache)
+            out["api_ok"] = sum(
+                1 for v in _cache.values() if (v or {}).get("ok"))
+            out["api_bad"] = sum(
+                1 for v in _cache.values() if not (v or {}).get("ok"))
+            out["api_test_at"] = str(getattr(self, "_api_test_at", "") or "")
+        except Exception:
+            out["api_tested"] = False
+            out["api_ok"] = out["api_bad"] = 0
+            out["api_test_at"] = ""
         # 授权分布：未到期群数 / 到期群数
         try:
             _am = getattr(self, "auth_module", None)
@@ -2625,6 +2935,356 @@ class ApixIqfkSimpleMeme(Star):
     def _config_path(self) -> str:
         return _config_path()
 
+    # ======================================================
+    # ★★ 1.4.2：接口系统 —— 测试接口可用性
+    # ------------------------------------------------------
+    # 接口规则（api_list）里只有 keywords / url_template / media_type，
+    # **没有**「成功失败」标记，所以「正常/错误接口数」只能靠**实测**。
+    # 这里把结果缓存在内存（self._api_test_cache），统计页即可展示。
+    #
+    # ★★ 1.5.0：结果**落盘**（api_test_path）——
+    #   以前只在内存里，重载插件就没了，再进后台页面看不到上次数据。
+    #   现在写完就存，启动时读回，重载 / 重进页面都能看到上次结果。
+    #
+    # ★ 全部为**只读**探活：不修改任何配置或数据；
+    #   落盘的只有「测试结论」（成功/失败/原因/耗时），**不含任何图片**，
+    #   请求也只发往**用户自己配置的接口地址**，不经过第三方中转、不上报。
+    # ======================================================
+    def _load_api_test_cache(self) -> None:
+        """
+        启动时把上次的接口测试结果读回来。
+
+        文件结构：
+            {
+              "at": "2026-10-15 20:30:00",
+              "results": { "<关键词>|<url>": {...}, ... }
+            }
+        ★ 读失败一律当「没测过」，绝不抛异常影响插件启动。
+        """
+        self._api_test_cache = {}
+        self._api_test_at = ""
+        try:
+            p = _api_test_path()
+            if not p or not os.path.isfile(p):
+                return
+            with open(p, "r", encoding="utf-8-sig") as f:
+                d = json.load(f)
+            if not isinstance(d, dict):
+                return
+            res = d.get("results")
+            if isinstance(res, dict):
+                ok = {}
+                for k, v in res.items():
+                    if isinstance(v, dict) and str(k).strip():
+                        ok[str(k)] = v
+                self._api_test_cache = ok
+            self._api_test_at = to_str(d.get("at", "") or "")
+            if self._api_test_cache:
+                _n_ok = sum(1 for v in self._api_test_cache.values()
+                            if (v or {}).get("ok"))
+                logger.info(
+                    f"[apix-meme] 已恢复接口测试结果："
+                    f"正常 {_n_ok} / 错误 "
+                    f"{len(self._api_test_cache) - _n_ok}"
+                    f"（测试于 {self._api_test_at or '—'}）")
+        except Exception:
+            logger.debug("[apix-meme] 读取接口测试结果失败", exc_info=True)
+            self._api_test_cache = {}
+            self._api_test_at = ""
+
+    def _save_api_test_cache(self) -> bool:
+        """
+        把接口测试结果写入磁盘。
+
+        ★ 只保留**当前还存在**的接口结果（接口被删掉后，它的旧结果没意义）。
+          剪枝只在这里做 —— 启动时 `self.rules` 可能还没加载完，
+          那时候剪枝会把结果全清空。
+
+        ★ 写失败只记日志，不影响测试结果展示（内存里依然是新的）。
+        """
+        try:
+            p = _api_test_path()
+            if not p:
+                return False
+            _cache = dict(getattr(self, "_api_test_cache", None) or {})
+
+            # ── 按当前规则剪枝（拿不到规则就不剪，避免误删）──
+            try:
+                _live = set()
+                for _r in self._api_list_for_test():
+                    _k = self._api_rule_key(_r)
+                    if _k:
+                        _live.add(_k)
+                if _live:
+                    _dropped = [k for k in _cache if k not in _live]
+                    for k in _dropped:
+                        _cache.pop(k, None)
+                    if _dropped:
+                        logger.info(
+                            f"[apix-meme] 接口测试结果已清理 "
+                            f"{len(_dropped)} 条失效记录（接口已删除或改过）")
+                        self._api_test_cache = dict(_cache)
+            except Exception:
+                logger.debug("[apix-meme] 接口测试结果剪枝跳过",
+                             exc_info=True)
+
+            d = {
+                "at": to_str(getattr(self, "_api_test_at", "") or ""),
+                "saved": time.strftime("%Y-%m-%d %H:%M:%S",
+                                       time.localtime()),
+                "results": _cache,
+            }
+            _dir = os.path.dirname(p)
+            if _dir and not os.path.isdir(_dir):
+                os.makedirs(_dir, exist_ok=True)
+            # 原子写：先写临时文件再替换，避免写一半断电留个坏文件
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, p)
+            return True
+        except Exception:
+            logger.exception("[apix-meme] 保存接口测试结果失败")
+            return False
+
+    @staticmethod
+    def _api_rule_key(rule: dict) -> str:
+        """
+        接口规则的唯一键。
+
+        ★ keywords 可能是**列表**（内存规则）也可能是**字符串**
+          （数据文件），统一按逗号拼成稳定字符串 —— 否则 `str(list)`
+          会得到 `"['a', 'b']"` 这种带引号括号的形式，
+          同一规则在两条路径下算出的键不一致，缓存就对不上了。
+        """
+        try:
+            kw = rule.get("keywords", "")
+            if isinstance(kw, (list, tuple, set)):
+                kw = ",".join(to_str(x).strip() for x in kw
+                              if to_str(x).strip())
+            kw = to_str(kw).strip()
+            url = to_str(rule.get("url_template", "")).strip()
+            return f"{kw}|{url}"
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _kw_to_str(raw) -> str:
+        """keywords 统一成逗号分隔的字符串（列表/字符串都吃）"""
+        try:
+            if isinstance(raw, (list, tuple, set)):
+                return ",".join(to_str(x).strip() for x in raw
+                                if to_str(x).strip())
+            return to_str(raw).strip()
+        except Exception:
+            return ""
+
+    def _api_list_for_test(self) -> list:
+        """
+        取当前**生效**的接口规则列表（测试用）。
+
+        优先用内存里的 self.rules（和实际回复走的是同一份），
+        拿不到再退回数据文件里的 api_list。
+        """
+        out = []
+        try:
+            for r in (getattr(self, "rules", None) or []):
+                if not isinstance(r, dict):
+                    continue
+                url = to_str(r.get("url_template", "")).strip()
+                if not url:
+                    continue
+                out.append({
+                    "keywords": self._kw_to_str(r.get("keywords", "")),
+                    "url_template": url,
+                    "param_count": to_str(r.get("param_count", "1")).strip() or "1",
+                    "media_type": (to_str(r.get("media_type", "image")).strip().lower()
+                                   or "image"),
+                    "json_field": to_str(r.get("json_field", "")).strip(),
+                })
+        except Exception:
+            out = []
+        if out:
+            return out
+        try:
+            for r in (self.data_store.get("api_list") or []):
+                if not isinstance(r, dict):
+                    continue
+                url = to_str(r.get("url_template", "")).strip()
+                if not url:
+                    continue
+                out.append({
+                    "keywords": self._kw_to_str(r.get("keywords", "")),
+                    "url_template": url,
+                    "param_count": to_str(r.get("param_count", "1")).strip() or "1",
+                    "media_type": (to_str(r.get("media_type", "image")).strip().lower()
+                                   or "image"),
+                    "json_field": to_str(r.get("json_field", "")).strip(),
+                })
+        except Exception:
+            pass
+        return out
+
+    async def _test_one_api(self, rule: dict, timeout: int = 15,
+                            qq: str = "") -> dict:
+        """
+        测试**单条**接口是否可用。
+
+        流程复刻真实调用链（这样结果才有意义）：
+            ① 把 url_template 里的 {qq} / {text} 等占位符填上
+            ② text  类型 -> fetch_text()
+               image/video -> download_media()（真下下来，确认不是空壳）
+            ③ 返回 {"ok", "msg", "ms", "kind", "url"}
+
+        ★ 只读操作：只发请求、不写任何配置、不改数据。
+        """
+        t0 = time.time()
+        res = {"ok": False, "msg": "", "ms": 0, "kind": "", "url": ""}
+        url_tpl = to_str(rule.get("url_template", "")).strip()
+        if not url_tpl:
+            res["msg"] = "规则里没填接口地址"
+            return res
+        media = (to_str(rule.get("media_type", "image")).strip().lower()
+                 or "image")
+        jf = to_str(rule.get("json_field", "")).strip()
+
+        # ① 填占位符
+        #   ★★ 关键：**按占位符类型填对应的测试值**，不能一律填 QQ 号。
+        #   `{text}` 是「用户输入的文本」（如天气接口要的是**城市名**），
+        #   一律填 `10001` 会让天气接口返回 404「没找到城市 10001」，
+        #   看着像接口坏了，其实是测试参数不对。
+        _qq = to_str(qq).strip() or "10001"
+        _text = "北京"
+        try:
+            need = max(1, int(rule.get("param_count", "1") or 1))
+        except Exception:
+            need = 1
+        try:
+            _types = detect_param_types(url_tpl, need)
+        except Exception:
+            _types = ["any"] * need
+        params = []
+        for _i in range(need):
+            _t = (_types[_i] if _i < len(_types) else "any")
+            params.append(_text if _t == "text" else _qq)
+        try:
+            url = build_url(url_tpl, params)
+        except Exception:
+            url = url_tpl
+            for ph in ("{qq}", "{1}", "{0}", "{pic}"):
+                url = url.replace(ph, _qq)
+            for ph in ("{text}", "{text1}"):
+                url = url.replace(ph, _text)
+        for _i in range(1, 6):
+            _t = (_types[_i - 1] if (_i - 1) < len(_types) else "any")
+            _v = _text if _t == "text" else _qq
+            url = url.replace(f"{{text{_i}}}", _v).replace(f"{{qq{_i}}}", _v)
+        res["url"] = url
+
+        if re.search(r"\{[^}]*\}", url):
+            res["msg"] = f"地址里还有没替换的占位符：{url[:60]}"
+            res["ms"] = int((time.time() - t0) * 1000)
+            return res
+
+        # ② 真发请求
+        try:
+            if media == "text":
+                txt = await fetch_text(url, timeout=timeout, json_field=jf)
+                txt = to_str(txt).strip()
+                if not txt:
+                    res["msg"] = "接口返回了空内容"
+                else:
+                    res["ok"] = True
+                    res["kind"] = "text"
+                    res["msg"] = f"正常（返回 {len(txt)} 字）：{txt[:60]}"
+            else:
+                path, kind = await download_media(
+                    url, timeout=timeout,
+                    expect=media if media in ("image", "video") else "",
+                    json_field=jf)
+                if not path:
+                    res["msg"] = "下载失败（没拿到文件）"
+                else:
+                    try:
+                        size = os.path.getsize(path)
+                    except Exception:
+                        size = 0
+                    if size <= 0:
+                        res["msg"] = "下载到了空文件"
+                    else:
+                        res["ok"] = True
+                        res["kind"] = kind or media
+                        res["msg"] = (f"正常（{kind or media}，"
+                                      f"{size / 1024.0:.0f} KB）")
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+        except Exception as e:
+            res["msg"] = f"{type(e).__name__}: {str(e)[:110]}"
+        res["ms"] = int((time.time() - t0) * 1000)
+        return res
+
+    async def _test_apis(self, keys=None, timeout: int = 15,
+                         concurrency: int = 6) -> dict:
+        """
+        批量测试接口（并发跑，避免几十条串行太慢）。
+
+        keys: 只测这些键；None = 全部
+        返回 {"total", "ok", "bad", "at", "results"}
+        """
+        rules = self._api_list_for_test()
+        todo = []
+        for r in rules:
+            k = self._api_rule_key(r)
+            if not k:
+                continue
+            if keys and k not in keys:
+                continue
+            todo.append((k, r))
+        logger.info(f"[apix-meme] 接口测试：待测 {len(todo)} 条"
+                    f"（规则共 {len(rules)} 条"
+                    f"{'，仅指定 ' + str(len(keys)) + ' 条' if keys else '，全部'}"
+                    f"，并发 {concurrency}）")
+
+        results = {}
+        sem = asyncio.Semaphore(max(1, min(16, int(concurrency or 6))))
+
+        async def _one(k, r):
+            async with sem:
+                try:
+                    return k, await self._test_one_api(r, timeout=timeout)
+                except Exception as e:
+                    return k, {"ok": False, "ms": 0, "kind": "",
+                               "msg": f"{type(e).__name__}: {str(e)[:110]}"}
+
+        if todo:
+            pairs = await asyncio.gather(*[_one(k, r) for k, r in todo],
+                                         return_exceptions=False)
+            for k, v in pairs:
+                results[k] = v
+
+        try:
+            if self._api_test_cache is None:
+                self._api_test_cache = {}
+            self._api_test_cache.update(results)
+            self._api_test_at = time.strftime("%Y-%m-%d %H:%M:%S",
+                                              time.localtime())
+        except Exception:
+            pass
+
+        # ★★ 1.5.0：**落盘** —— 重载插件 / 重进后台页面还能看到这次结果
+        self._save_api_test_cache()
+
+        ok_n = sum(1 for v in results.values() if v.get("ok"))
+        return {
+            "total": len(results),
+            "ok": ok_n,
+            "bad": len(results) - ok_n,
+            "at": str(self._api_test_at or ""),
+            "results": results,
+        }
+
     def _build_text_avatar_result(self, event, text: str, avatar_path: str):
         """把文本与头像组成 chain，交给 yield event.chain_result 发送"""
         chain = []
@@ -2681,15 +3341,12 @@ class ApixIqfkSimpleMeme(Star):
 
     def _key_pic_suffix(self) -> str:
         """
-        ★★ 审核整改：拼「可选 key + pic 占位」后缀。
+        ★★ 1.4.3：拼「pic 占位」后缀。
 
-        · 用户在后台填了 key -> 返回 `&key=xxx&pic={pic}`
-        · 没填（默认）      -> 只返回 `&pic={pic}`
-          （不再产生空的 `&key=` 参数）
+        ★ 以前这里会读后台的「API 默认 KEY」拼成 `&key=xxx&pic={pic}`。
+          现在**接口地址由用户自己填完整**（含 key），插件不再自动拼 key，
+          所以这里只返回 `&pic={pic}`。
         """
-        k = str(getattr(self, "default_key", "") or "").strip()
-        if k:
-            return "&key=" + k + "&pic={pic}"
         return "&pic={pic}"
 
     async def _check_admin(self, event) -> bool:
@@ -3368,7 +4025,7 @@ class ApixIqfkSimpleMeme(Star):
         坐骑素材目录（1.7.6）。
 
         取配置里的 `mount_img_dir`；没有就用签到模块上的值；
-        再没有用默认 D:\\MemeAPI\\car。
+        再没有用内置的默认目录。
         """
         try:
             _cfg = cfg if isinstance(cfg, dict) else (self._read_disk_config() or {})
@@ -3600,7 +4257,90 @@ class ApixIqfkSimpleMeme(Star):
                 logger.exception("[apix-meme] 注入数据文件内容失败")
 
         self.must_at_bot = bool(merged.get("must_at_bot", False))
-        self.default_key = to_str(merged.get("default_key", "")).strip()
+
+        # ★★ 1.5.0：**指令名统一迁移**。
+
+        #   这一版改了几个默认名，但**老配置里存的是旧名**（新默认值不会覆盖
+
+        #   已保存的值）—— 这里按「旧名 -> 新名」一次性纠正并落盘。
+
+        #   ★ 只改「第一个名字恰好等于旧默认名」的项：用户自己改过的名字**不动**。
+
+        try:
+
+            _RENAME_150 = {
+
+                "cmd_mc_menu":         ("MC系统",   "世界系统"),
+
+                "cmd_entertain_menu":  ("娱乐功能", "娱乐系统"),
+
+                "cmd_daily_menu":      ("每日系列", "每日系统"),
+
+                "cmd_weather_menu":    ("天气查询", "天气功能"),
+
+                "cmd_oil_menu":        ("油价查询", "油价功能"),
+
+                "cmd_bili_menu":       ("B站功能",  "哔哩功能"),
+
+                "cmd_mute":            ("禁言群员", "禁言"),
+
+                "cmd_kick":            ("踢出群员", "踢出"),
+
+                "cmd_blacklist":       ("拉黑成员", "拉黑"),
+
+                "menu_auth_names":    ("授权功能", "授权系统"),
+
+                "cmd_enable":          (("娱乐系统开", "开启自定义娱乐"), "自定义娱乐 开启"),
+                "cmd_disable":         (("娱乐系统关", "关闭自定义娱乐"), "自定义娱乐 关闭"),
+            }
+
+            _renamed = []
+
+            for _k, (_old, _new) in _RENAME_150.items():
+
+                _v = merged.get(_k, None)
+
+                if _v is None:
+
+                    continue
+
+                _parts = [x.strip() for x in str(_v).split(",")]
+
+                _olds = _old if isinstance(_old, (tuple, list)) else (_old,)
+
+                if _parts and _parts[0] in _olds:
+                    _parts[0] = _new
+
+                    merged[_k] = ",".join([x for x in _parts if x])
+
+                    _renamed.append(f"{_old}->{_new}")
+
+            if _renamed:
+
+                logger.info("[apix-meme] 1.5.0 指令名迁移：" + "、".join(_renamed))
+
+                try:
+
+                    _disk = self._read_disk_config() or {}
+
+                    if isinstance(_disk, dict):
+
+                        for _k in _RENAME_150:
+
+                            if _k in merged:
+
+                                _disk[_k] = merged[_k]
+
+                        self._write_disk_config(_disk)
+
+                except Exception:
+
+                    logger.debug("[apix-meme] 迁移结果落盘失败", exc_info=True)
+
+        except Exception:
+
+            logger.exception("[apix-meme] 1.5.0 指令名迁移失败")
+
 
         self.cmd_main_name = to_str(merged.get("cmd_main", "自定义娱乐")).strip() or "自定义娱乐"
         self.cmd_admin_name = to_str(merged.get("cmd_admin", "管理员指令")).strip() or "管理员指令"
@@ -3616,8 +4356,8 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_word_add_name = to_str(merged.get("cmd_word_add", "加词")).strip() or "加词"
         self.cmd_word_del_name = to_str(merged.get("cmd_word_del", "删词")).strip() or "删词"
         self.cmd_word_list_name = to_str(merged.get("cmd_word_list", "词库列表")).strip() or "词库列表"
-        self.cmd_enable_name = to_str(merged.get("cmd_enable", "娱乐系统开")).strip() or "娱乐系统开"
-        self.cmd_disable_name = to_str(merged.get("cmd_disable", "娱乐系统关")).strip() or "娱乐系统关"
+        self.cmd_enable_name = to_str(merged.get("cmd_enable", "自定义娱乐 开启")).strip() or "自定义娱乐 开启"
+        self.cmd_disable_name = to_str(merged.get("cmd_disable", "自定义娱乐 关闭")).strip() or "自定义娱乐 关闭"
         self.cmd_view_admin_name = to_str(merged.get("cmd_view_admin", "查看管理员")).strip() or "查看管理员"
         self.cmd_refresh_admin_name = to_str(merged.get("cmd_refresh_admin", "刷新群管")).strip() or "刷新群管"
         self.cmd_add_admin_name = to_str(merged.get("cmd_add_admin", "加管理员")).strip() or "加管理员"
@@ -3647,12 +4387,24 @@ class ApixIqfkSimpleMeme(Star):
         self.cmd_meme_image_name = to_str(merged.get("cmd_meme_image", "图片接口")).strip() or "图片接口"
         self.cmd_meme_video_name = to_str(merged.get("cmd_meme_video", "视频接口")).strip() or "视频接口"
         self.cmd_meme_text_name = to_str(merged.get("cmd_meme_text", "文本接口")).strip() or "文本接口"
-        self.cmd_mc_menu_name = to_str(merged.get("cmd_mc_menu", "MC系统")).strip() or "MC系统"
+        self.cmd_mc_menu_name = to_str(merged.get("cmd_mc_menu", "世界系统")).strip() or "世界系统"
+        self.cmd_mc_version_menu_name = to_str(merged.get(
+            "menu_mc_version_names", "版本查询")).strip() or "版本查询"
+        self.cmd_mc_server_menu_name = to_str(merged.get(
+            "menu_mc_server_names", "服务查询")).strip() or "服务查询"
+        self.cmd_mc_player_menu_name = to_str(merged.get(
+            "menu_mc_player_names", "玩家信息")).strip() or "玩家信息"
+        self.cmd_mc_push_menu_name = to_str(merged.get(
+            "menu_mc_push_names", "版本推送")).strip() or "版本推送"
+        self.cmd_mute_list_name = to_str(merged.get(
+            "cmd_mute_list", "禁言列表")).strip() or "禁言列表"
+        _mu = to_str(merged.get("mute_unit", "秒")).strip()
+        self.mute_unit_name = _mu if _mu in ("秒", "分", "时", "天") else "秒"
         self.cmd_greeting_menu_name = to_str(merged.get("cmd_greeting_menu", "打卡系统")).strip() or "打卡系统"
         self.cmd_checkin_menu_name = to_str(merged.get("cmd_checkin_menu", "签到系统")).strip() or "签到系统"
-        self.cmd_daily_menu_name = to_str(merged.get("cmd_daily_menu", "每日系列")).strip() or "每日系列"
+        self.cmd_daily_menu_name = to_str(merged.get("cmd_daily_menu", "每日系统")).strip() or "每日系列"
         self.cmd_entertain_menu_name = to_str(
-            merged.get("cmd_entertain_menu", "娱乐功能")).strip() or "娱乐功能"
+            merged.get("cmd_entertain_menu", "娱乐系统")).strip() or "娱乐功能"
         self.qqinfo_enable = bool(merged.get("qqinfo_enable", True))
         self.cmd_qqinfo = to_str(
             merged.get("cmd_qqinfo", "查询,查QQ,查qq,查用户")).strip() or "查询"
@@ -4334,8 +5086,9 @@ class ApixIqfkSimpleMeme(Star):
             if not isinstance(existing, dict):
                 existing = {}
 
-            existing["default_key"] = self.default_key
             existing["must_at_bot"] = self.must_at_bot
+            # ★★ 1.4.3：不再写 `default_key` —— 接口地址改为**用户自己填完整**，
+            #   插件不再自动拼 `&key=...`
             self._save_collection("api_list", [
                 {k: v for k, v in r.items() if k != "__template_key"}
                 for r in new_list
@@ -4736,10 +5489,10 @@ class ApixIqfkSimpleMeme(Star):
         return False
 
     def _is_main_menu(self, text: str) -> bool:
-        return text in (self.cmd_main_name, f"/{self.cmd_main_name}")
+        return self._name_list_hit(text, "cmd_main_name")
 
     def _is_admin_menu(self, text: str) -> bool:
-        return text in (self.cmd_admin_name, f"/{self.cmd_admin_name}")
+        return self._name_list_hit(text, "cmd_admin_name")
 
     def _is_meme_menu(self, text: str) -> bool:
         """接口系统二级菜单入口，指令名支持英文逗号分隔多个。"""
@@ -4749,13 +5502,33 @@ class ApixIqfkSimpleMeme(Star):
         return False
 
     def _is_mc_menu(self, text: str) -> bool:
-        return text in (self.cmd_mc_menu_name, f"/{self.cmd_mc_menu_name}")
+        return self._name_list_hit(text, "cmd_mc_menu_name")
+
+    # ★★ 1.5.0：世界系统 4 个子菜单识别（支持自定义多个，逗号分隔）
+    def _is_mc_sub_menu(self, text: str, attr: str) -> bool:
+        raw = to_str(getattr(self, attr, "") or "")
+        for nm in [x.strip() for x in raw.split(",") if x.strip()]:
+            if text in (nm, f"/{nm}"):
+                return True
+        return False
+
+    def _is_mc_version_menu(self, text: str) -> bool:
+        return self._is_mc_sub_menu(text, "cmd_mc_version_menu_name")
+
+    def _is_mc_server_menu(self, text: str) -> bool:
+        return self._is_mc_sub_menu(text, "cmd_mc_server_menu_name")
+
+    def _is_mc_player_menu(self, text: str) -> bool:
+        return self._is_mc_sub_menu(text, "cmd_mc_player_menu_name")
+
+    def _is_mc_push_menu(self, text: str) -> bool:
+        return self._is_mc_sub_menu(text, "cmd_mc_push_menu_name")
 
     def _is_greeting_menu(self, text: str) -> bool:
-        return text in (self.cmd_greeting_menu_name, f"/{self.cmd_greeting_menu_name}")
+        return self._name_list_hit(text, "cmd_greeting_menu_name")
 
     def _is_checkin_menu(self, text: str) -> bool:
-        return text in (self.cmd_checkin_menu_name, f"/{self.cmd_checkin_menu_name}")
+        return self._name_list_hit(text, "cmd_checkin_menu_name")
 
     def _is_entertain_menu(self, text: str) -> bool:
         """娱乐功能入口（支持多个指令名）"""
@@ -5017,7 +5790,7 @@ class ApixIqfkSimpleMeme(Star):
             yield _r
 
     def _is_daily_menu(self, text: str) -> bool:
-        return text in (self.cmd_daily_menu_name, f"/{self.cmd_daily_menu_name}")
+        return self._name_list_hit(text, "cmd_daily_menu_name")
 
     def _is_fortune_menu(self, text: str) -> bool:
         return text in ("运势功能", "/运势功能")
@@ -5087,6 +5860,26 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu_entry_hit("checkin_query", text)
 
     MENU_ENTRY_DEFS = {
+        # ★★ 1.5.0：补齐（入口名存在 *_trigger_names / cmd_* 上）
+        "admin":             ("cmd_admin", "管理系统"),
+        "checkin":           ("checkin_trigger_names", "签到系统"),
+        "daily":             ("cmd_daily_menu", "每日系列"),
+        "entertain":         ("cmd_entertain_menu", "娱乐功能"),
+        "fortune":           ("fortune_trigger_names", "运势功能"),
+        "greeting":          ("cmd_greeting_menu", "打卡系统"),
+        "greeting_morning":  ("cmd_greeting_morning", "早安打卡"),
+        "greeting_night":    ("cmd_greeting_night", "晚安打卡"),
+        "greeting_rank":     ("cmd_greeting_rank", "打卡排行"),
+        "husband":           ("husband_trigger_names", "老公功能"),
+        "luck":              ("luck_trigger_names", "人品功能"),
+        "main":              ("cmd_main", "主菜单"),
+        "mc":                ("cmd_mc_menu", "世界系统"),
+        "meme":              ("cmd_meme_menu", "接口系统"),
+        "output_mode":       ("cmd_output_mode", "输出模式"),
+        "qqinfo":            ("cmd_qqinfo_menu", "查询功能"),
+        "weather":           ("cmd_weather_menu", "天气查询"),
+        # ★★ 1.5.0：授权系统入口（可自定义多个名，与「授权 xxx」指令互不干扰）
+        "auth":            ("menu_auth_names", "授权系统"),
         "stats":           ("menu_stats_names",    "运行数据"),
         "racing":           ("cmd_race_menu",       "赛车功能"),
         "checkin_signin":  ("menu_checkin_signin_names",  "签到指令"),
@@ -5192,6 +5985,9 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 return "0"
 
+        _tested = bool(st.get("api_tested"))
+        _sub = (f"（测于 {st.get('api_test_at') or '—'}）" if _tested
+                else "（还没测过，去后台「接口测试」跑一次）")
         lines = [
             f"📊 运行数据　{st.get('version') or ''}".rstrip(),
             f"　 快照：{st.get('now') or '—'}",
@@ -5202,11 +5998,20 @@ class ApixIqfkSimpleMeme(Star):
             f"🎯 指令执行数　　{_n('cmds')}",
             f"👤 用户数量　　　{_n('users')}",
             f"⚠️ 错误次数　　　{_n('errs')}",
+            # ★★ 1.9.0：和后台「数据统计」同款 —— 补上接口错误次数
+            f"🛠️ 接口错误次数　{_n('api_errs')}",
             "",
             f"👥 目前加入群数　{_n('live_count')}",
-            f"➕ 加入群次数　　{_n('join')}",
-            f"🚪 退出群次数　　{_n('leave')}",
-            f"⏱️ 在线时长　　　{st.get('uptime_text') or '—'}",
+            # ★★ 1.9.0：改「累计人数」口径（后台 1.8.2 已改）
+            f"➕ 加群累计人数　{_n('join')}",
+            f"🚪 退群累计人数　{_n('leave')}",
+            f"🚫 黑名单人数　　{_n('blacklist_count')}",
+            f"⏱️ 电脑运行时长　{st.get('uptime_text') or '—'}",
+            "",
+            # ★★ 1.9.0：接口统计（和后台三个卡片一致）
+            f"🔌 接口总数　　　{_n('api_total')}　{_sub}",
+            f"✅ 正常接口数　　{_n('api_ok') if _tested else '—'}",
+            f"❌ 错误接口数　　{_n('api_bad') if _tested else '—'}",
             "",
             f"✅ 未到期群数　　{_n('auth_valid')}",
             f"⛔ 到期群数　　　{_n('auth_expired')}",
@@ -5397,20 +6202,31 @@ class ApixIqfkSimpleMeme(Star):
         n1 = self.cmd_mc_test_name
         return text in (n1, f"/{n1}")
 
+    def _switch_variants(self, raw: str) -> set:
+        """★★ 1.5.0：总开关的等价写法（后缀式，兼容去空格）"""
+        name = str(raw or "").strip()
+        if not name:
+            return set()
+        return {name, f"/{name}", name.replace(" ", ""),
+                f"/{name.replace(' ', '')}"}
+
     def _is_enable_cmd(self, text: str) -> bool:
-        return text in (self.cmd_enable_name, f"/{self.cmd_enable_name}")
+        t = str(text or "").strip()
+        if t in self._switch_variants(self.cmd_enable_name):
+            return True
+        return t in ("开启自定义娱乐", "自定义娱乐开启", "娱乐系统开")
 
     def _is_disable_cmd(self, text: str) -> bool:
-        return text in (self.cmd_disable_name, f"/{self.cmd_disable_name}")
-
-    def _is_view_admin_cmd(self, text: str) -> bool:
-        return text in (self.cmd_view_admin_name, f"/{self.cmd_view_admin_name}")
+        t = str(text or "").strip()
+        if t in self._switch_variants(self.cmd_disable_name):
+            return True
+        return t in ("关闭自定义娱乐", "自定义娱乐关闭", "娱乐系统关")
 
     def _is_refresh_admin_cmd(self, text: str) -> bool:
-        return text in (self.cmd_refresh_admin_name, f"/{self.cmd_refresh_admin_name}")
+        return self._name_list_hit(text, "cmd_refresh_admin_name")
 
     def _is_admin_list_cmd(self, text: str) -> bool:
-        return text in (self.cmd_admin_list_name, f"/{self.cmd_admin_list_name}")
+        return self._name_list_hit(text, "cmd_admin_list_name")
 
     def _is_word_add(self, text: str):
         return self._extract_arg(text, self.cmd_word_add_name)
@@ -5425,7 +6241,7 @@ class ApixIqfkSimpleMeme(Star):
         return self._extract_arg(text, self.cmd_del_admin_name)
 
     def _is_word_list(self, text: str) -> bool:
-        return text in (self.cmd_word_list_name, f"/{self.cmd_word_list_name}")
+        return self._name_list_hit(text, "cmd_word_list_name")
 
     def _is_chime_on_cmd(self, text: str):
         n = self.cmd_chime_on_name
@@ -7563,6 +8379,15 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu("meme", lambda: build_meme_menu(self))
     def _build_mc_menu(self):
         return self._menu("mc", lambda: build_mc_menu(self))
+    # ★★ 1.5.0：世界系统 4 个子菜单
+    def _build_mc_version_menu(self):
+        return self._menu("mc_version", lambda: build_mc_version_menu(self))
+    def _build_mc_server_menu(self):
+        return self._menu("mc_server", lambda: build_mc_server_menu(self))
+    def _build_mc_player_menu(self):
+        return self._menu("mc_player", lambda: build_mc_player_menu(self))
+    def _build_mc_push_menu(self):
+        return self._menu("mc_push", lambda: build_mc_push_menu(self))
     def _build_greeting_menu(self):
         return self._menu("greeting", lambda: build_greeting_menu(self))
     def _persist_output_modes(self) -> bool:
@@ -7907,7 +8732,7 @@ class ApixIqfkSimpleMeme(Star):
         t = str(text or "").strip()
         if not t:
             return False
-        names = ["授权功能"]
+        names = ["授权系统"]
         try:
             got = self._menu_entry_names("auth")
             if got:
@@ -8636,6 +9461,57 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
+        # ★★ 1.5.0：**艾特状态** —— 是否要求 @ 机器人才能玩（每群独立）
+        #   用法：`开启功能 艾特状态` / `关闭功能 艾特状态`
+        _ma_hit = None
+        _ma_t = str(msg_str or "").strip()
+        for _on_off in ("开启功能", "关闭功能"):
+            for _base in (_on_off, f"/{_on_off}"):
+                if not _ma_t.startswith(_base):
+                    continue
+                _rest = _ma_t[len(_base):].strip(" 　:：,，、|—")
+                if _rest.startswith("艾特状态"):
+                    _tail = _rest[len("艾特状态"):].strip(" 　:：,，、|—")
+                    _ma_hit = (_tail, _on_off == "开启功能")
+        if _ma_hit is not None:
+            if not await self._check_admin(event):
+                async for _r in self._send_content(event, "⚠️仅管理员/群主/群管/插件管理员可执行"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+                return
+            if ac is None:
+                logger.warning("[apix-meme] ❌管理指令模块未加载")
+                GLOBAL_STATS["send"] += 1
+                return
+            _ma_gid = str(_ma_hit[0] or _get_group_id_from_event(event) or "").strip()
+            if not _ma_gid or not _ma_gid.isdigit():
+                async for _r in self._send_content(
+                        event, "⚠️ 请在群聊中使用，或带上群号：\n"
+                               "· 开启功能 艾特状态 群号\n"
+                               "· 关闭功能 艾特状态 群号"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+                return
+            try:
+                # ★ 先把内存里的值写好，**再**保存 ——
+                #   save_rules_to_config() 会用磁盘旧值回填，
+                #   先保存的话刚设的值会被盖回去。
+                if not hasattr(self, "group_must_at_bot") \
+                        or self.group_must_at_bot is None:
+                    self.group_must_at_bot = {}
+                self.group_must_at_bot[str(_ma_gid)] = bool(_ma_hit[1])
+                self.save_rules_to_config()
+                _ma_txt = (f"✅ 已{'开启' if _ma_hit[1] else '关闭'}"
+                           f"群【{_ma_gid}】的「必须艾特机器人」限制")
+            except Exception:
+                logger.exception("[apix-meme] 写「艾特状态」失败")
+                _ma_txt = "❌ 设置失败，请查看后台日志"
+            _ma_tip = "需要 @ 机器人才能玩" if _ma_hit[1] else "不需要 @ 机器人"
+            async for _r in self._send_content(
+                    event, f"{_ma_txt}\n💡 本群现在：**{_ma_tip}**"):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
         arg_disable_feature, target_gid_dis = self._is_disable_feature(msg_str)
         if arg_disable_feature is not None:
             if not await self._check_admin(event):
@@ -11257,7 +12133,7 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
-        if msg_str in (self.cmd_save_name, f"/{self.cmd_save_name}"):
+        if self._name_list_hit(msg_str, "cmd_save_name"):
             if not await self._check_admin(event):
                 async for _r in self._send_content(event, "⚠️仅管理员/群主/群管可执行"):
                     yield _r
@@ -11668,6 +12544,43 @@ class ApixIqfkSimpleMeme(Star):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
+
+        if self._is_mc_version_menu(msg_str):
+            # ★★ 1.5.0：世界系统子菜单（版本查询）
+            if not self._is_group_feature_enable(group_id, "minecraft"):
+                GLOBAL_STATS["send"] += 1
+                return
+            async for _r in self._send_content(event, self._build_mc_version_menu()):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+        if self._is_mc_server_menu(msg_str):
+            # ★★ 1.5.0：世界系统子菜单（服务查询）
+            if not self._is_group_feature_enable(group_id, "minecraft"):
+                GLOBAL_STATS["send"] += 1
+                return
+            async for _r in self._send_content(event, self._build_mc_server_menu()):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+        if self._is_mc_player_menu(msg_str):
+            # ★★ 1.5.0：世界系统子菜单（玩家信息）
+            if not self._is_group_feature_enable(group_id, "minecraft"):
+                GLOBAL_STATS["send"] += 1
+                return
+            async for _r in self._send_content(event, self._build_mc_player_menu()):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+        if self._is_mc_push_menu(msg_str):
+            # ★★ 1.5.0：世界系统子菜单（版本推送）
+            if not self._is_group_feature_enable(group_id, "minecraft"):
+                GLOBAL_STATS["send"] += 1
+                return
+            async for _r in self._send_content(event, self._build_mc_push_menu()):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
         if self._is_greeting_menu(msg_str):
             if not self._is_group_feature_enable(group_id, "greeting"):
                 GLOBAL_STATS["send"] += 1
@@ -12022,12 +12935,22 @@ class ApixIqfkSimpleMeme(Star):
             try:
                 text = await fetch_text(url, json_field=json_field)
             except Exception as e:
-                logger.warning(f"[apix-meme] 文本接口获取失败: {e}")
+                # ★★ 1.5.0：接口运行时失败 —— 计入「接口错误次数」，
+                #   并用 ERROR 级日志（后台「错误次数」也会 +1）
+                _bump_api_err()
+                logger.error(
+                    f"[apix-meme] 接口「{matched_kw}」文本获取失败：{e}")
                 return
-            if text:
-                async for _r in self._send_content(event, text):
-                    yield _r
-                GLOBAL_STATS["send"] += 1
+            if not text:
+                # 请求成功但**没拿到内容** —— 同样是「接口坏了」
+                _bump_api_err()
+                logger.error(
+                    f"[apix-meme] 接口「{matched_kw}」文本为空"
+                    f"（接口没返回内容）")
+                return
+            async for _r in self._send_content(event, text):
+                yield _r
+            GLOBAL_STATS["send"] += 1
             return
 
         expect_kind = raw_media if raw_media in ("image", "video") else ""
@@ -12036,7 +12959,10 @@ class ApixIqfkSimpleMeme(Star):
                 url, expect=expect_kind, json_field=json_field
             )
         except Exception as e:
-            logger.warning(f"[apix-meme] 下载媒体失败: {e}")
+            # ★★ 1.5.0：接口运行时失败 —— 同上
+            _bump_api_err()
+            logger.error(
+                f"[apix-meme] 接口「{matched_kw}」媒体获取失败：{e}")
             return
 
         if expect_kind and media_kind != expect_kind:
@@ -12052,4 +12978,5 @@ class ApixIqfkSimpleMeme(Star):
             yield event.chain_result(chain)
             GLOBAL_STATS["send"] += 1
         except Exception:
-            logger.exception("[apix-meme] 发送媒体失败")
+            _bump_api_err()
+            logger.exception(f"[apix-meme] 接口「{matched_kw}」发送媒体失败")

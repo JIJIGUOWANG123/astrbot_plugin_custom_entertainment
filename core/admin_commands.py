@@ -168,7 +168,7 @@ FEATURE_LABEL = {
     "meme": "接口系统",
     "status": "电脑状态",
     "greeting": "打卡系统",
-    "minecraft": "MC系统",
+    "minecraft": "世界系统",
     "checkin": "签到系统",
     "steal": "神偷功能",
     "bank": "银行功能",
@@ -190,18 +190,24 @@ FEATURE_LABEL = {
     "rob": "抢劫功能",
     "lottery_pool": "奖池功能",
     "group_admin": "群管系统",
-    "bili": "B站功能",
-    "entertain": "娱乐功能",
+    "bili": "哔哩功能",
+    "entertain": "娱乐系统",
     "checkin": "签到系统",
     "admin": "管理系统",
     "shop": "签到商店",
-    "weather": "天气查询",
-    "oil": "油价查询",
+    "weather": "天气功能",
+    "oil": "油价功能",
     "poke": "互动功能",
     "member": "群员管理",
     "output_mode": "输出模式",
     "reply_tail": "全局尾巴",
     "racing": "赛车功能",
+    "mc_version": "版本查询",
+    "mc_server": "服务查询",
+    "mc_player": "玩家信息",
+    "mc_push": "版本推送",
+    "daily": "每日系统",
+    "must_at": "艾特状态",
 }
 
 CHECKIN_SUB_FEATURES = ("steal", "bank", "mount", "job", "lottery", "rob",
@@ -230,6 +236,14 @@ PARENT_FEATURE = {
     "fortune": "entertain",
     "qqinfo": "entertain",
     "speak_rank": "entertain",
+    "mc_version": "minecraft",
+    "mc_server": "minecraft",
+    "mc_player": "minecraft",
+    "mc_push": "minecraft",
+    "fortune": "daily",
+    "husband": "daily",
+    "luck": "daily",
+    "news": "daily",
 }
 
 FEATURE_EXTRA_PARENT = {
@@ -706,6 +720,16 @@ class AdminCommands:
             "luck": _mod("luck_module"),
             "word_reply": _mod("word_reply_module"),
             "meme": bool(getattr(p, "meme_enable", True)),
+            "daily": all([
+                bool(getattr(getattr(p, "fortune_module", None), "enable", True)),
+                bool(getattr(getattr(p, "husband_module", None), "enable", True)),
+                bool(getattr(getattr(p, "luck_module", None), "enable", True)),
+                bool(getattr(getattr(p, "daily_news_module", None), "enable", True)),
+            ]),
+            "mc_version": True,
+            "mc_server": True,
+            "mc_player": True,
+            "mc_push": True,
             "status": bool(getattr(p, "status_enable", True)),
             "greeting": _mod("greeting_module"),
             "minecraft": _mod("minecraft_module"),
@@ -808,52 +832,66 @@ class AdminCommands:
             return bool(group_cfg.get(key, True))
 
         ITEMS = [
+            # ★★ 1.5.0：按新主/子功能划分（每行三项，共 36 项）
             ("状态推送", "push", "subscribe"),
             ("读报推送", "news_auto", "subscribe"),
             ("报时推送", "chime", "subscribe"),
-            ("MC推送", "minecraft", "mc"),
-            ("状态功能", "status", "normal"),
-            ("读报功能", "news", "normal"),
-            ("娱乐功能", "entertain", "normal"),
-            ("音乐功能", "music", "normal"),
-            ("MC系统", "minecraft", "normal"),
+            ("版本推送", "minecraft", "mc"),
+            ("世界系统", "minecraft", "normal"),
             ("接口系统", "meme", "normal"),
-            ("签到系统", "checkin", "normal"),
             ("打卡系统", "greeting", "normal"),
-            ("图鉴系统", "bird", "normal"),
+            ("签到系统", "checkin", "normal"),
+            ("每日系统", ("fortune", "husband", "luck", "news"), "all"),
+            ("娱乐系统", "entertain", "normal"),
             ("群管系统", "group_admin", "white"),
             ("管理系统", "admin", "normal"),
-            ("词库系统", "word_reply", "normal"),
-            ("宠物功能", "pet", "normal"),
+            ("图鉴系统", "bird", "normal"),
+            ("版本查询", "mc_version", "normal"),
+            ("服务查询", "mc_server", "normal"),
+            ("玩家信息", "mc_player", "normal"),
             ("银行功能", "bank", "normal"),
-            ("打工功能", "job", "normal"),
-            ("赛车功能", "racing", "normal"),
-            ("坐骑功能", "mount", "normal"),
             ("神偷功能", "steal", "normal"),
+            ("坐骑功能", "mount", "normal"),
             ("抽奖功能", "lottery", "normal"),
-            ("抢劫功能", "rob", "normal"),
-            ("签到商店", "shop", "normal"),
+            ("宠物功能", "pet", "normal"),
+            ("打工功能", "job", "normal"),
+            ("猜拳功能", "rps", "normal"),
+            ("猜数功能", "guess", "normal"),
+            ("名片功能", "card", "normal"),
+            ("天气功能", "weather", "normal"),
+            ("油价功能", "oil", "normal"),
+            ("查询功能", "qqinfo", "normal"),
+            ("哔哩功能", "bili", "normal"),
+            ("赛车功能", "racing", "normal"),
             ("运势功能", "fortune", "normal"),
             ("老公功能", "husband", "normal"),
             ("人品功能", "luck", "normal"),
-            ("查询功能", "qqinfo", "normal"),
-            ("名片功能", "card", "normal"),
-            ("B站功能", "bili", "normal"),
-            ("小鸟图鉴", "bird", "normal"),
-            ("猜数功能", "guess", "normal"),
-            ("奖池功能", "lottery_pool", "normal"),
-            ("天气查询", "weather", "normal"),
-            ("油价查询", "oil", "normal"),
-            ("互动功能", "poke", "normal"),
-            ("发言功能", "speak_rank", "normal"),
-            ("积分调整", "score_admin", "normal"),
-            ("群员管理", "member", "normal"),
+            ("读报功能", "news", "normal"),
+            ("图鉴系统", "bird", "normal"),
+            ("艾特状态", "must_at", "mustat"),
         ]
 
         cells = []
         for label, key, kind in ITEMS:
             if kind == "always":
                 on, blocked = True, False
+            elif kind == "all":
+                on = True
+                if isinstance(key, (list, tuple)):
+                    for _k2 in key:
+                        if not _on(_k2, "normal"):
+                            on = False
+                            break
+                blocked = False
+            elif kind == "mustat":
+                # ★★ 1.5.0：艾特状态 —— 本群是否要求 @ 机器人
+                try:
+                    _gm = getattr(p, "group_must_at_bot", None) or {}
+                    on = (bool(_gm.get(gid)) if gid in _gm
+                          else bool(getattr(p, "must_at_bot", False)))
+                except Exception:
+                    on = False
+                blocked = False
             elif kind == "mc":
                 on = bool(glob.get("minecraft", True)) and mc_auto
                 blocked = False
@@ -872,7 +910,10 @@ class AdminCommands:
         SEP = "　"
 
         CELL = 5
-        lines = [f"{_title_bar('功能状态')}", ""]
+        # ★★ 1.9.0：先把内容行拼好，再让**上下横线宽度 = 内容宽度**。
+        #   以前横线是固定宽（12/22），内容约 25 宽 —— 图片模式下
+        #   整块看着就是「内容比横线宽、偏右」。对齐后就正了。
+        _body = []
         for i in range(0, len(cells), PER):
             row = cells[i:i + PER]
             parts = []
@@ -886,11 +927,26 @@ class AdminCommands:
                         1 if ord(ch) > 0x2000 else 0.5)
                 pad = max(1, int(round(CELL - used)))
                 parts.append(c + SEP * pad)
-            lines.append("".join(parts).rstrip())
+            _body.append("".join(parts).rstrip())
+
+        def _dw(x: str) -> float:
+            d = 0.0
+            for ch in x:
+                if ord(ch) == 0xFE0F:
+                    continue
+                d += 1.0 if ord(ch) > 0x2000 else 0.5
+            return d
+
+        _cw = max([_dw(x) for x in _body] or [0])
+        _bar = "━" * max(12, int(round(_cw)))
+        _head = _title_bar("功能状态").split("\n")
+        lines = ["\n".join(_head[:-1] + [_bar]) if len(_head) > 1
+                 else _title_bar("功能状态"), ""]
+        lines.extend(_body)
         lines.append("")
         lines.append("💡 开启功能 XX  开启本群指定功能")
         lines.append("💡 关闭功能 XX  关闭本群指定功能")
-        lines.append(_title_foot())
+        lines.append(_bar)
 
         try:
             _w = 0

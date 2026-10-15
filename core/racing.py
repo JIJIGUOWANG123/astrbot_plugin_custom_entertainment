@@ -139,7 +139,10 @@ NPC_NAMES = ["秋名山车神", "隔壁老王", "摸鱼司机", "头文字D粉",
 
 PRIZE_RATIO = (0.50, 0.30, 0.20)
 
-DEFAULT_RACE_IMG_DIR = r"D:\MemeAPI\bar"
+# ★★ 1.5.0：赛车插图目录 —— 默认**留空**（未配置）。
+#   ★ 上架版不硬编码开发机路径；用户要插图就在后台「赛车设置」里
+#     填自己的目录（与坐骑 `mount_img_dir` 同样的做法）。
+DEFAULT_RACE_IMG_DIR = ""
 
 RACE_CAR_COLLECTION = "race_car_list"
 KIND_SHOP = "shop"
