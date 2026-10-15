@@ -4,9 +4,9 @@ import json
 import time
 import platform
 import datetime
-import logging
 import re
 import asyncio
+import functools
 
 from astrbot.api import logger
 try:
@@ -96,13 +96,22 @@ GLOBAL_STATS = _StatsDict({"recv": 0, "send": 0, "join": 0, "leave": 0,
 #
 # 为什么不包 on_msg：
 #   `on_msg` 是几千行的大函数、里面有几百处 return，外面套 try 要整体
-#   重排缩进，风险远大于收益。而插件所有模块都用**同一个** logger，
-#   在 root logger 上挂一个 Handler 就能完整覆盖所有 logger.error/exception。
+#   重排缩进，风险远大于收益。
 #
-# ★ 为什么用 Handler 而不是 Filter：
-#   `logging.Logger.addFilter()` 挂到 root 上，**子 logger 冒泡上来的记录
-#   不会经过 root 的 filters**（实测 filter 调用次数为 0）。
-#   而 Handler 是 `callHandlers()` 里逐个 `handle()` 的，**必定执行**。
+# ★★ 日志规范整改（市场版审核要求）：
+#   以前的做法是「导入标准库日志模块 + 往 root logger 上挂 Handler」，
+#   这违反「logger 必须且只能从 `astrbot.api` 导入，严禁使用内置日志
+#   模块」的规范，也会污染同进程其它插件的日志。现已改为下面这种做法：
+#
+#   **包装插件自己的 logger 调用点** ——
+#   全插件 30 多个模块都写 `from astrbot.api import logger`，拿到的是
+#   **同一个** `_PluginContextLogger` 实例。这里只给该实例的
+#   `error` / `exception` / `critical` 三个方法套一层计数，
+#   原方法照常调用（日志输出行为完全不变）。
+#
+#   · 不再导入标准库日志模块，不再碰 root logger
+#   · 只影响本插件持有的 logger 实例，不干扰任何其它插件
+#   · 包装一次即全覆盖，幂等（重复调用是空操作）
 #
 # ★ 防自增死循环：看到 "apix-meme" 字样的日志直接跳过不计数
 #   （统计自身出错时打的就是这个前缀）。
@@ -126,41 +135,84 @@ def _bump_errs() -> None:
         pass
 
 
-class _ErrCountHandler(logging.Handler):
-    """数 ERROR / CRITICAL 级日志的条数（纯本地，不外发）"""
+def _wrap_err_method(orig):
+    """
+    把 logger 的一个方法包成「先计数、再原样调用」。
 
-    def __init__(self):
-        super().__init__(level=logging.ERROR)
+    ★ 用 functools.wraps 保住原方法的 __name__/__doc__，排查日志时
+      看不出被包过；返回值、异常一律原样透传。
+    """
 
-    def emit(self, record):
+    def _wrapper(*args, **kwargs):
         try:
-            if record.levelno >= logging.ERROR:
-                if "apix-meme" not in str(record.getMessage() or ""):
-                    _bump_errs()
+            _msg = args[0] if args else kwargs.get("msg", "")
+            if "apix-meme" not in str(_msg or ""):
+                _bump_errs()
         except Exception:
             pass
+        return orig(*args, **kwargs)
+
+    try:
+        return functools.wraps(orig)(_wrapper)
+    except Exception:
+        return _wrapper
 
 
 def install_error_counter(logger_obj=None) -> bool:
     """
-    挂上错误计数器。**只挂一次**，重复调用是空操作。
+    给插件自己的 logger 接上错误计数器。**只接一次**，重复调用是空操作。
 
-    ★ 挂到 root logger 的 Handler 上 —— 任何 logger 的记录都会冒泡到 root，
-      所以插件所有 `logger.exception/error` 全覆盖。
+    ★★ 日志规范整改（市场版审核要求）：
+      不再导入标准库日志模块、不再往**标准库 root logger** 挂 Handler，
+      改成**包装本插件 logger 的调用点**：
+
+        · `error` / `exception` / `critical` 三个方法各套一层计数
+        · 原方法照常调用 —— 日志内容、级别、输出行为**完全不变**
+        · 全插件共用 `astrbot.api.logger` 这一个实例，包一次即全覆盖
+        · 不触碰 root logger，不影响同进程其它插件
+
+    ★ 幂等：靠 logger 实例上的 `_apix_err_wrapped` 标记判断，
+      即使 `_ERR_FILTER_INSTALLED` 被重置也不会重复包装。
+
+    返回 True 表示已接上（或之前已接上）。
     """
     global _ERR_FILTER_INSTALLED, _ERR_LOCK
     try:
-        if _ERR_FILTER_INSTALLED:
+        lg = logger_obj if logger_obj is not None else logger
+        if lg is None:
+            return False
+        if getattr(lg, "_apix_err_wrapped", False):
+            _ERR_FILTER_INSTALLED = True
             return True
         if _ERR_LOCK is None:
             import threading
             _ERR_LOCK = threading.RLock()
         with _ERR_LOCK:
-            if _ERR_FILTER_INSTALLED:
+            if getattr(lg, "_apix_err_wrapped", False):
+                _ERR_FILTER_INSTALLED = True
                 return True
-            logging.getLogger().addHandler(_ErrCountHandler())
-            _ERR_FILTER_INSTALLED = True
-        return True
+            _wrapped = 0
+            for _name in ("error", "exception", "critical"):
+                try:
+                    _orig = getattr(lg, _name, None)
+                except Exception:
+                    _orig = None
+                if not callable(_orig):
+                    continue
+                try:
+                    setattr(lg, _name, _wrap_err_method(_orig))
+                    _wrapped += 1
+                except Exception:
+                    # 该 logger 不允许改属性（例如 __slots__）-> 跳过这一项，
+                    # 不因为一个方法失败就整体放弃
+                    continue
+            if _wrapped:
+                try:
+                    setattr(lg, "_apix_err_wrapped", True)
+                except Exception:
+                    pass
+                _ERR_FILTER_INSTALLED = True
+            return bool(_wrapped)
     except Exception:
         return False
 
