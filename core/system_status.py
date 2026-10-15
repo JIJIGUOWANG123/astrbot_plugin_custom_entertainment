@@ -139,8 +139,11 @@ def _wrap_err_method(orig):
     """
     把 logger 的一个方法包成「先计数、再原样调用」。
 
-    ★ 用 functools.wraps 保住原方法的 __name__/__doc__，排查日志时
-      看不出被包过；返回值、异常一律原样透传。
+    ★ 用 functools.wraps 保住原方法的 __name__/__doc__。
+    ★★ stacklevel +1：不加的话日志里的**位置会变成这个 wrapper 内部**
+      （比如 `core.system_status:148`），排查问题时找不到真正出错的地方。
+      标准库 `Logger.error` 会把 `stacklevel` 透传给 `_log()`，
+      所以加一层就能把位置修正回**真实调用点**。
     """
 
     def _wrapper(*args, **kwargs):
@@ -148,6 +151,10 @@ def _wrap_err_method(orig):
             _msg = args[0] if args else kwargs.get("msg", "")
             if "apix-meme" not in str(_msg or ""):
                 _bump_errs()
+        except Exception:
+            pass
+        try:
+            kwargs["stacklevel"] = int(kwargs.get("stacklevel", 1)) + 1
         except Exception:
             pass
         return orig(*args, **kwargs)
