@@ -5087,6 +5087,7 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu_entry_hit("checkin_query", text)
 
     MENU_ENTRY_DEFS = {
+        "stats":           ("menu_stats_names",    "运行数据"),
         "racing":           ("cmd_race_menu",       "赛车功能"),
         "checkin_signin":  ("menu_checkin_signin_names",  "签到指令"),
         "checkin_query":   ("menu_checkin_query_names",   "查询指令"),
@@ -5163,6 +5164,65 @@ class ApixIqfkSimpleMeme(Star):
         s = str(text or "").strip()
         return s in [x for n in self._menu_entry_names(menu_id)
                      for x in (n, f"/{n}")]
+
+    def _is_stats_menu(self, text: str) -> bool:
+        """
+        ★★ 1.4.0：远程指令「运行数据」—— 查看插件运行统计。
+
+        ★ 任何人可用（只读展示，不涉及任何修改）。
+        ★ 上架版**只有文本**（本版不启用图片模式）。
+        """
+        return self._menu_entry_hit("stats", text)
+
+    def _stats_lines(self) -> list:
+        """
+        ★★ 1.4.0：运行数据文本（后台「数据统计」的同款口径）。
+
+        ★ 所有数字都在**本地**算出来，不采集隐私、不上报。
+        """
+        st = {}
+        try:
+            st = self._bot_stats()
+        except Exception:
+            logger.exception("[apix-meme] 收集运行数据失败")
+
+        def _n(k):
+            try:
+                return f"{int(st.get(k, 0) or 0):,}"
+            except Exception:
+                return "0"
+
+        lines = [
+            f"📊 运行数据　{st.get('version') or ''}".rstrip(),
+            f"　 快照：{st.get('now') or '—'}",
+            "",
+            f"📥 收到信息累计　{_n('recv')}",
+            f"📤 发送信息累计　{_n('send')}",
+            f"🔔 调用次数　　　{_n('calls')}",
+            f"🎯 指令执行数　　{_n('cmds')}",
+            f"👤 用户数量　　　{_n('users')}",
+            f"⚠️ 错误次数　　　{_n('errs')}",
+            "",
+            f"👥 目前加入群数　{_n('live_count')}",
+            f"➕ 加入群次数　　{_n('join')}",
+            f"🚪 退出群次数　　{_n('leave')}",
+            f"⏱️ 在线时长　　　{st.get('uptime_text') or '—'}",
+            "",
+            f"✅ 未到期群数　　{_n('auth_valid')}",
+            f"⛔ 到期群数　　　{_n('auth_expired')}",
+        ]
+        return lines
+
+    def _build_stats_menu(self, event=None, group_id: str = "") -> str:
+        """运行数据文本（上架版固定文本输出）"""
+        try:
+            lines = self._stats_lines()
+        except Exception:
+            logger.exception("[apix-meme] 构建运行数据失败")
+            lines = ["📊 运行数据", "", "⚠️ 统计读取失败，请稍后再试"]
+        lines.append("")
+        lines.append("💡 本群指令，只读展示，不涉及任何修改")
+        return "\n".join(lines)
 
     def _is_checkin_bank_menu(self, text: str) -> bool:
         return self._menu_entry_hit("checkin_bank", text)
@@ -9355,6 +9415,15 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
             return
 
+        if self._is_stats_menu(msg_str):
+            # ★★ 1.4.0：远程指令「运行数据」（只读，固定文本输出）
+            _gid_st = str(_get_group_id_from_event(event) or "")
+            async for _r in self._send_content(
+                    event, self._build_stats_menu(event, _gid_st)):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+
         if self._is_checkin_mount_menu(msg_str):
             if self._is_group_feature_enable(group_id, "checkin") \
                     and self._is_group_feature_enable(group_id, "mount"):
@@ -10306,7 +10375,7 @@ class ApixIqfkSimpleMeme(Star):
                 last = m.get_last_push(target_gid)
                 last_at = str(last.get("at", "") or "（尚未推送过）")
                 async for _r in self._send_content(event, f"⏱ 群【{target_gid}】推送间隔：每 {eff} 分钟一次\n"
-                    f"· 来源：{'本群自定义' if raw_iv else '跟随全局默认（' + str(m.default_interval + ' 分钟）')}\n"
+                    f"· 来源：{'本群自定义' if raw_iv else f'跟随全局默认（{m.default_interval} 分钟）'}\n"
                     f"· 开关：{'已开启' if on else '未开启'}\n"
                     f"· 上次推送：{last_at}\n"
                     f"💡 设置：{self.cmd_daily_push_time_name} 60\n"
