@@ -61,7 +61,10 @@ MENU_TEXT_VERSION = "40"
 
 _EXTRA_PAGES = {"poke"}
 
-MENU_TEXT_LIVE = {"checkin_lottery", "checkin_bank", "checkin_shop_help",
+MENU_TEXT_LIVE = {"checkin_lottery", "checkin_bank",
+                  # ★★ 1.9.1：借款还款含「利息 / 还款期限 / 单次上限」，
+                  #   必须实时生成 —— 以前不在白名单里，后台改了期限群里还是旧的
+                  "checkin_bank_loan", "checkin_shop_help",
                   "job_refill", "job_refill_status", "job_list",
                   "checkin_job"}
 
@@ -502,6 +505,15 @@ except Exception as e:
     GuessModule = None
     logger.warning(f"[apix-meme] guess 模块加载失败: {e}")
 
+# ★★ 1.6.0：农场种菜（自主实现，不依赖任何渲染服务）
+try:
+    from .core.farm import FarmModule
+    _HAS_FARM = True
+except Exception as e:
+    _HAS_FARM = False
+    FarmModule = None
+    logger.warning(f"[apix-meme] farm 模块加载失败: {e}")
+
 try:
     from .core.racing import (
         RacingModule as _RacingModule,
@@ -588,6 +600,7 @@ try:
         build_speak_menu,
         build_pet_menu,
         build_guess_menu,
+        build_music_menu,
         build_meme_admin_menu,
         build_word_admin_menu,
         build_checkin_admin_menu,
@@ -605,6 +618,14 @@ try:
         build_auth_menu,
     build_auth_query_menu,
     build_auth_cmd_menu,
+    # ★★ 1.6.0：农场功能菜单
+    build_farm_menu,
+    build_farm_plant_menu,
+    build_farm_seed_menu,
+    build_farm_fert_menu,
+    build_farm_livestock_menu,
+    build_farm_machine_menu,
+    build_farm_steal_menu,
     _ga_help_lines,
         build_must_at_admin_menu,
         build_super_admin_menu,
@@ -666,6 +687,15 @@ except Exception as e:
     def build_auth_query_menu(p): return ""
     def build_must_at_admin_menu(p): return ""
     def build_super_admin_menu(p): return ""
+    def build_music_menu(p): return ""
+    # ★★ 1.6.0：农场菜单（menu_builder 没加载时的兜底）
+    def build_farm_menu(p): return ""
+    def build_farm_plant_menu(p): return ""
+    def build_farm_seed_menu(p): return ""
+    def build_farm_fert_menu(p): return ""
+    def build_farm_livestock_menu(p): return ""
+    def build_farm_machine_menu(p): return ""
+    def build_farm_steal_menu(p): return ""
 
 try:
     from .core.background import (
@@ -675,6 +705,8 @@ try:
         daily_status_push_checker,
         ensure_daily_news,
         daily_news_checker,
+        ensure_farm_auto,
+        farm_auto_checker,
     )
     _HAS_BACKGROUND = True
 except Exception as e:
@@ -686,6 +718,8 @@ except Exception as e:
     async def daily_status_push_checker(plugin): pass
     async def ensure_daily_news(plugin): pass
     async def daily_news_checker(plugin): pass
+    async def ensure_farm_auto(plugin): pass
+    async def farm_auto_checker(plugin): pass
 
 from .core.path_utils import (
     PLUGIN_ID,
@@ -705,6 +739,8 @@ from .core.path_utils import (
     speak_stats_data_path as _speak_stats_data_path,
     pet_data_path as _pet_data_path,
     guess_data_path as _guess_data_path,
+    # ★★ 1.6.0：农场存档路径
+    farm_data_path as _farm_data_path,
     msg_stats_path as _msg_stats_path,
     # ★★ 1.5.0：接口测试结果文件（落盘）
     api_test_path as _api_test_path,
@@ -712,6 +748,8 @@ from .core.path_utils import (
     data_store_path as _data_store_path,
     fmt_num,
     racing_data_path as _racing_data_path,
+    # ★★ 1.5.1：音乐功能数据路径（点歌会话目前只在内存，不写盘）
+    music_data_path as _music_data_path,
     read_plugin_version,
     read_disk_config,
     write_disk_config,
@@ -729,6 +767,19 @@ from .core.event_helpers import (
 from .core.nickname import NicknameCache
 from .core.path_utils import title_bar, title_foot
 from .core.path_utils import cmd_arg
+
+# ★★ 1.5.1：音乐功能（点歌 / 搜歌 / 选歌 / 音源 / 榜单随机）
+#   ★ 只发**音乐卡片**：用 AstrBot 原生 Music 组件，由平台适配器负责签名；
+#     插件自己不调任何外部签名服务、不发语音、不缓存封面图。
+try:
+    from .core.music import MusicModule
+    from .core import music_toplist as music_toplist
+    _HAS_MUSIC = True
+except Exception as e:
+    _HAS_MUSIC = False
+    MusicModule = None
+    music_toplist = None
+    logger.warning(f"[apix-meme] music 模块加载失败: {e}")
 
 BIRD_DIR_DEFAULT = ""
 _HAS_BIRD = False
@@ -1132,6 +1183,68 @@ class ApixIqfkSimpleMeme(Star):
         self.guess_enable = True
         self.guess_groups = []
 
+        # ★★ 1.6.0：农场种菜（娱乐系统子功能）
+        self.farm_enable = True
+        self.farm_groups = []
+        self.cmd_farm_menu = "农场功能"
+        self.cmd_farm_view = "我的农场,查看农场"
+        self.cmd_farm_plant = "种菜,种植"
+        self.cmd_farm_harvest = "收获,收菜"
+        # ★ 一键收获：把所有成熟的一次性收完并**直接卖掉**（积分立刻到手）
+        self.cmd_farm_harvest_all = "一键收获,全部收获,一键收菜"
+        # ★ 三个商店：种子商店 / 农具商店（肥料）/ 工具商店（看门家畜）
+        self.cmd_farm_shop = "种子商店,买种子"
+        self.cmd_farm_buy_seed = "购买种子"
+        self.cmd_farm_impl_shop = "农具商店"
+        self.cmd_farm_buy_item = "购买肥料"
+        self.cmd_farm_use_item = "施肥,使用肥料"
+        self.cmd_farm_dog = "工具商店,家畜商店,买狗,狗商店"
+        self.cmd_farm_buy_dog = "购买家畜,购买狗"
+        self.cmd_farm_feed = "喂食,喂养"
+        self.cmd_farm_buy_feed = "购买饲料"
+        self.cmd_farm_equip_dog = "装备家畜,换看门犬"
+        self.cmd_farm_my_animals = "我的家畜,家畜列表"
+        self.cmd_farm_steal = "偷菜,偷庄稼"
+        self.cmd_farm_steal_log = "被偷记录,偷菜记录"
+        self.cmd_farm_bag = "我的背包,背包"
+        self.cmd_farm_status = "农场状态,今日农场"
+        self.cmd_farm_buy_tool = "购买工具,购买农机"
+        self.cmd_farm_equip_tool = "装备工具,装备农机"
+        self.farm_init_lands = 3
+        self.farm_max_lands = 30
+        self.farm_max_level = 30
+        # ★ 等级靠**农场经验**（收获给），不同作物经验不同
+        self.farm_exp_base = 100
+        self.farm_exp_step = 60
+        # ★ 家畜：可养多只 + 看门会累（唯一作用是防偷）+ 列表分页
+        self.farm_max_animals = 5
+        self.farm_animal_energy_max = 100
+        self.farm_animal_energy_per_hour = 10
+        self.farm_shop_per_page = 8
+        self.farm_land_per_page = 12
+        # ★ 偷菜
+        self.farm_steal_enable = True
+        self.farm_steal_base_rate = 3
+        self.farm_steal_ratio = 30
+        self.farm_steal_daily_limit = 3
+        self.farm_steal_min_amount = 10
+        # ★ 偷菜失败赔付对方积分（随机区间）
+        self.farm_steal_fail_comp_min = 1
+        self.farm_steal_fail_comp_max = 500
+        # ★ 土地品质：收获时可能「触发收获机遇」升级（普通 -> 红 -> 黑）
+        self.farm_harvest_upgrade_chance = 5
+        self.farm_quality_bonus_red = 10
+        self.farm_quality_bonus_black = 20
+        # ★ 农机每日自动作业（自动收割机 / 自动播种机；静默不发群消息）
+        self.farm_auto_enable = True
+        self.farm_auto_interval_min = 10
+
+        self.cmd_chime_on_name = "开启功能 报时功能,开启报时功能"
+        self.cmd_chime_off_name = "关闭功能 报时功能,关闭报时功能"
+        self.cmd_chime_status_name = "整点报时状态"
+
+
+
         self.racing_module = None
         if _HAS_RACING:
             try:
@@ -1214,6 +1327,19 @@ class ApixIqfkSimpleMeme(Star):
             except Exception:
                 logger.exception("[apix-meme] 注入数据存储到签到模块失败")
 
+        # ★★ 1.6.0：农场模块（依赖 data_store 存种子/农具/家畜目录）
+        self.farm_module = None
+        if _HAS_FARM:
+            try:
+                self.farm_module = FarmModule(
+                    data_path=_farm_data_path(),
+                    store=getattr(self, "data_store", None))
+                if getattr(self, "data_store", None) is not None:
+                    self.farm_module.ensure_defaults()
+                logger.info("[apix-meme] 农场模块初始化成功")
+            except Exception:
+                logger.exception("[apix-meme] 初始化农场模块失败")
+
         self.notice_module = None
         if _HAS_NOTICE:
             try:
@@ -1229,6 +1355,16 @@ class ApixIqfkSimpleMeme(Star):
                 logger.info("[apix-meme] 戳一戳回复模块初始化成功")
             except Exception:
                 logger.exception("[apix-meme] 初始化戳一戳回复模块失败")
+
+        # ★★ 1.5.1：音乐功能（只发卡片）
+        self.music_module = None
+        if _HAS_MUSIC:
+            try:
+                self.music_module = MusicModule(
+                    _plugin_dir(), _music_data_path())
+                logger.info("[apix-meme] 音乐模块初始化成功（仅卡片输出）")
+            except Exception:
+                logger.exception("[apix-meme] 初始化音乐模块失败")
 
         self.output_mode_module = None
         logger.info("[apix-meme] 市场版：仅文字输出模式（未启用图片渲染）")
@@ -2053,16 +2189,28 @@ class ApixIqfkSimpleMeme(Star):
                     return _with_cors(json_response({
                         "ok": False, "msg": "签到模块未加载"}), request)
 
+                # ★★ 1.9.1 修复：本路由**没有路径占位符**，框架传进来的
+                #   `request` 是 **None** —— 真正要用的请求对象得走
+                #   `_bound_request()`（同一函数判断 OPTIONS 时就是这么做的）。
+                #   以前这里只看形参 `request`，导致 POST 的 JSON 体被**完全忽略**：
+                #   `qq` 读不到 -> freed 恒为 0 -> 后台点「解除冻结」永远提示
+                #   「该账号已不在冻结中」，其实**根本没执行解冻**。
+                _req = request
+                if _req is None:
+                    try:
+                        _req = _bound_request()
+                    except Exception:
+                        _req = None
                 params = {}
                 try:
-                    if request is not None and getattr(request, "query", None):
-                        params.update({k: request.query.get(k)
-                                       for k in request.query})
+                    if _req is not None and getattr(_req, "query", None):
+                        params.update({k: _req.query.get(k)
+                                       for k in _req.query})
                 except Exception:
                     pass
                 try:
-                    if not params and request is not None:
-                        _j = await request.json()
+                    if not params and _req is not None:
+                        _j = await _req.json()
                         if isinstance(_j, dict):
                             params.update(_j)
                 except Exception:
@@ -3700,6 +3848,34 @@ class ApixIqfkSimpleMeme(Star):
             logger.exception(f"[apix-meme] 写回后台群号名单失败：{cfg_key}")
             return False
 
+    def _write_music_source(self, code: str) -> bool:
+        """把点歌默认音源写进后台配置（远程切换后重启仍生效）"""
+        code = str(code or "").strip().lower()
+        if not code:
+            return False
+        try:
+            if (self.music_module is not None
+                    and not self.music_module.is_valid_source(code)):
+                logger.warning(f"[apix-meme] 拒绝写入无效音源：{code!r}")
+                return False
+        except Exception:
+            pass
+        try:
+            existing = self._read_disk_config() or {}
+            if not isinstance(existing, dict):
+                existing = {}
+            existing["music_default_source"] = code
+            self._write_disk_config(existing)
+            try:
+                if isinstance(self.config, dict):
+                    self.config["music_default_source"] = code
+            except Exception:
+                pass
+            return True
+        except Exception:
+            logger.exception("[apix-meme] 写回默认音源失败")
+            return False
+
     def _write_list_to_config(self, cfg_key: str, rows: list, template_key: str) -> bool:
         """把一组 template_list 行写回后台配置，并同步内存 config。"""
         try:
@@ -4600,6 +4776,145 @@ class ApixIqfkSimpleMeme(Star):
                 merged.get("guess_groups", ""))
             self.guess_enable = bool(merged.get("guess_enable", True))
 
+            self.farm_enable = bool(merged.get("farm_enable", True))
+            self.farm_groups = parse_gid_whitelist(merged.get("farm_groups", ""))
+            self.cmd_farm_menu = to_str(
+                merged.get("cmd_farm_menu", "农场功能")).strip() or "农场功能"
+            self.cmd_farm_view = to_str(
+                merged.get("cmd_farm_view", "我的农场,查看农场")).strip() \
+                or "我的农场"
+            self.cmd_farm_plant = to_str(
+                merged.get("cmd_farm_plant", "种菜,种植")).strip() or "种菜"
+            self.cmd_farm_harvest = to_str(
+                merged.get("cmd_farm_harvest", "收获,收菜")).strip() or "收获"
+            self.cmd_farm_harvest_all = to_str(
+                merged.get("cmd_farm_harvest_all",
+                           "一键收获,全部收获,一键收菜")).strip() or "一键收获"
+            self.cmd_farm_shop = to_str(
+                merged.get("cmd_farm_shop", "种子商店,买种子")).strip() \
+                or "种子商店"
+            self.cmd_farm_buy_seed = to_str(
+                merged.get("cmd_farm_buy_seed", "购买种子")).strip() or "购买种子"
+            self.cmd_farm_impl_shop = to_str(
+                merged.get("cmd_farm_impl_shop", "农具商店")).strip() or "农具商店"
+            self.cmd_farm_buy_item = to_str(
+                merged.get("cmd_farm_buy_item", "购买肥料")).strip() or "购买肥料"
+            self.cmd_farm_use_item = to_str(
+                merged.get("cmd_farm_use_item", "施肥,使用肥料")).strip() or "施肥"
+            self.cmd_farm_dog = to_str(
+                merged.get("cmd_farm_dog",
+                           "工具商店,家畜商店,买狗,狗商店")).strip() or "工具商店"
+            self.cmd_farm_buy_dog = to_str(
+                merged.get("cmd_farm_buy_dog", "购买家畜,购买狗")).strip() \
+                or "购买家畜"
+            self.cmd_farm_feed = to_str(
+                merged.get("cmd_farm_feed", "喂食,喂养")).strip() or "喂食"
+            self.cmd_farm_buy_feed = to_str(
+                merged.get("cmd_farm_buy_feed", "购买饲料")).strip() or "购买饲料"
+            self.cmd_farm_equip_dog = to_str(
+                merged.get("cmd_farm_equip_dog", "装备家畜,换看门犬")).strip() \
+                or "装备家畜"
+            self.cmd_farm_my_animals = to_str(
+                merged.get("cmd_farm_my_animals", "我的家畜,家畜列表")).strip() \
+                or "我的家畜"
+            self.cmd_farm_steal = to_str(
+                merged.get("cmd_farm_steal", "偷菜,偷庄稼")).strip() or "偷菜"
+            self.cmd_farm_steal_log = to_str(
+                merged.get("cmd_farm_steal_log", "被偷记录,偷菜记录")).strip() \
+                or "被偷记录"
+            self.cmd_farm_bag = to_str(
+                merged.get("cmd_farm_bag", "我的背包,背包")).strip() or "我的背包"
+            self.cmd_farm_status = to_str(
+                merged.get("cmd_farm_status", "农场状态,今日农场")).strip() \
+                or "农场状态"
+            # ★★ 2.1.x：**土地状态** —— 从「我的农场」拆出来的逐块明细
+            #   （有没有种 / 种的是什么 / 熟了没）。多个名用英文逗号分隔。
+            self.cmd_farm_land = to_str(
+                merged.get("cmd_farm_land", "土地状态,地块状态")).strip() \
+                or "土地状态"
+            self.cmd_farm_buy_tool = to_str(
+                merged.get("cmd_farm_buy_tool", "购买工具,购买农机")).strip() \
+                or "购买工具"
+            self.cmd_farm_equip_tool = to_str(
+                merged.get("cmd_farm_equip_tool", "装备工具,装备农机")).strip() \
+                or "装备工具"
+
+            def _farm_int(_k, _d):
+                """后台填的是字符串，安全转 int（坏值用默认）"""
+                try:
+                    _s = str(merged.get(_k, "") or "").strip()
+                    return int(float(_s)) if _s else _d
+                except Exception:
+                    return _d
+
+            def _farm_bool(_k, _d):
+                _v = merged.get(_k)
+                if _v is None:
+                    return _d
+                if isinstance(_v, bool):
+                    return _v
+                return str(_v).strip().lower() in ("1", "true", "yes", "on", "开")
+
+            self.farm_init_lands = _farm_int("farm_init_lands", 3)
+            self.farm_max_lands = _farm_int("farm_max_lands", 30)
+            self.farm_max_level = _farm_int("farm_max_level", 30)
+            self.farm_exp_base = _farm_int("farm_exp_base", 100)
+            self.farm_exp_step = _farm_int("farm_exp_step", 60)
+            self.farm_max_animals = _farm_int("farm_max_animals", 5)
+            self.farm_animal_energy_max = _farm_int("farm_animal_energy_max", 100)
+            self.farm_animal_energy_per_hour = _farm_int(
+                "farm_animal_energy_per_hour", 10)
+            self.farm_shop_per_page = _farm_int("farm_shop_per_page", 8)
+            self.farm_land_per_page = _farm_int("farm_land_per_page", 12)
+            self.farm_steal_enable = _farm_bool("farm_steal_enable", True)
+            self.farm_steal_base_rate = _farm_int("farm_steal_base_rate", 3)
+            self.farm_steal_ratio = _farm_int("farm_steal_ratio", 30)
+            self.farm_steal_daily_limit = _farm_int("farm_steal_daily_limit", 3)
+            self.farm_steal_min_amount = _farm_int("farm_steal_min_amount", 10)
+            self.farm_steal_fail_comp_min = _farm_int(
+                "farm_steal_fail_comp_min", 1)
+            self.farm_steal_fail_comp_max = _farm_int(
+                "farm_steal_fail_comp_max", 500)
+            self.farm_harvest_upgrade_chance = _farm_int(
+                "farm_harvest_upgrade_chance", 5)
+            self.farm_quality_bonus_red = _farm_int("farm_quality_bonus_red", 10)
+            self.farm_quality_bonus_black = _farm_int(
+                "farm_quality_bonus_black", 20)
+            self.farm_auto_enable = _farm_bool("farm_auto_enable", True)
+            self.farm_auto_interval_min = max(
+                1, _farm_int("farm_auto_interval_min", 10))
+            if self.farm_module is not None:
+                try:
+                    self.farm_module.reload({
+                        "farm_enable": self.farm_enable,
+                        "farm_init_lands": self.farm_init_lands,
+                        "farm_max_lands": self.farm_max_lands,
+                        "farm_max_level": self.farm_max_level,
+                        "farm_exp_base": self.farm_exp_base,
+                        "farm_exp_step": self.farm_exp_step,
+                        "farm_max_animals": self.farm_max_animals,
+                        "farm_animal_energy_max": self.farm_animal_energy_max,
+                        "farm_animal_energy_per_hour":
+                            self.farm_animal_energy_per_hour,
+                        "farm_steal_enable": self.farm_steal_enable,
+                        "farm_steal_base_rate": self.farm_steal_base_rate,
+                        "farm_steal_ratio": self.farm_steal_ratio,
+                        "farm_steal_daily_limit": self.farm_steal_daily_limit,
+                        "farm_steal_min_amount": self.farm_steal_min_amount,
+                        "farm_steal_fail_comp_min":
+                            self.farm_steal_fail_comp_min,
+                        "farm_steal_fail_comp_max":
+                            self.farm_steal_fail_comp_max,
+                        "farm_harvest_upgrade_chance":
+                            self.farm_harvest_upgrade_chance,
+                        "farm_quality_bonus_red": self.farm_quality_bonus_red,
+                        "farm_quality_bonus_black": self.farm_quality_bonus_black,
+                    })
+                except Exception:
+                    logger.exception("[apix-meme] 农场配置加载失败")
+
+
+
             self.racing_enable = bool(merged.get("racing_enable", True))
 
             def _ri(key, dflt, lo=None, hi=None):
@@ -4968,6 +5283,12 @@ class ApixIqfkSimpleMeme(Star):
                 self.reply_tail.reload(merged)
             except Exception:
                 logger.exception("[apix-meme] 刷新回复尾巴配置失败")
+        # ★★ 1.5.1：音乐功能（加载 music_* 配置）
+        if getattr(self, "music_module", None) is not None:
+            try:
+                self.music_module.reload(merged)
+            except Exception:
+                logger.exception("[apix-meme] 刷新音乐模块失败")
 
         api_list_raw = merged.get("api_list", [])
         disk_rules = []
@@ -5882,6 +6203,14 @@ class ApixIqfkSimpleMeme(Star):
         "auth":            ("menu_auth_names", "授权系统"),
         "stats":           ("menu_stats_names",    "运行数据"),
         "racing":           ("cmd_race_menu",       "赛车功能"),
+        # ★★ 1.6.0：农场功能 + 6 个下级菜单
+        "farm":             ("cmd_farm_menu",       "农场功能"),
+        "farm_plant":       ("menu_farm_plant_names",  "种植管理"),
+        "farm_seed":        ("menu_farm_seed_names",   "种子说明"),
+        "farm_fert":        ("menu_farm_fert_names",   "农具说明"),
+        "farm_livestock":   ("menu_farm_livestock_names", "家畜说明"),
+        "farm_machine":     ("menu_farm_machine_names",   "农机说明"),
+        "farm_steal":       ("menu_farm_steal_names",     "偷菜玩法"),
         "checkin_signin":  ("menu_checkin_signin_names",  "签到指令"),
         "checkin_query":   ("menu_checkin_query_names",   "查询指令"),
         "checkin_bank":    ("menu_checkin_bank_names",    "银行功能"),
@@ -5901,9 +6230,12 @@ class ApixIqfkSimpleMeme(Star):
         "pet_care":        ("menu_pet_care_names",        "宠物养成"),
         "pet_fight":       ("menu_pet_fight_names",       "宠物玩法"),
         "pet_item":        ("menu_pet_item_names",        "宠物道具"),
-        "music_source":    ("menu_music_source_names",    "音源设置"),
+        # ★★ 1.5.1：音乐功能主菜单入口（配置键 menu_music_names）
+        #   ★ 原来这里的 music_source / music_find 两个孤儿键已清理 ——
+        #     市场版音乐功能只注册一个「音乐功能」主菜单，
+        #     音源切换 / 搜歌 都是**指令**（cmd_music_*），不是菜单入口。
+        "music":           ("menu_music_names",           "音乐功能"),
         "guess":           ("cmd_guess_menu",            "猜数功能"),
-        "music_find":      ("menu_music_find_names",      "搜歌功能"),
         "mount_manage":    ("menu_mount_manage_names",    "坐骑管理"),
         "mount_admin":     ("menu_mount_admin_names",     "坐骑设置"),
         "auth_cmd":        ("menu_auth_cmd_names",        "授权指令"),
@@ -6146,6 +6478,29 @@ class ApixIqfkSimpleMeme(Star):
         """★ 1.7.7：娱乐功能下级菜单「猜数功能」"""
         return self._menu_entry_hit("guess", text)
 
+    def _is_music_menu(self, text: str) -> bool:
+        """
+        ★★ 1.5.1：音乐功能菜单入口（默认名「音乐功能」，后台 `menu_music_names` 可改）。
+
+        ★ 两处都认：
+          · 音乐模块自己的入口名表（后台 `menu_music_names` /
+            `cmd_music_menu_extra_names` 都进这里）
+          · main 的菜单入口表（MENU_ENTRY_DEFS["music"]）
+        这样无论哪条配置先被改，发出去都能打开菜单。
+        """
+        if self.music_module is not None:
+            try:
+                if self.music_module.match_menu(text):
+                    return True
+            except Exception:
+                logger.debug("[apix-meme] 音乐菜单入口匹配失败", exc_info=True)
+        try:
+            if self._menu_entry_hit("music", text):
+                return True
+        except Exception:
+            pass
+        return str(text or "").strip() in ("音乐功能", "/音乐功能")
+
     def _is_meme_admin_menu(self, text: str) -> bool:
         return text in ("接口管理", "/接口管理", "表情管理", "/表情管理")
 
@@ -6221,6 +6576,9 @@ class ApixIqfkSimpleMeme(Star):
         if t in self._switch_variants(self.cmd_disable_name):
             return True
         return t in ("关闭自定义娱乐", "自定义娱乐关闭", "娱乐系统关")
+
+    def _is_view_admin_cmd(self, text: str) -> bool:
+        return self._name_list_hit(text, "cmd_view_admin_name")
 
     def _is_refresh_admin_cmd(self, text: str) -> bool:
         return self._name_list_hit(text, "cmd_refresh_admin_name")
@@ -8693,6 +9051,79 @@ class ApixIqfkSimpleMeme(Star):
         return self._menu("pet_item", lambda: build_pet_item_menu(self))
     def _build_guess_menu(self):
         return self._menu("guess", lambda: build_guess_menu(self))
+    def _build_music_menu(self):
+        """★ 1.5.1：音乐功能菜单（标题走 _entry_name，后台可改名）"""
+        return self._menu("music", lambda: build_music_menu(self))
+
+    async def _music_play_pick(self, event, group_id, _uid, _music,
+                              it, _sess_src="", skip_search: bool = False):
+        """
+        ★★ 1.5.1：播放**指定的一首歌**（点歌 / 搜歌 / 选歌 共用）。
+
+        市场版**只发音乐卡片**：
+          · 卡片用 AstrBot 原生 `Music` 组件构造，
+            **签名交给平台适配器**（插件不调外部签名服务）
+          · 封面二选一（音源 LOGO / 点歌人头像），都是直链 ——
+            不下载、不做图像处理、不写磁盘、不缓存
+          · 不发语音、不下载音频文件
+
+        `skip_search=True`：点歌链路刚刚搜过，手上的 `it` 就是最新结果，
+        省掉一次网络请求；选歌链路结果可能放了很久（链接带时间签名），
+        所以默认重搜一次换新链接。
+        """
+        try:
+            _vuid = to_str(event.get_sender_id())
+        except Exception:
+            _vuid = str(_uid or "")
+
+        if not skip_search:
+            try:
+                _fresh, _err = await _music.search(
+                    it.get("name", ""), _sess_src or it.get("source", ""))
+                if _fresh:
+                    for _f in _fresh:
+                        if str(_f.get("songid", "")) == str(it.get("songid", "")):
+                            it = _f
+                            break
+                    else:
+                        it = _fresh[0]
+            except Exception:
+                logger.debug("[apix-meme] 重搜失败，用原结果", exc_info=True)
+
+        _audio_url = str(it.get("url", "") or "")
+        try:
+            _cover = _music.resolve_card_cover(it, user_id=_vuid)
+        except Exception:
+            logger.debug("[apix-meme] 解析卡片封面失败", exc_info=True)
+            _cover = ""
+
+        _card = None
+        try:
+            _card = _music.make_music_card(
+                it, cover_url=_cover, audio_url=_audio_url,
+                title=str(it.get("name", "") or ""),
+                desc=str(it.get("artist", "") or ""))
+        except Exception:
+            logger.exception("[apix-meme] 构造音乐卡片失败")
+
+        chain = []
+        if _card is not None:
+            chain.append(_card)
+            chain.append(Plain(_music.build_card_text(
+                it, direct_url=_audio_url)))
+            logger.info(
+                f"[apix-meme] 点歌使用音乐卡片（平台适配器签名）："
+                f"{it.get('name')} / {it.get('artist')} / "
+                f"音源={it.get('source')} / 封面={_cover[:60]}")
+        else:
+            chain.append(Plain(_music.build_pick_text(
+                it, direct_url=_audio_url)))
+            logger.warning(
+                "[apix-meme] 卡片构造失败（多半是没拿到音频直链），"
+                "本首改用文本，文本里带音乐地址")
+        if chain:
+            yield event.chain_result(chain)
+            GLOBAL_STATS["send"] += 1
     def _build_meme_admin_menu(self):
         return self._menu("meme_admin", lambda: build_meme_admin_menu(self))
     def _build_word_admin_menu(self):
@@ -8885,6 +9316,2433 @@ class ApixIqfkSimpleMeme(Star):
         except Exception:
             logger.exception("[apix-meme] 追加回复尾巴失败")
 
+    # ═══════════ ★★ 2.1.0 农场种菜（娱乐系统子功能）═══════════
+    #   ★ 输出**跟随本群输出模式**（文本模式发文字 / 图片模式发图）——
+    #     统一走 `_farm_send()` -> `_send_content()`。
+    #   ★ 积分只动签到系统的**钱包** `total_score`（用户要求）。
+    #   ★ **等级 = 农场经验**：种下时记下种子的 exp，收获时结算成经验；
+    #     不同作物 exp 不同（见 farm.py 的默认物品表）。
+    #   ★ 三家店：种子商店 / 农具商店（肥料）/ 工具商店（家畜 + 饲料）；
+    #     列表一律**分页**，避免一屏塞太多。
+    #   ★ 看门家畜**只有一个作用：降低被偷概率**；看门会累，累了不看守。
+    #   ★ 可以偷别人的菜（`偷菜 @某人`）。
+
+    def _is_farm_menu(self, text: str) -> bool:
+        """农场子菜单入口（入口名后台可配，支持逗号分隔多个）"""
+        return self._menu_entry_hit("farm", text)
+
+    def _build_farm_menu(self):
+        return self._menu("farm", lambda: build_farm_menu(self))
+
+    # ★★ 2.1.0：农场的 6 个下级菜单（入口名后台可配：menu_farm_*_names）
+    FARM_SUBMENUS = ("farm_plant", "farm_seed", "farm_fert",
+                     "farm_livestock", "farm_machine", "farm_steal")
+
+    def _farm_sub_menu(self, text: str):
+        """命中了哪个农场下级菜单？没有返回 ""（★ 在动作指令之前判）"""
+        for _mid in self.FARM_SUBMENUS:
+            if self._menu_entry_hit(_mid, text):
+                return _mid
+        return ""
+
+    def _build_farm_sub_menu(self, mid: str) -> str:
+        return self._menu(mid, lambda: menu_default(self, mid))
+
+    # ★★ 2.1.x：农场**全部指令名配置键** ——
+    #   `_farm_rest_ok()` 用它判断「紧挨着的那段是不是另一条农场指令」。
+    #   ★ 以后新增农场指令，记得把配置键补到这里。
+    FARM_CMD_ATTRS = (
+        "cmd_farm_view", "cmd_farm_plant", "cmd_farm_harvest",
+        "cmd_farm_harvest_all", "cmd_farm_shop", "cmd_farm_buy_seed",
+        "cmd_farm_impl_shop", "cmd_farm_buy_item", "cmd_farm_use_item",
+        "cmd_farm_dog", "cmd_farm_buy_dog", "cmd_farm_feed",
+        "cmd_farm_buy_feed", "cmd_farm_equip_dog", "cmd_farm_my_animals",
+        "cmd_farm_steal", "cmd_farm_steal_log", "cmd_farm_bag",
+        "cmd_farm_status", "cmd_farm_land", "cmd_farm_buy_tool",
+        "cmd_farm_equip_tool",
+    )
+
+    def _farm_names(self, attr: str, dflt) -> list:
+        """农场某条指令的全部别名（后台可配，逗号分隔）"""
+        return self._split_names(getattr(self, attr, None)) or [dflt]
+
+    def _farm_all_names(self) -> set:
+        """农场**全部**指令名 + 7 个菜单入口名 —— 无空格匹配的排除表"""
+        out = set()
+        for _attr in self.FARM_CMD_ATTRS:
+            for _n in self._split_names(getattr(self, _attr, None)):
+                out.add(str(_n).lstrip("/").strip())
+        for _mid in ("farm",) + tuple(self.FARM_SUBMENUS):
+            try:
+                for _n in self._menu_entry_names(_mid):
+                    out.add(str(_n).lstrip("/").strip())
+            except Exception:
+                pass
+        out.discard("")
+        return out
+
+    def _farm_rest_ok(self, rest: str) -> bool:
+        """
+        ★★ 2.1.x：**紧挨着（没空格）**写的那段，像不像参数？
+
+        用户要求「指令和参数之间无需空格也能触发」，所以
+        `种菜番茄` / `土地状态2` / `收获3` / `偷菜@某人` 都要认。
+
+        口径照 `core/path_utils.py` 的 `_looks_like_arg`：
+          ① 空的 / 超过 64 字 -> 不算参数
+          ② 本身是 / 以 / 以结尾 / 含有**另一条农场指令名**
+             -> 不算参数（那是别的指令被截了）
+          ③ 其余都算（页码、@某人、作物名、装备名、家畜名…）
+        """
+        s = str(rest or "").strip()
+        if not s or len(s) > 64:
+            return False
+        _names = self._farm_all_names()
+        if s in _names:
+            return False
+        for _nm in _names:
+            if _nm and _nm != s and (s.startswith(_nm)
+                                     or _nm.endswith(s)):
+                return False
+        for _nm in _names:
+            if len(_nm) >= 3 and _nm != s and _nm in s:
+                return False
+        return True
+
+    def _farm_match(self, text: str, attr: str, dflt):
+        """
+        匹配「指令 [参数]」—— ★★ 2.1.x：**空格可有可无**。
+
+            `土地状态 2` / `土地状态2` / `土地状态:2` / `土地状态：2`
+            `种菜 番茄`  / `种菜番茄`
+            `收获 3`     / `收获3`
+            `偷菜 @某人` / `偷菜@某人`
+
+        返回：None=没命中；""=命中但没带参数；否则=参数原文。
+        ★ 长名优先（避免「买种子」吃掉「购买种子」这种前缀冲突）。
+        ★ 没有空格时，紧挨着的那段要过一遍 `_farm_rest_ok()`
+          （免得 `背包` 把「背包里…」这种闲聊吃掉、别的指令被截成参数）。
+        """
+        t = str(text or "").strip()
+        t = " ".join(t.replace("\u3000", " ").split())
+        if not t:
+            return None
+        for nm in sorted(self._farm_names(attr, dflt), key=len, reverse=True):
+            if not nm:
+                continue
+            for prefix in (nm, f"/{nm}"):
+                if t == prefix:
+                    return ""
+                if not t.startswith(prefix):
+                    continue
+                rest = t[len(prefix):]
+                if not rest:
+                    return ""
+                # ① 打了分隔符（空格 / 冒号 / 逗号）—— 照旧永远认
+                if rest[0] in " \t:：,，":
+                    return rest.strip(" ：:，,")
+                # ② 紧挨着写（没空格）—— 只有这段「像参数」才认
+                if self._farm_rest_ok(rest):
+                    return rest.strip()
+        return None
+
+    async def _farm_send(self, event, text: str):
+        """
+        农场的输出出口：**跟随本群输出模式**（文本模式发文字 / 图片模式发图）。
+
+        ★★ 2.1.0（后续调整）：用户要求农场和输出模式同步 ——
+          原来是固定图片输出，现在改成跟 `_send_content` 一致，
+          本群是文本就发文本、是图片就渲染成图片。
+
+        ★★ 2.1.0：出口统一过一遍 `icon_gap_text()` ——
+          行内图标（🔒01. / 🥩营养狗粮 / 🧤破手套…）后面补半角空格，
+          否则渲染成图片时 emoji 会压到后面的文字上（用户反馈「图标和文字重合」）。
+        """
+        try:
+            from .core.menu_builder import icon_gap_text as _gap
+        except Exception:
+            try:
+                from core.menu_builder import icon_gap_text as _gap
+            except Exception:
+                _gap = None
+        if _gap is not None and text:
+            try:
+                text = _gap(text)
+            except Exception:
+                logger.debug("[farm] 图标间距修正失败，用原文", exc_info=True)
+        # ★★ 2.1.0：农场输出**加宽卡片**。
+        #   商店一行一件（名称+价格+时间+经验+等级），
+        #   默认卡片宽度装不下 -> 会被**折断**（如「Lv.4」
+        #   的「4」掉到下一行），看起来一团乱（用户反馈）。
+        #   渲染服务上限 900，这里取 780 留余量。
+        # ★★ 2.1.0：卡片宽度**按内容自动决定**。
+        #   之前对**所有**农场输出都传 max_w=780（本意是给商店
+        #   那种长行），结果**菜单也被撑得很宽**、
+        #   内容居中两侧留白很大，和其它菜单不一致
+        #   （用户反馈）。
+        #   现在：先量文本最宽行，**默认卡片装得下就不加宽**（和其它菜单
+        #   一致），只有真放不下（如商店一行一件）才加到 780。
+        _use_w = 0
+        try:
+            from .core.menu_builder import _tw as _twf
+        except Exception:
+            try:
+                from core.menu_builder import _tw as _twf
+            except Exception:
+                _twf = None
+        if _twf is not None and text:
+            try:
+                _need = max((_twf(l, 26) for l in str(text).split("\n")),
+                            default=0)
+                # 480 = 默认卡片（540）的内宽
+                if _need > 480:
+                    _use_w = 780
+            except Exception:
+                logger.debug("[farm] 量文本宽度失败，用默认宽", exc_info=True)
+        async for _r in self._send_content(event, text, max_w=_use_w):
+            yield _r
+
+    # ── 积分 ──────────────────────────────────────────────────
+    def _farm_wallet(self, group_id, uid) -> int:
+        """签到系统的钱包余额（`total_score`）"""
+        cm = getattr(self, "checkin_module", None)
+        if cm is None:
+            return 0
+        try:
+            return int(cm.get_score(group_id, uid) or 0)
+        except Exception:
+            logger.debug("[farm] 读钱包失败", exc_info=True)
+            return 0
+
+    def _farm_spend(self, group_id, uid, amount) -> bool:
+        """只扣**钱包**；不够返回 False（不动任何数据）"""
+        try:
+            need = int(amount or 0)
+        except Exception:
+            need = 0
+        if need <= 0:
+            return True
+        cm = getattr(self, "checkin_module", None)
+        if cm is None:
+            return False
+        if self._farm_wallet(group_id, uid) < need:
+            return False
+        cm.add_score(group_id, uid, -need, allow_negative=False)
+        return True
+
+    def _farm_earn(self, group_id, uid, amount) -> int:
+        """进账（收获 / 偷菜结算）：加分进钱包"""
+        try:
+            amt = int(amount or 0)
+        except Exception:
+            amt = 0
+        if amt <= 0:
+            return self._farm_wallet(group_id, uid)
+        cm = getattr(self, "checkin_module", None)
+        if cm is None:
+            return self._farm_wallet(group_id, uid)
+        return int(cm.add_score(group_id, uid, amt, allow_negative=True) or 0)
+
+    def _farm_score_name(self) -> str:
+        cm = getattr(self, "checkin_module", None)
+        if cm is not None:
+            try:
+                return str(cm.score_label() or "积分")
+            except Exception:
+                pass
+        return "积分"
+
+    def _farm_nick(self, group_id, uid) -> str:
+        cm = getattr(self, "checkin_module", None)
+        if cm is not None:
+            try:
+                nm = cm._nick_of(group_id, str(uid))
+                if nm:
+                    return str(nm)
+            except Exception:
+                pass
+        return str(uid)
+
+    # ── 小工具 ────────────────────────────────────────────────
+    @staticmethod
+    def _farm_bar(pct, width: int = 10) -> str:
+        """进度条：▓▓▓░░░░░░░ 45%"""
+        try:
+            p = max(0, min(100, int(pct)))
+        except Exception:
+            p = 0
+        full = int(round(p * width / 100.0))
+        return "▓" * full + "░" * (width - full) + f" {p}%"
+
+    @staticmethod
+    def _farm_dur(sec) -> str:
+        """秒 -> 「1 小时 3 分」/「7 分 50 秒」/「40 秒」"""
+        try:
+            s = max(0, int(sec))
+        except Exception:
+            s = 0
+        h, r = divmod(s, 3600)
+        m, s2 = divmod(r, 60)
+        if h:
+            return f"{h} 小时 {m} 分"
+        if m:
+            return f"{m} 分 {s2} 秒"
+        return f"{s2} 秒"
+
+    @staticmethod
+    @staticmethod
+    def _farm_dur_min(minutes) -> str:
+        """
+        ★★ 2.1.x：分钟的**紧凑写法**（商店列表一行一件用）。
+
+        以前列表里写成「1 小时 30 分」，一件一行时太长会被折行；
+        `_farm_dur` 又是「1 小时 3 分」那种长写法，所以这里单开一个：
+            · 整小时 -> 「3时」      · 其余 -> 「90分」（90 比 1时30分短得多）
+        """
+        try:
+            m = max(0, int(minutes))
+        except Exception:
+            m = 0
+        if m >= 60 and m % 60 == 0:
+            return f"{m // 60}时"
+        return f"{m}分"
+
+    @staticmethod
+    def _farm_page_of(arg, dflt: int = 1) -> int:
+        """参数里的页码（不合法就回第 1 页）"""
+        s = str(arg or "").strip()
+        if not s:
+            return dflt
+        try:
+            return max(1, int(s))
+        except Exception:
+            return dflt
+
+    @staticmethod
+    def _farm_page_nav(cmd: str, page: int, pages: int) -> list:
+        """分页提示（照插件里其它分页菜单的写法）"""
+        out = [f"📄 第 {page} / {pages} 页"]
+        if page > 1:
+            out.append(f"⬅️ 上一页：「{cmd} {page - 1}」")
+        if page < pages:
+            out.append(f"➡️ 下一页：「{cmd} {page + 1}」")
+        return out
+
+    def _farm_slice(self, rows: list, page: int, per: int):
+        """分页切片，返回 (本页数据, 页码, 总页数)"""
+        rows = list(rows or [])
+        per = max(1, int(per or 1))
+        pages = max(1, -(-len(rows) // per))
+        page = max(1, min(pages, int(page or 1)))
+        return rows[(page - 1) * per:page * per], page, pages
+
+    # ★★ 2.1.x：**通用兜底分页**每页正文行数（不分页时无影响）。
+    #   要调大/调小只改这一个数；测试里也可以临时改实例属性。
+    FARM_TEXT_PAGE_LINES = 18
+
+    def _farm_page_text(self, cmd: str, lines: list, page: int = 1,
+                        per: int = 0) -> list:
+        """
+        ★★ 2.1.x：**通用兜底分页** —— 把一坨农场输出按固定行数切页。
+
+        · 没超一屏（正文行数 <= per）时**原样返回**，输出和以前**完全一样**；
+        · 超了就按 per 行切页：第 1 行当标题在每页重复，末尾补翻页提示。
+        · 每页行数取 `FARM_TEXT_PAGE_LINES`（类属性，默认 18）。
+        """
+        rows = list(lines or [])
+        if len(rows) <= 1:
+            return rows
+        per = max(4, int(per or 0)
+                  or int(getattr(self, "FARM_TEXT_PAGE_LINES", 18) or 18))
+        head, body = rows[0], rows[1:]
+        if len(body) <= per:
+            return rows
+        pages = max(1, -(-len(body) // per))
+        p = max(1, min(pages, int(page or 1)))
+        out = [head] + body[(p - 1) * per:p * per]
+        out.append("")
+        out.extend(self._farm_page_nav(cmd, p, pages))
+        return out
+
+    @staticmethod
+    def _farm_no(i: int) -> str:
+        """1 起的圈码（超出范围就用阿拉伯数字）"""
+        _idx = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳㉑㉒㉓㉔㉕㉖㉗㉘㉙㉚"
+        return _idx[i] if 0 <= i < len(_idx) else str(i + 1)
+
+    # ── 看门家畜（唯一的用处：防偷；会累）────────────────────
+    def _farm_guard(self, group_id, uid) -> dict:
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return {}
+        try:
+            return fm.guard_of_user(group_id, uid) or {}
+        except Exception:
+            logger.debug("[farm] 读看门家畜失败", exc_info=True)
+            return {}
+
+    def _farm_guard_line(self, guard: dict) -> str:
+        """看门家畜一行说明（含体力；累了明确写「不看守」）"""
+        if not guard or not str(guard.get("name") or "").strip():
+            return "🐕 看门：无（被偷概率就是基础的那么多）"
+        try:
+            en = int(guard.get("energy", 0) or 0)
+            emax = int(guard.get("energy_max", 0) or 0)
+        except Exception:
+            en, emax = 0, 0
+        _pct = self._farm_bar(int(en * 100 / emax) if emax else 0, width=8)
+        _g = int(guard.get("steal_guard", 0) or 0)
+        _head = f"🐕 看门：{guard.get('name')}　体力 {en}/{emax}　{_pct}"
+        if guard.get("tired"):
+            return _head + "\n😴 它累了，**现在不看守**（防偷失效，喂点饲料）"
+        return _head + f"　🛡 防偷 -{_g}%"
+
+    def _farm_prepare(self, group_id, uid):
+        """
+        农场指令的**统一前置**：
+          ① 结算看门家畜的体力（看门会累），并落盘
+          ② 按**农场经验**算等级，土地格子数跟上等级（只增不减）
+          ③ 有「自动收获」家畜在看门且没累时，把成熟的地自动收掉
+       返回 dict（失败时 ok=False）。
+        """
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return {"ok": False, "reason": "nomod"}
+        now = int(time.time())
+        try:
+            fm.animals_owned(group_id, uid, now)   # 结算体力（掉血）
+            fm.save()
+        except Exception:
+            logger.debug("[farm] 家畜体力结算失败", exc_info=True)
+        u = fm.user(group_id, uid)
+        exp = int(u.get("exp", 0) or 0)
+        lv = fm.level_of(exp)
+        want = fm.land_count_of(exp)
+        sync = fm.sync_lands(group_id, uid, want)
+        try:
+            lv_ev = fm.sync_level(group_id, uid, now)
+        except Exception:
+            lv_ev = {"new": 0, "level": lv}
+        prog = fm.exp_progress(exp)
+        guard = self._farm_guard(group_id, uid)
+        auto = {"ok": False, "picked": [], "total": 0}
+        try:
+            auto = fm.auto_harvest(group_id, uid, now)
+        except Exception:
+            logger.exception("[farm] 自动收获失败")
+        if int(auto.get("total") or 0) > 0:
+            self._farm_earn(group_id, uid, int(auto["total"]))
+        return {"ok": True, "now": now, "level": lv, "want": want,
+                "new_lands": int(sync.get("added") or 0),
+                "total_lands": int(sync.get("total") or 0),
+                "exp": exp, "exp_prog": prog,
+                "level_ev": lv_ev,
+                "auto": auto, "guard": guard,
+                "next_need": fm.next_level_need(exp),
+                "max_lands": fm.max_lands, "max_level": fm.max_level,
+                "max_animals": fm.max_animals,
+                "steal_left": fm.steal_left(group_id, uid, now),
+                "steal_limit": fm.steal_daily_limit,
+                "steal_ratio": fm.steal_ratio,
+                "steal_base": fm.steal_base_rate,
+                "steal_bonus": fm.steal_bonus_of(group_id, uid),
+                "upgrade_chance": fm.upgrade_chance,
+                "bonus_red": fm.bonus_red,
+                "bonus_black": fm.bonus_black}
+
+    def _farm_auto_lines(self, pre: dict) -> list:
+        """自动收获的提示行（没什么可提示就返回空表）"""
+        auto = (pre or {}).get("auto") or {}
+        picked = auto.get("picked") or []
+        if not picked:
+            return []
+        out = [f"🐕 看门家畜自动收获了 {len(picked)} 块地："]
+        for it in picked:
+            out.append(f"　 · {it.get('seed')} ×{fmt_num(it.get('amount'))}")
+        out.append(f"　 💰 进账 +{fmt_num(auto.get('total'))}")
+        return out
+
+    def _farm_upgrade_lines(self, pre: dict) -> list:
+        """升级提示（土地解锁）"""
+        out = []
+        lv_ev = (pre or {}).get("level_ev") or {}
+        if int(lv_ev.get("gained") or 0) > 0:
+            out.append(f"🎉 升级啦！现在是 Lv.{lv_ev.get('level')}")
+        if pre.get("new_lands"):
+            out.append(f"🌱 新解锁 {pre['new_lands']} 块土地")
+        return out
+
+    def _farm_exp_line(self, pre: dict) -> str:
+        """
+        经验 / 进度 —— ★★ 2.1.0：改成**多行**（用户要求换行输出）。
+
+            等级 Lv.5
+            　 ✨ 经验：120
+            　 📊 进度 ▓▓▓▓░░░░ 46%（120/260）
+
+        ★ 以前是**一行**，而且里面又写了一遍「Lv.N」，
+          和外层拼的「👤 等级 Lv.N」**重复显示**。现在去掉了。
+        """
+        p = (pre or {}).get("exp_prog") or {}
+        if p.get("is_max"):
+            return f"　 ✨ 经验：{fmt_num(p.get('exp'))}（已满级）"
+        _need = p.get("need") or 0
+        _pct = int(int(p.get("in_level", 0) or 0) * 100 / _need) if _need else 0
+        return ("　 ✨ 经验：" + fmt_num(p.get("exp")) + "\n"
+                + "　 📊 进度 " + self._farm_bar(_pct, 8)
+                + "（" + fmt_num(p.get("in_level")) + "/"
+                + fmt_num(p.get("need")) + "）")
+
+    # ── 「我的农场」（总览：等级 / 经验 / 土地数 / 品质 / 看门 / 被偷）
+    #    ★★ 2.1.x：**不再分页** —— 逐块明细已拆到「土地状态」，
+    #    这里只剩固定十来行；`page` 参数**留着兼容但不用**。
+    def _farm_view_text(self, group_id, uid, page: int = 1) -> str:
+        fm = getattr(self, "farm_module", None)
+        pre = self._farm_prepare(group_id, uid)
+        if not pre.get("ok"):
+            return "❌ 农场模块未加载，请查看后台日志"
+        now = pre["now"]
+        u = fm.user(group_id, uid)
+        lands = list(u.get("lands") or [])
+        guard = pre.get("guard") or {}
+        sn = self._farm_score_name()
+        wallet = self._farm_wallet(group_id, uid)
+        _animals = fm.animals_owned(group_id, uid, now)
+
+        lines = [f"🌾 农场　{self._farm_nick(group_id, uid)}"]
+        lines.append(f"👤 等级 Lv.{pre['level']}")
+        lines.append(self._farm_exp_line(pre))
+        lines.append(f"💰 {sn}：{fmt_num(wallet)}")
+        lines.append(self._farm_guard_line(guard))
+        if _animals:
+            _tired = sum(1 for a in _animals if a["tired"])
+            _extra = f"（😴 {_tired} 只累了）" if _tired else ""
+            lines.append(f"🏠 家畜：{len(_animals)} / {pre['max_animals']}"
+                         f"{_extra}")
+        _nxt = ""
+        if int(pre.get("next_need") or 0) > 0:
+            _nxt = f"　再 {fmt_num(pre['next_need'])} 经验升 Lv.{pre['level'] + 1}"
+        elif pre["level"] >= pre["max_level"]:
+            _nxt = "　（已满级）"
+        lines.append(f"🌱 土地：{len(lands)} / {pre['max_lands']}{_nxt}")
+        _qc = fm.quality_counts(group_id, uid)
+        lines.append(f"🏞 品质：🟫普通 {_qc.get('normal', 0)}　"
+                     f"🟥红土地 {_qc.get('red', 0)}"
+                     f"（+{fm.bonus_red}%产量）　"
+                     f"⬛黑土地 {_qc.get('black', 0)}"
+                     f"（+{fm.bonus_black}%产量）")
+        lines.append(f"🍀 收获机遇：每次收获 {pre.get('upgrade_chance')}% "
+                     f"概率给那块地升品质")
+        # ★★ 2.1.x：用户要求 —— 「今天偷菜剩余次数」
+        #   **挪到「农场状态」**，这里不再重复。
+        lines.extend(self._farm_upgrade_lines(pre))
+        lines.extend(self._farm_auto_lines(pre))
+        _stolen = fm.steal_log(group_id, uid, 3)
+        if _stolen:
+            lines.append("🚨 最近被偷：")
+            for x in _stolen:
+                lines.append(f"　 · {x.get('seed')} ×{fmt_num(x.get('amount'))}"
+                             f"（{x.get('by')}）")
+
+        # ★★ 2.1.x：**逐块明细整段拆走了** ——
+        #   原来的「土地格子（每行 5 格）+ 每块地详情（圈码 + 进度 + 剩余
+        #   时间）」现在由独立指令「土地状态」输出（用户要求：
+        #   把地块作物状态分离成另一个指令）。
+        #   ★ 只拆**逐块明细**；上面那些**汇总**（等级 / 经验 /
+        #     土地数量 / 品质统计 / 看门家畜 / 金圆券 / 偷菜）全部保留。
+        lines.append("")
+        _landcmd = self._farm_names("cmd_farm_land", "土地状态")[0]
+        lines.append(f"🧭 每块地有没有种 / 熟了没：发「{_landcmd}」"
+                     f"（「{_landcmd} 2」翻页）")
+
+        lines.append("")
+        plant = self._farm_names("cmd_farm_plant", "种菜")[0]
+        harvest = self._farm_names("cmd_farm_harvest", "收获")[0]
+        seedshop = self._farm_names("cmd_farm_shop", "种子商店")[0]
+        itemshop = self._farm_names("cmd_farm_impl_shop", "农具商店")[0]
+        dogshop = self._farm_names("cmd_farm_dog", "工具商店")[0]
+        steal = self._farm_names("cmd_farm_steal", "偷菜")[0]
+        myan = self._farm_names("cmd_farm_my_animals", "我的家畜")[0]
+        lines.append(f"💡 {plant} 种子名 ／ {harvest} ／ {seedshop} ／ "
+                     f"{itemshop} ／ {dogshop}")
+        lines.append(f"💡 {steal} @某人 ／ {myan}")
+        return "\n".join(lines)
+
+    # ── 「土地状态」（逐块：有没有种 / 种什么 / 熟没熟，分页）────
+    def _farm_land_line(self, fm, land, idx: int, now) -> str:
+        """
+        **一块地一行**（用户要求：一眼能扫完）。
+
+            ① 🟫 空地
+            ② 🟥 空地　红土地 +10%
+            ③ 🟫 🌱 番茄　▓▓▓▓░░░░ 45%　还需 1 小时 30 分
+            ④ ⬛ 🍅 玉米　✅ 已成熟　可收 24 金圆券
+
+        · 第 1 个图标 = **土地品质**（🟫普通 / 🟥红土地 / ⬛黑土地）
+        · 第 2 个图标 = **作物状态**（🌱生长中 / 🍅可收获）
+        """
+        _no = self._farm_no(idx)
+        _q = fm.quality_emoji(land)
+        _st = fm.state_of(land, now)
+        if _st == "empty":
+            _qb = fm.quality_bonus(land)
+            if _qb:
+                return f"{_no} {_q} 空地　{fm.quality_label(land)} +{_qb}%"
+            return f"{_no} {_q} 空地"
+        _seed = str(land.get("seed") or "") or "（认不出的作物）"
+        if _st == "ready":
+            _qb = fm.quality_bonus(land)
+            _amt = int(land.get("amount") or 0)
+            _got = int(_amt * (100 + _qb) / 100)
+            return (f"{_no} {_q} 🍅 {_seed}　✅ 已成熟　可收 "
+                    f"{fmt_num(_got)} {self._farm_score_name()}")
+        return (f"{_no} {_q} 🌱 {_seed}　"
+                f"{self._farm_bar(fm.progress(land, now), 8)}"
+                f"　还需 {self._farm_dur(fm.left_seconds(land, now))}")
+
+    def _farm_land_text(self, group_id, uid, page: int = 1) -> str:
+        """
+        「土地状态 [页码]」—— **逐块**列每块地：
+
+            · 第几块地（圈码）
+            · 有没有种作物（空地 / 已种）
+            · 种的是什么作物
+            · 熟了没有（✅已成熟 / 还在长 + 还剩多久）
+
+        ★★ 2.1.x：从「我的农场」拆出来的独立指令（用户要求把
+          「地块作物状态」分离出来）。「我的农场」只留汇总，
+          逐块明细全部在这里。
+        ★ 一行一块地；分页复用 `farm_land_per_page`（默认 12 行一页），
+          翻页提示里的指令名取 `cmd_farm_land` 的**第一个名字**。
+        """
+        fm = getattr(self, "farm_module", None)
+        pre = self._farm_prepare(group_id, uid)
+        if not pre.get("ok"):
+            return "❌ 农场模块未加载，请查看后台日志"
+        now = pre["now"]
+        lands = list(fm.user(group_id, uid).get("lands") or [])
+        _empty = _grow = _ready = 0
+        for _land in lands:
+            _st = fm.state_of(_land, now)
+            if _st == "ready":
+                _ready += 1
+            elif _st == "empty":
+                _empty += 1
+            else:
+                _grow += 1
+        lines = [f"🌾 土地状态　{self._farm_nick(group_id, uid)}"]
+        lines.append(f"📊 共 {len(lands)} 块　🟫空地 {_empty}　"
+                     f"🌱生长中 {_grow}　🍅可收获 {_ready}")
+        lines.append("")
+        if not lands:
+            lines.append("（还没有土地）")
+            return "\n".join(lines)
+        # ★ 后台这个键填了非数字也不让指令崩（坏值回默认 12）
+        try:
+            per = int(getattr(self, "farm_land_per_page", 12) or 12)
+        except Exception:
+            per = 12
+        per = max(1, per)
+        _rows, page, pages = self._farm_slice(lands, page, per)
+        _base = (page - 1) * per
+        for _k, _land in enumerate(_rows):
+            lines.append(self._farm_land_line(fm, _land, _base + _k, now))
+        if pages > 1:
+            _cmd = self._farm_names("cmd_farm_land", "土地状态")[0]
+            lines.append("")
+            lines.extend(self._farm_page_nav(_cmd, page, pages))
+        lines.append("")
+        plant = self._farm_names("cmd_farm_plant", "种菜")[0]
+        harvest = self._farm_names("cmd_farm_harvest", "收获")[0]
+        hall = self._farm_names("cmd_farm_harvest_all", "一键收获")[0]
+        view = self._farm_names("cmd_farm_view", "我的农场")[0]
+        lines.append(f"💡 {plant} 种子名 [地块] ／ {harvest} [编号] ／ "
+                     f"{hall} ／ {view}")
+        return "\n".join(lines)
+
+    # ── 种子商店（分页）────────────────────────────────────────
+    # ── 种子商店（分页 · ★ 一行一件）────────────────────────────
+    # ── 种子商店（分页 · ★ 一行一件）────────────────────────────
+    def _farm_seed_shop_text(self, group_id, uid, page: int = 1) -> str:
+        """
+        「种子商店 [页码]」—— 输出在售种子列表（**一行一件** + 分页）。
+
+        ★★ 2.1.x：以前一件占**两行**（名称价格 + 属性细节），一屏放不下几件；
+          用户要求「商店菜单输出物品列表、要短、要分页」——
+          现在压成一行：名称 / 价格 / 生长时间 / 经验（等级不够时补行尾等级）。
+          ★ 行宽按渲染卡片内宽（540 宽 / 字号 26 -> 约 480px）**实测**过，
+            不会折行；属性之间用半角空格，省下的宽度留给内容。
+        """
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return "❌ 农场模块未加载，请查看后台日志"
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        wallet = self._farm_wallet(group_id, uid)
+        _all = fm.seeds()
+        per = max(1, int(getattr(self, "farm_shop_per_page", 8) or 8))
+        rows, page, pages = self._farm_slice(_all, page, per)
+        # ★★ 2.1.0：去掉「本群成员的等级 + 钱包余额」
+        #   （用户要求）—— 同时把两行合成一行，不易被折断。
+        lines = [f"🛒 种子商店　在售 {len(_all)} 种　价格单位：{sn}"]
+        lines.append("")
+        _base = (page - 1) * per
+        for k, s in enumerate(rows):
+            i = _base + k + 1
+            _lock = "🔓" if int(s["level_req"]) <= 0 else (
+                "🔒" if lv < s["level_req"] else "　")
+            _lv = ("" if int(s["level_req"]) <= lv
+                   else f" Lv.{int(s['level_req'])}")
+            lines.append(
+                f"{_lock}{i:02d}.{s['name']}　{fmt_num(s['price'])}"
+                f" ⏳{self._farm_dur_min(s['grow_minutes'])}"
+                f" ✨+{fmt_num(s['exp'])}{_lv}")
+        if not rows:
+            lines.append("　（后台还没配种子）")
+        if pages > 1:
+            _cmd = self._farm_names("cmd_farm_shop", "种子商店")[0]
+            lines.append("")
+            lines.extend(self._farm_page_nav(_cmd, page, pages))
+        lines.append("")
+        lines.append("🔒 = 等级不够（行尾是需要的等级）")
+        lines.append("🔓 = 无等级限制（默认很贵）")
+        buy = self._farm_names("cmd_farm_buy_seed", "购买种子")[0]
+        plant = self._farm_names("cmd_farm_plant", "种菜")[0]
+        lines.append(f"💡 {buy} 种子名（或编号）")
+        lines.append(f"💡 {plant} 种子名 [地块]：从背包种下")
+        return "\n".join(lines)
+
+    # ── 农具商店（肥料，分页 · ★ 一行一件）──────────────────────
+    def _farm_item_shop_text(self, group_id, uid, page: int = 1) -> str:
+        """「农具商店 [页码]」—— 输出在售肥料列表（**一行一件** + 分页）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return "❌ 农场模块未加载，请查看后台日志"
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        wallet = self._farm_wallet(group_id, uid)
+        _all = fm.fertilizers()
+        per = max(1, int(getattr(self, "farm_shop_per_page", 8) or 8))
+        rows, page, pages = self._farm_slice(_all, page, per)
+        # ★★ 2.1.0：去掉等级 + 钱包余额，合成一行
+        lines = [f"🧪 农具商店　在售 {len(_all)} 种　价格单位：{sn}"]
+        lines.append("")
+        _base = (page - 1) * per
+        for k, it in enumerate(rows):
+            i = _base + k + 1
+            _lock = "🔓" if int(it["level_req"]) <= 0 else (
+                "🔒" if lv < it["level_req"] else "　")
+            _lv = ("" if int(it["level_req"]) <= lv
+                   else f" Lv.{int(it['level_req'])}")
+            _e = []
+            if int(it["speed_up"]) >= 100:
+                _e.append("⚡熟")
+            elif int(it["speed_up"]):
+                _e.append(f"-{int(it['speed_up'])}%时")
+            if int(it["yield_bonus"]):
+                _e.append(f"+{int(it['yield_bonus'])}%产")
+            lines.append(
+                f"{_lock}{i:02d}.{it['name']}　{fmt_num(it['price'])}"
+                f" {'/'.join(_e) if _e else '无效果'}{_lv}")
+        if not rows:
+            lines.append("　（后台还没配肥料）")
+        if pages > 1:
+            _cmd = self._farm_names("cmd_farm_impl_shop", "农具商店")[0]
+            lines.append("")
+            lines.extend(self._farm_page_nav(_cmd, page, pages))
+        lines.append("")
+        lines.append("🔒 = 等级不够（行尾是需要的等级）")
+        lines.append("🔓 = 无等级限制　⚡ = 立刻成熟")
+        lines.append("-N%时 = 缩短剩余生长　+N%产 = 增产")
+        buy = self._farm_names("cmd_farm_buy_item", "购买肥料")[0]
+        use = self._farm_names("cmd_farm_use_item", "施肥")[0]
+        lines.append(f"💡 {buy} 肥料名 [地块]：买了立刻用")
+        lines.append(f"💡 {use} 肥料名 [地块]：同上，不扣积分")
+        lines.append("💡 不写地块 = 挑剩余最长的地")
+        return "\n".join(lines)
+
+    # ── 工具商店（家畜 + 饲料 + 农机，同一份货架分页 · 一行一件）──
+    def _farm_tool_shop_text(self, group_id, uid, page: int = 1) -> str:
+        """「工具商店 [页码]」—— 输出在售家畜 / 饲料 / 农机（**一行一件** + 分页）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return "❌ 农场模块未加载，请查看后台日志"
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        wallet = self._farm_wallet(group_id, uid)
+        _animals = fm.animals_owned(group_id, uid, pre.get("now"))
+        _owned = {a["name"]: a for a in _animals}
+        equipped = fm.equipped_name(group_id, uid)
+        _all = fm.tool_shop()
+        _owned_tools = [str(x.get("name"))
+                        for x in fm.tools_owned(group_id, uid)]
+        _on_tools = [str(x.get("name")) for x in fm.tools_on(group_id, uid)]
+        per = max(1, int(getattr(self, "farm_shop_per_page", 8) or 8))
+        rows, page, pages = self._farm_slice(_all, page, per)
+        # ★★ 2.1.0：去掉「本群成员的等级 + 钱包余额」（用户要求）
+        lines = [f"🐕 工具商店　在售 {len(_all)} 种"
+                 + (f"　看门：{equipped}" if equipped else "")
+                 + (f"　已养家畜 {len(_animals)}/{pre['max_animals']}"
+                    if _animals else "")]
+        lines.append("")
+        _base = (page - 1) * per
+        for k, it in enumerate(rows):
+            i = _base + k + 1
+            _lock = "🔓" if int(it["level_req"]) <= 0 else (
+                "🔒" if lv < it["level_req"] else "　")
+            _lv = ("" if int(it["level_req"]) <= lv
+                   else f" Lv.{int(it['level_req'])}")
+            if it["kind"] == "animal":
+                _have = _owned.get(it["name"])
+                _tag = ""
+                if _have:
+                    if _have["tired"]:
+                        _tag = "　😴累了"
+                    elif _have["equipped"]:
+                        _tag = "　✅在看门"
+                    else:
+                        _tag = f"　已养·体力{_have['energy']}"
+                lines.append(
+                    f"{_lock}{i:02d}.🐕{it['name']}　{fmt_num(it['price'])}"
+                    f" 🛡-{int(it.get('steal_guard', 0) or 0)}%{_lv}{_tag}")
+            elif it["kind"] == "tool":
+                _is_steal = int(it.get("steal_bonus", 0) or 0) > 0
+                _ic = "🧤" if _is_steal else "🤖"
+                _tag = ""
+                if it["name"] in _owned_tools:
+                    _tag = ("　✅装备中" if it["name"] in _on_tools
+                            else "　已买未装")
+                _m = []
+                if int(it.get("auto_harvest", 0) or 0):
+                    _m.append("收割")
+                if int(it.get("auto_plant", 0) or 0):
+                    _m.append("播种")
+                if _is_steal:
+                    _m.append(f"偷菜+{int(it['steal_bonus'])}%")
+                lines.append(
+                    f"{_lock}{i:02d}.{_ic}{it['name']}　{fmt_num(it['price'])}"
+                    f" {'/'.join(_m) if _m else '无功能'}{_lv}{_tag}")
+            else:
+                lines.append(
+                    f"{_lock}{i:02d}.🥩{it['name']}　{fmt_num(it['price'])}"
+                    f" 🍖+{int(it.get('energy', 0) or 0)}{_lv}")
+        if not rows:
+            lines.append("　（后台还没上架）")
+        if pages > 1:
+            _cmd = self._farm_names("cmd_farm_dog", "工具商店")[0]
+            lines.append("")
+            lines.extend(self._farm_page_nav(_cmd, page, pages))
+        lines.append("")
+        lines.append("🔒 = 等级不够（行尾是需要的等级）")
+        buy = self._farm_names("cmd_farm_buy_dog", "购买家畜")[0]
+        equip = self._farm_names("cmd_farm_equip_dog", "装备家畜")[0]
+        buyf = self._farm_names("cmd_farm_buy_feed", "购买饲料")[0]
+        feed = self._farm_names("cmd_farm_feed", "喂食")[0]
+        buytool = self._farm_names("cmd_farm_buy_tool", "购买工具")[0]
+        equiptool = self._farm_names("cmd_farm_equip_tool", "装备工具")[0]
+        lines.append(f"💡 {buy} 名　{equip} 名")
+        lines.append(f"💡 {buyf} 名　{feed} 名 [家畜名]")
+        lines.append(f"💡 {buytool} 名　{equiptool} 名（开关式）")
+        lines.append("⚠️ 看门会累：体力归零就不防偷")
+        lines.append("🤖 农机每天自动干活一次（静默）")
+        return "\n".join(lines)
+
+    # ── 我的家畜（体力一览）────────────────────────────────────
+    def _farm_my_animals_text(self, group_id, uid, page: int = 1) -> str:
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return "❌ 农场模块未加载，请查看后台日志"
+        pre = self._farm_prepare(group_id, uid)
+        _animals = fm.animals_owned(group_id, uid, pre.get("now"))
+        lines = [f"🏠 我的家畜　{len(_animals)} / {pre['max_animals']}"]
+        lines.append("")
+        if not _animals:
+            lines.append("（还没有家畜，去工具商店请一只）")
+        for i, a in enumerate(_animals):
+            _pct = self._farm_bar(
+                int(a["energy"] * 100 / a["energy_max"])
+                if a["energy_max"] else 0, width=8)
+            _tag = ("😴 累了·不看守" if a["tired"]
+                    else ("✅ 在看门" if a["equipped"] else "待命"))
+            lines.append(f"{self._farm_no(i)} {a['name']}　{_tag}")
+            lines.append(f"　 体力 {a['energy']}/{a['energy_max']}　{_pct}")
+            _g = int(a.get("steal_guard", 0) or 0)
+            _gmax = int(a.get("steal_guard_max", _g) or 0)
+            lines.append(f"　 🛡 防偷 -{_gmax}%"
+                         + ("　（累了，暂时不生效）" if a["tired"]
+                            else ("　✅ 生效中" if a["equipped"]
+                                  else "　（待命，不生效）")))
+            if not a.get("in_shop"):
+                lines.append("　 ⚠️ 这只已从后台下架，防偷失效")
+        lines.append("")
+        equip = self._farm_names("cmd_farm_equip_dog", "装备家畜")[0]
+        buyf = self._farm_names("cmd_farm_buy_feed", "购买饲料")[0]
+        feed = self._farm_names("cmd_farm_feed", "喂食")[0]
+        lines.append(f"💡 {equip} 家畜名　换看门犬")
+        lines.append(f"💡 {buyf} 饲料名 [家畜名]　／ {feed} 饲料名 [家畜名]")
+        lines.append("💡 只有**在看门且没累**的那只才防偷")
+        return "\n".join(self._farm_page_text(
+            self._farm_names("cmd_farm_my_animals", "我的家畜")[0],
+            lines, page))
+
+    # ── handler ───────────────────────────────────────────────
+    async def _handle_farm_view(self, event, group_id, uid, arg):
+        """
+        「我的农场」—— ★★ 2.1.x：**不再分页**。
+
+        逐块明细拆到「土地状态」之后，这里的正文是固定十来行
+        （等级 / 经验 / 土地数量 / 品质统计 / 看门家畜 / 金圆券 /
+        被偷记录），一屏看得完。页码参数**收下但不用**：
+        老习惯发「我的农场 2」不报错，只是内容跟第 1 页一样。
+        """
+        async for _r in self._farm_send(
+                event, self._farm_view_text(group_id, uid)):
+            yield _r
+
+    async def _handle_farm_land(self, event, group_id, uid, arg):
+        """「土地状态 [页码]」—— 逐块看有没有种 / 种什么 / 熟没熟"""
+        async for _r in self._farm_send(
+                event, self._farm_land_text(group_id, uid,
+                                            self._farm_page_of(arg))):
+            yield _r
+
+    async def _handle_farm_shop(self, event, group_id, uid, arg):
+        """「种子商店 [页码]」"""
+        async for _r in self._farm_send(
+                event, self._farm_seed_shop_text(group_id, uid,
+                                                 self._farm_page_of(arg))):
+            yield _r
+
+    async def _handle_farm_item_shop(self, event, group_id, uid, arg):
+        """「农具商店 [页码]」= 看肥料"""
+        async for _r in self._farm_send(
+                event, self._farm_item_shop_text(group_id, uid,
+                                                 self._farm_page_of(arg))):
+            yield _r
+
+    async def _handle_farm_dog_shop(self, event, group_id, uid, arg):
+        """「工具商店 [页码]」= 家畜 + 饲料"""
+        async for _r in self._farm_send(
+                event, self._farm_tool_shop_text(group_id, uid,
+                                                 self._farm_page_of(arg))):
+            yield _r
+
+    async def _handle_farm_my_animals(self, event, group_id, uid, arg):
+        """「我的家畜 [页码]」"""
+        async for _r in self._farm_send(
+                event, self._farm_my_animals_text(group_id, uid,
+                                                  self._farm_page_of(arg))):
+            yield _r
+
+    async def _handle_farm_plant(self, event, group_id, uid, arg):
+        """
+        「种菜 种子名 [地块编号]」—— 从**背包**拿种子种下。
+
+        · 不带地块编号 -> 按顺序种在**第一块空地**
+        · 带地块编号   -> 就种那一块（`种菜 番茄 3`）
+        """
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        _bagseeds = fm.bag_seeds(group_id, uid)
+        # ★ 参数拆成「种子 / 地块编号」：`种菜 番茄 3`、`种菜 番茄3`、`种菜 3`
+        _skey, _land = self._farm_split_arg(arg)
+        seed = fm.find_seed(_skey) if str(_skey or "").strip() else {}
+        _plant = self._farm_names("cmd_farm_plant", "种菜")[0]
+        _buy = self._farm_names("cmd_farm_buy_seed", "购买种子")[0]
+        _bagcmd = self._farm_names("cmd_farm_bag", "我的背包")[0]
+        # ① 参数为空 / 认不出：列背包里能种的
+        if not seed:
+            if not _bagseeds:
+                async for _r in self._farm_send(event, "\n".join([
+                        "🎒 背包里没有种子",
+                        f"💡 先去「"
+                        f"{self._farm_names('cmd_farm_shop', '种子商店')[0]}」"
+                        f"用「{_buy} 种子名」买",
+                ])):
+                    yield _r
+                return
+            lines = [f"⚠️ {'请写清种什么' if not str(arg or '').strip() else '没认出这个种子'}",
+                     "", "🎒 背包里的种子："]
+            for i, x in enumerate(_bagseeds, 1):
+                _lock = "🔒" if not fm.level_ok(x["seed"], lv) else "　"
+                lines.append(f"{_lock}{i}. {x['name']} ×{x['count']}"
+                             f"　需 Lv.{x['seed']['level_req']}"
+                             if int(x["seed"]["level_req"]) > 0
+                             else f"{_lock}{i}. {x['name']} ×{x['count']}"
+                                  f"　无等级限制")
+            lines.append("")
+            lines.append(f"💡 用法：{_plant} 种子名 [地块编号]　📋 {_bagcmd}")
+            lines.append("💡 不写地块编号 = 按顺序种第一块空地")
+            async for _r in self._farm_send(event, "\n".join(lines)):
+                yield _r
+            return
+        # ② 背包里没有这种种子
+        if fm.bag_count(group_id, uid, seed["name"]) <= 0:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🎒 背包里没有「{seed['name']}」",
+                    f"💡 先买：{_buy} {seed['name']}",
+                    f"💡 看看有什么：{_bagcmd}",
+            ])):
+                yield _r
+            return
+        # ③ 等级
+        if not fm.level_ok(seed, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{seed['name']} 需要 Lv.{seed['level_req']}",
+                    f"👤 你当前 Lv.{lv}　"
+                    f"（{fmt_num(pre.get('exp'))} 经验）",
+                    f"💡 还差 {fmt_num(pre.get('next_need'))} 经验升级"
+                    f"（种菜收获就有经验）",
+            ])):
+                yield _r
+            return
+        # ④ 种下（先占好背包里的那一份，失败再还回去）
+        if not fm.bag_take(group_id, uid, seed["name"], 1):
+            async for _r in self._farm_send(
+                    event, f"🎒 背包里没有「{seed['name']}」了"):
+                yield _r
+            return
+        r = fm.plant(group_id, uid, seed, index=_land)
+        _al = self._farm_auto_lines({"auto": r.get("auto") or {}})
+        if not r.get("ok"):
+            fm.bag_add(group_id, uid, seed["name"], 1)
+            _why = str(r.get("reason") or "")
+            if _why == "range":
+                _msg = f"⚠️ 没有第 {(_land or 0) + 1} 块地"
+            elif _why == "occupied":
+                _msg = (f"🚧 第 {(_land or 0) + 1} 块地已经种着东西了\n"
+                        f"💡 想种空地就别写编号（按顺序自动找空地）")
+            else:
+                _msg = (f"🚧 土地满了（{pre.get('total_lands', 0)} / "
+                        f"{pre.get('max_lands', 30)} 块都在种）\n"
+                        f"💡 先「"
+                        f"{self._farm_names('cmd_farm_harvest_all', '一键收获')[0]}」"
+                        f"把成熟的收掉\n"
+                        f"💡 升级可解锁更多土地（每级 +1，最多 "
+                        f"{pre.get('max_lands', 30)} 块）")
+            async for _r in self._farm_send(event, "\n".join(
+                    [_msg, "（种子已退回背包）"] + _al)):
+                yield _r
+            return
+        fm.note(group_id, uid, "planted", 1)
+        _left = fm.bag_count(group_id, uid, seed["name"])
+        _where = (f"第 {r['index'] + 1} 块（{self._farm_no(r['index'])}）"
+                  + ("　★ 指定地块" if _land is not None else "　（按顺序）"))
+        async for _r in self._farm_send(event, "\n".join(
+                ["🌱 种下啦！"]
+                + _al
+                + [f"🌾 种子：{seed['name']}（背包还剩 {_left} 个）",
+                   f"📍 土地：{_where}",
+                   f"⏳ 生长：{self._farm_dur(r['grow_sec'])}",
+                   f"📈 预计收获：{fmt_num(r.get('amount'))} {sn}"
+                   f"　✨ +{fmt_num(seed['exp'])} 经验",
+                   "",
+                   f"💡 到点了发「"
+                   f"{self._farm_names('cmd_farm_harvest_all', '一键收获')[0]}」"])):
+            yield _r
+
+    async def _handle_farm_harvest(self, event, group_id, uid, arg,
+                                   bulk: bool = False):
+        """
+        「收获 [编号]」= 收全部 / 只收一块；
+        「一键收获」（bulk=True）= 把**所有**成熟的收完并**直接卖掉**（积分立刻到手）。
+        """
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        sn = self._farm_score_name()
+        _arg = "" if bulk else str(arg or "").strip()
+        index = None
+        if _arg:
+            if not _arg.isdigit():
+                async for _r in self._farm_send(event, "\n".join([
+                        "⚠️ 编号要写数字（1 起）",
+                        f"💡 用法："
+                        f"{self._farm_names('cmd_farm_harvest', '收获')[0]} 3",
+                ])):
+                    yield _r
+                return
+            index = int(_arg) - 1
+        _al = self._farm_auto_lines(pre)
+        r = fm.harvest(group_id, uid, index=index)
+        picked = r.get("picked") or []
+        if not picked:
+            if index is not None:
+                _u = fm.user(group_id, uid)
+                if not (0 <= index < len(_u.get("lands") or [])):
+                    _msg = f"⚠️ 没有第 {index + 1} 块地"
+                else:
+                    _st = fm.state_of((_u["lands"])[index], pre.get("now"))
+                    _msg = ("🟫 第 %d 块是空地，没东西可收" % (index + 1)
+                            if _st == "empty"
+                            else "🌱 第 %d 块还没熟，再等等" % (index + 1))
+            else:
+                _msg = ("🚧 现在没有成熟的作物可卖"
+                        if bulk else "🚧 现在没有可收获的土地")
+            async for _r in self._farm_send(event, "\n".join(
+                    [_msg] + _al
+                    + [f"💡 发「"
+                       f"{self._farm_names('cmd_farm_view', '我的农场')[0]}」"
+                       "看进度"])):
+                yield _r
+            return
+        self._farm_earn(group_id, uid, int(r.get("total") or 0))
+        # ★ 记今日统计（「农场状态」用）
+        try:
+            fm.note(group_id, uid, "harvest_times", 1, pre.get("now"))
+            fm.note(group_id, uid, "harvest_crops", len(picked),
+                    pre.get("now"))
+            fm.note(group_id, uid, "earned", int(r.get("total") or 0),
+                    pre.get("now"))
+            fm.save()
+        except Exception:
+            logger.debug("[farm] 记今日收获统计失败", exc_info=True)
+        lines = ["🧺 一键收获（全部收完并卖掉）！" if bulk else "🧺 收获完成！"]
+        lines.extend(_al)
+        lines.append(f"✅ 收了 {len(picked)} 块地：")
+        for it in picked:
+            _qb = int(it.get("quality_bonus") or 0)
+            lines.append(f"　 · {it.get('seed')} ×{fmt_num(it.get('amount'))}"
+                         f"　+{fmt_num(it.get('exp'))} 经验"
+                         + (f"　🏞 {it.get('quality_label')} +{_qb}%"
+                            if _qb else ""))
+        lines.append(f"💰 卖掉了，合计 +{fmt_num(r.get('total'))} {sn}")
+        lines.append(f"💳 钱包余额：{fmt_num(self._farm_wallet(group_id, uid))}")
+        # ★ 收获机遇：土地品质升级
+        for u2 in (r.get("upgrades") or []):
+            lines.append(f"🍀 触发收获机遇！第 {u2.get('index', 0) + 1} 块地 "
+                         f"{u2.get('label_before')} → "
+                         f"**{u2.get('label_after')}**"
+                         f"（以后这块地 +{u2.get('bonus')}% 产量）")
+        _up = r.get("exp") or {}
+        if int(_up.get("gain") or 0) > 0:
+            lines.append(f"✨ 经验 +{fmt_num(_up.get('gain'))}"
+                         f"（共 {fmt_num(_up.get('exp'))}）")
+        if _up.get("level_up"):
+            lines.append(f"🎉 升级啦！Lv.{_up.get('from_level')} → "
+                         f"Lv.{_up.get('level')}")
+            if int(_up.get("new_lands") or 0) > 0:
+                lines.append(f"🌱 新解锁 {_up['new_lands']} 块土地")
+        _prog = fm.exp_progress(fm.user(group_id, uid).get("exp"))
+        if not _prog.get("is_max"):
+            lines.append(f"📊 距离 Lv.{_prog['level'] + 1} 还差 "
+                         f"{fmt_num(_prog['need'] - _prog['in_level'])} 经验")
+        if int(r.get("ready_left") or 0) > 0:
+            lines.append(f"💡 还有 {r['ready_left']} 块地熟着，"
+                         f"发「{self._farm_names('cmd_farm_harvest', '收获')[0]}」"
+                         "一起收")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    async def _handle_farm_harvest_all(self, event, group_id, uid, arg):
+        """「一键收获」= 所有成熟的一次收完并**直接卖掉**（积分立刻到手）"""
+        async for _r in self._handle_farm_harvest(
+                event, group_id, uid, "", bulk=True):
+            yield _r
+
+    async def _handle_farm_buy_seed(self, event, group_id, uid, arg):
+        """「购买种子 名字/编号」—— 扣钱后放进**背包**（要种再发「种菜」）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        seed = fm.find_seed(arg)
+        if not seed:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 没认出这个种子",
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_buy_seed', '购买种子')[0]}"
+                    f" 种子名（或编号）",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_shop', '种子商店')[0]}",
+            ])):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        if not fm.level_ok(seed, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{seed['name']} 需要 Lv.{seed['level_req']}",
+                    f"👤 你当前 Lv.{lv}　"
+                    f"（{fmt_num(pre.get('exp'))} 经验，还差 "
+                    f"{fmt_num(pre.get('next_need'))} 升级）",
+            ])):
+                yield _r
+            return
+        price = int(seed["price"])
+        if self._farm_wallet(group_id, uid) < price:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"💸 {sn}不够：{seed['name']} 要 {fmt_num(price)}，"
+                    f"你只有 {fmt_num(self._farm_wallet(group_id, uid))}",
+                    "💡 去签到/打工/收获攒一攒",
+            ])):
+                yield _r
+            return
+        self._farm_spend(group_id, uid, price)
+        _n = fm.bag_add(group_id, uid, seed["name"], 1)
+        _plant = self._farm_names("cmd_farm_plant", "种菜")[0]
+        _bagcmd = self._farm_names("cmd_farm_bag", "我的背包")[0]
+        async for _r in self._farm_send(event, "\n".join([
+                "🛒 购买成功，已放进背包",
+                f"🌾 种子：{seed['name']} ×1（背包共 {_n} 个）",
+                f"⏳ 生长：{self._farm_dur(seed['grow_minutes'] * 60)}"
+                f"　📈 产量 {fmt_num(seed['yield_min'])}~"
+                f"{fmt_num(seed['yield_max'])}"
+                f"　✨ +{fmt_num(seed['exp'])} 经验",
+                f"💸 花费：-{fmt_num(price)}　"
+                f"💰 余额：{fmt_num(self._farm_wallet(group_id, uid))}",
+                "",
+                f"💡 种下去：{_plant} {seed['name']}",
+                f"💡 看背包：{_bagcmd}"])):
+            yield _r
+
+    # ── 肥料 ──────────────────────────────────────────────────
+    async def _farm_apply_item(self, event, group_id, uid, item, index,
+                               pay: bool):
+        """
+        用一份肥料的公共实现（`施肥` 与 `购买肥料` 共用）。
+
+        pay=True  -> 先扣钱再用（购买肥料）
+        pay=False -> 直接用（施肥，不扣积分）
+        """
+        fm = getattr(self, "farm_module", None)
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        if not fm.level_ok(item, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{item['name']} 需要 Lv.{item['level_req']}",
+                    f"👤 你当前 Lv.{lv}　（{fmt_num(pre.get('exp'))} 经验）",
+            ])):
+                yield _r
+            return
+        price = int(item["price"])
+        if pay and self._farm_wallet(group_id, uid) < price:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"💸 {sn}不够：{item['name']} 要 {fmt_num(price)}，"
+                    f"你只有 {fmt_num(self._farm_wallet(group_id, uid))}",
+                    "💡 去签到/打工/收获攒一攒",
+            ])):
+                yield _r
+            return
+        r = fm.use_item(group_id, uid, item, index=index)
+        if not r.get("ok"):
+            _why = {
+                "empty": "🚧 一块地都没种，施肥没用",
+                "none": "🌱 现在没有正在生长的作物（成熟了要先收）",
+                "bad": "⚠️ 地块编号要写数字（1 起）",
+                "range": "⚠️ 没有这块地",
+                "empty_land": "🟫 这块地是空的，先种点东西",
+                "already": "🍅 这块地已经成熟了，直接收吧",
+            }.get(r.get("reason"), "🚧 施肥失败")
+            async for _r in self._farm_send(event, "\n".join([
+                    _why,
+                    f"💡 发「"
+                    f"{self._farm_names('cmd_farm_view', '我的农场')[0]}」"
+                    "看土地",
+            ])):
+                yield _r
+            return
+        if pay:
+            self._farm_spend(group_id, uid, price)
+        lines = [f"🧪 施肥成功：{item['name']}"]
+        lines.append(f"📍 第 {r['index'] + 1} 块"
+                     f"（{self._farm_no(r['index'])}）· {r.get('seed')}")
+        if r.get("matured"):
+            lines.append("⚡ 直接熟透了！可以收")
+        else:
+            lines.append(f"⏳ 剩余生长：{self._farm_dur(r.get('before'))}"
+                         f" → {self._farm_dur(r.get('after'))}"
+                         f"（省了 {self._farm_dur(r.get('saved_sec'))}）")
+        if int(r.get("yield_bonus") or 0):
+            lines.append(f"📈 这块地产量 +{r['yield_bonus']}%")
+        if pay:
+            lines.append(f"💸 花费：-{fmt_num(price)}　"
+                         f"💰 余额：{fmt_num(self._farm_wallet(group_id, uid))}")
+        harvest = self._farm_names("cmd_farm_harvest", "收获")[0]
+        if r.get("matured"):
+            lines.append(f"💡 发「{harvest}」收掉")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    async def _handle_farm_buy_item(self, event, group_id, uid, arg):
+        """「购买肥料 肥料名 [地块编号]」—— 扣钱并立刻施肥"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        _name, _idx = self._farm_split_arg(arg)
+        item = fm.find_fert(_name)
+        if not item:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 没认出这种肥料",
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_buy_item', '购买肥料')[0]}"
+                    f" 肥料名 [地块编号]",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_impl_shop', '农具商店')[0]}",
+            ])):
+                yield _r
+            return
+        async for _r in self._farm_apply_item(
+                event, group_id, uid, item, _idx, pay=True):
+            yield _r
+
+    async def _handle_farm_use_item(self, event, group_id, uid, arg):
+        """「施肥 肥料名 [地块编号]」—— 直接用（不扣积分）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        _name, _idx = self._farm_split_arg(arg)
+        if not _name:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 请写清用哪种肥料",
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_use_item', '施肥')[0]}"
+                    f" 肥料名 [地块编号]",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_impl_shop', '农具商店')[0]}",
+            ])):
+                yield _r
+            return
+        item = fm.find_fert(_name)
+        if not item:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 没认出这种肥料",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_impl_shop', '农具商店')[0]}",
+            ])):
+                yield _r
+            return
+        async for _r in self._farm_apply_item(
+                event, group_id, uid, item, _idx, pay=False):
+            yield _r
+
+    # ── 家畜 ──────────────────────────────────────────────────
+    async def _handle_farm_buy_dog(self, event, group_id, uid, arg):
+        """「购买家畜 名字/编号」—— 从工具商店买家畜（可买多只）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        item = fm.find_tool(arg)
+        if item and item.get("kind") != "animal":
+            _k = str(item.get("kind"))
+            _tip = (f"⚠️「{item['name']}」是**饲料**，不是家畜\n"
+                    f"💡 买饲料请用："
+                    f"{self._farm_names('cmd_farm_buy_feed', '购买饲料')[0]}"
+                    f" {item['name']}") if _k == "feed" else (
+                    f"⚠️「{item['name']}」是**农机**，不是家畜\n"
+                    f"💡 买农机请用："
+                    f"{self._farm_names('cmd_farm_buy_tool', '购买工具')[0]}"
+                    f" {item['name']}")
+            async for _r in self._farm_send(event, "\n".join([
+                    _tip,
+            ])):
+                yield _r
+            return
+        if not item:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 没认出这只家畜",
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_buy_dog', '购买家畜')[0]}"
+                    f" 家畜名（或编号）",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        if not fm.level_ok(item, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{item['name']} 需要 Lv.{item['level_req']}",
+                    f"👤 你当前 Lv.{lv}　"
+                    f"（{fmt_num(pre.get('exp'))} 经验，还差 "
+                    f"{fmt_num(pre.get('next_need'))} 升级）",
+            ])):
+                yield _r
+            return
+        _owned = fm.animals_owned(group_id, uid, pre.get("now"))
+        if any(a["name"] == item["name"] for a in _owned):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🐕 {item['name']} 你家已经养了一只了",
+                    "💡 同一种只要一只就够（可以换别的家畜）",
+                    f"💡 家畜上限：{len(_owned)} / {pre['max_animals']}",
+            ])):
+                yield _r
+            return
+        if len(_owned) >= int(pre["max_animals"]):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🚧 家畜满了：{len(_owned)} / {pre['max_animals']}",
+                    "💡 上限可在后台「农场功能 → 家畜上限」调",
+                    f"💡 发「"
+                    f"{self._farm_names('cmd_farm_my_animals', '我的家畜')[0]}」"
+                    "看已养的家畜",
+            ])):
+                yield _r
+            return
+        price = int(item["price"])
+        if self._farm_wallet(group_id, uid) < price:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"💸 {sn}不够：{item['name']} 要 {fmt_num(price)}，"
+                    f"你只有 {fmt_num(self._farm_wallet(group_id, uid))}",
+                    "💡 去签到/打工/收获攒一攒",
+            ])):
+                yield _r
+            return
+        r = fm.add_animal(group_id, uid, item)
+        if not r.get("ok"):
+            async for _r in self._farm_send(
+                    event, "🚧 买不了（家畜满了或已养过这只）"):
+                yield _r
+            return
+        self._farm_spend(group_id, uid, price)
+        lines = ["🐕 买回家畜！", f"🏷 {item['name']}"]
+        lines.append(f"🛡 效果：防偷 -{item['steal_guard']}%"
+                     "（看门家畜的**唯一**作用）")
+        lines.append(f"🏠 家畜：{r['count']} / {r['max']}")
+        if str(r.get("equipped") or "") == item["name"]:
+            lines.append(f"✅ 已自动装备为看门犬（体力 {fm.energy_max}）")
+        else:
+            equip = self._farm_names("cmd_farm_equip_dog", "装备家畜")[0]
+            lines.append(f"💡 想让它看门：发「{equip} {item['name']}」")
+        lines.append(f"💸 花费：-{fmt_num(price)}　"
+                     f"💰 余额：{fmt_num(self._farm_wallet(group_id, uid))}")
+        lines.append("⚠️ 看门会累，体力归零就不看守了（喂饲料恢复）")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    async def _handle_farm_equip_dog(self, event, group_id, uid, arg):
+        """「装备家畜 名字」—— 换上看门犬"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        _owned = fm.animals_owned(group_id, uid, pre.get("now"))
+        if not _owned:
+            async for _r in self._farm_send(event, "\n".join([
+                    "🏠 你还没有家畜",
+                    f"💡 去工具商店请一只："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        name = str(arg or "").strip()
+        if not name:
+            lines = ["⚠️ 要装备哪一只？", ""]
+            for i, a in enumerate(_owned):
+                _tag = ("😴 累了" if a["tired"]
+                        else ("✅ 在看门" if a["equipped"] else "待命"))
+                lines.append(f"{self._farm_no(i)} {a['name']}　{_tag}"
+                             f"　体力 {a['energy']}/{a['energy_max']}")
+            equip = self._farm_names("cmd_farm_equip_dog", "装备家畜")[0]
+            lines.append("")
+            lines.append(f"💡 用法：{equip} 家畜名（或编号）")
+            async for _r in self._farm_send(event, "\n".join(lines)):
+                yield _r
+            return
+        _key = name
+        if name.isdigit() and 1 <= int(name) <= len(_owned):
+            _key = _owned[int(name) - 1]["name"]
+        r = fm.set_equipped(group_id, uid, _key)
+        if not r.get("ok"):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"⚠️ 你家里没有「{name}」这只家畜",
+                    f"💡 发「"
+                    f"{self._farm_names('cmd_farm_my_animals', '我的家畜')[0]}」"
+                    "看已养的家畜",
+            ])):
+                yield _r
+            return
+        lines = [f"✅ 已换上看门犬：{r['name']}"]
+        if r.get("old") and r["old"] != r["name"]:
+            lines.append(f"（原来的 {r['old']} 卸下待命，体力冻结不掉）")
+        lines.append(self._farm_guard_line(fm.guard_of_user(group_id, uid)))
+        if r.get("tired"):
+            lines.append("⚠️ 它现在**体力为 0，不会看守**（防偷失效），"
+                         "先喂点饲料")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    async def _handle_farm_buy_feed(self, event, group_id, uid, arg):
+        """「购买饲料 饲料名」—— 扣钱后放进**背包**（要喂再发「喂食」）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        _name, _who = self._farm_split2(arg)
+        item = fm.find_feed(_name)
+        if not item:
+            _hit = fm.find_tool(_name)
+            _tip = (f"⚠️「{_name}」是**家畜**，不是饲料\n"
+                    f"💡 买家畜请用："
+                    f"{self._farm_names('cmd_farm_buy_dog', '购买家畜')[0]}"
+                    f" {_name}") if (_hit and _hit.get("kind") == "animal") \
+                else "⚠️ 没认出这种饲料"
+            async for _r in self._farm_send(event, "\n".join([
+                    _tip,
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_buy_feed', '购买饲料')[0]}"
+                    f" 饲料名",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        if not fm.level_ok(item, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{item['name']} 需要 Lv.{item['level_req']}",
+                    f"👤 你当前 Lv.{lv}　（{fmt_num(pre.get('exp'))} 经验）",
+            ])):
+                yield _r
+            return
+        price = int(item["price"])
+        if self._farm_wallet(group_id, uid) < price:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"💸 {sn}不够：{item['name']} 要 {fmt_num(price)}，"
+                    f"你只有 {fmt_num(self._farm_wallet(group_id, uid))}",
+                    "💡 去签到/打工/收获攒一攒",
+            ])):
+                yield _r
+            return
+        self._farm_spend(group_id, uid, price)
+        _n = fm.bag_add(group_id, uid, item["name"], 1)
+        _feed = self._farm_names("cmd_farm_feed", "喂食")[0]
+        _bagcmd = self._farm_names("cmd_farm_bag", "我的背包")[0]
+        async for _r in self._farm_send(event, "\n".join([
+                "🛒 购买成功，已放进背包",
+                f"🥩 饲料：{item['name']} ×1（背包共 {_n} 个）",
+                f"🍖 恢复体力 +{item['energy']} / 个",
+                f"💸 花费：-{fmt_num(price)}　"
+                f"💰 余额：{fmt_num(self._farm_wallet(group_id, uid))}",
+                "",
+                f"💡 喂家畜：{_feed} {item['name']} [家畜名]",
+                f"💡 背包饲料共 {fm.bag_feed_total(group_id, uid)} 份"
+                f"　📋 {_bagcmd}"])):
+            yield _r
+
+    async def _handle_farm_feed(self, event, group_id, uid, arg):
+        """「喂食 饲料名 [家畜名]」—— 直接用饲料（不扣积分）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        _name, _who = self._farm_split2(arg)
+        if not _name:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 请写清喂哪种饲料",
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_feed', '喂食')[0]}"
+                    f" 饲料名 [家畜名]",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        item = fm.find_feed(_name)
+        if not item:
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 没认出这种饲料",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        async for _r in self._farm_feed_flow(
+                event, group_id, uid, item, _who, pay=False):
+            yield _r
+
+    async def _farm_feed_flow(self, event, group_id, uid, item, who,
+                              pay: bool):
+        """喂饲料的公共实现（购买饲料 / 喂食 共用）"""
+        fm = getattr(self, "farm_module", None)
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        _owned = fm.animals_owned(group_id, uid, pre.get("now"))
+        if not _owned:
+            async for _r in self._farm_send(event, "\n".join([
+                    "🏠 你还没有家畜，喂了也没人吃",
+                    f"💡 去工具商店请一只："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        if not fm.level_ok(item, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{item['name']} 需要 Lv.{item['level_req']}",
+                    f"👤 你当前 Lv.{lv}　（{fmt_num(pre.get('exp'))} 经验）",
+            ])):
+                yield _r
+            return
+        price = int(item["price"])
+        if pay and self._farm_wallet(group_id, uid) < price:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"💸 {sn}不够：{item['name']} 要 {fmt_num(price)}，"
+                    f"你只有 {fmt_num(self._farm_wallet(group_id, uid))}",
+                    "💡 去签到/打工/收获攒一攒",
+            ])):
+                yield _r
+            return
+        r = fm.feed_animal(group_id, uid, item, name=who)
+        if not r.get("ok"):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"⚠️ 你家里没有「{who}」这只家畜",
+                    f"💡 发「"
+                    f"{self._farm_names('cmd_farm_my_animals', '我的家畜')[0]}」"
+                    "看已养的家畜",
+            ])):
+                yield _r
+            return
+        # pay=True（购买饲料）时**先买进背包**再喂；pay=False 直接喂背包里的
+        if pay:
+            self._farm_spend(group_id, uid, price)
+            fm.bag_add(group_id, uid, item["name"], 1)
+        if not fm.bag_take(group_id, uid, item["name"], 1):
+            if pay:
+                fm.bag_add(group_id, uid, item["name"], 1)
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🎒 背包里没有「{item['name']}」",
+                    f"💡 先买："
+                    f"{self._farm_names('cmd_farm_buy_feed', '购买饲料')[0]}"
+                    f" {item['name']}",
+                    f"💡 看背包："
+                    f"{self._farm_names('cmd_farm_bag', '我的背包')[0]}",
+            ])):
+                yield _r
+            return
+        r = fm.feed_animal(group_id, uid, item, name=who)
+        if not r.get("ok"):
+            fm.bag_add(group_id, uid, item["name"], 1)   # 喂失败退回去
+            async for _r in self._farm_send(event, "\n".join([
+                    f"⚠️ 你家里没有「{who}」这只家畜",
+                    f"💡 发「"
+                    f"{self._farm_names('cmd_farm_my_animals', '我的家畜')[0]}」"
+                    "看已养的家畜",
+            ])):
+                yield _r
+            return
+        lines = [f"🍖 喂食成功：{item['name']} → {r['target']}"]
+        lines.append(f"💚 体力：{r['before']} → "
+                     f"{r['after']} / {r['energy_max']}"
+                     f"（+{r['added']}）")
+        if r.get("tired_before"):
+            lines.append("😴 它刚才已经累趴了（不看守），现在恢复看门")
+        if int(r.get("wasted") or 0):
+            lines.append(f"⚠️ 体力满了，浪费了 {r['wasted']} 点（下次少买点）")
+        _fleft = fm.bag_feed_total(group_id, uid)
+        lines.append(f"🎒 背包饲料还剩 {_fleft} 份")
+        if pay:
+            lines.append(f"💸 花费：-{fmt_num(price)}　"
+                         f"💰 余额：{fmt_num(self._farm_wallet(group_id, uid))}")
+        lines.append(self._farm_guard_line(
+            fm.guard_of_user(group_id, uid, pre.get("now"))))
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    # ── ★ 偷菜 ────────────────────────────────────────────────
+    async def _handle_farm_steal(self, event, group_id, uid, arg):
+        """「偷菜 @某人 / QQ号」—— 偷别人的成熟作物"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        if not getattr(fm, "steal_enable", True):
+            async for _r in self._farm_send(
+                    event, "🚫 偷菜功能已被后台关闭"):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        target = ""
+        try:
+            target = self._pet_parse_target(event, arg) or ""
+        except Exception:
+            target = ""
+        steal = self._farm_names("cmd_farm_steal", "偷菜")[0]
+        if not target:
+            async for _r in self._farm_send(event, "\n".join([
+                f"⚠️ 要偷谁的？",
+                f"💡 用法：{steal} @某人",
+                f"💡 或：{steal} QQ号",
+            ])):
+                yield _r
+            return
+        if str(target) == str(uid):
+            async for _r in self._farm_send(
+                    event, "🤨 偷自己的菜…… 那不就是收菜吗"):
+                yield _r
+            return
+        left = fm.steal_left(group_id, uid, pre.get("now"))
+        if left <= 0:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🚧 今天的偷菜次数用完了"
+                    f"（{pre.get('steal_limit')} 次 / 天）",
+                    "💡 明天再来，或者后台调「每天最多偷几次」",
+            ])):
+                yield _r
+            return
+        r = fm.steal(group_id, uid, target, pre.get("now"))
+        if not r.get("ok"):
+            _why = {
+                "no_farm": "🏠 对方还没开农场，没菜可偷",
+                "no_land": "🏠 对方一块地都没有",
+                "empty": "🟫 对方地里什么都没有",
+                "growing": "🌱 对方的菜还没熟，再等等",
+                "too_little": "🥬 对方地里那点收成太少，懒得偷",
+            }.get(r.get("reason"))
+            if _why is None and r.get("reason") == "guarded":
+                _gn = r.get("guard_name") or "看门犬"
+                _why = (f"🐕 被 {_gn} 拦住了！\n"
+                        f"🛡 防偷 {r.get('guard')}%，"
+                        f"成功率被压到 0%")
+            if _why is None and r.get("reason") == "norate":
+                _why = (f"🚫 目前偷菜成功率是 0%\n"
+                        f"💡 去「"
+                        f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}」"
+                        f"买**偷菜装备**提高成功率（基础 "
+                        f"{fm.steal_base_rate}%）")
+            if _why is None:
+                _why = (f"🚧 没偷到（成功率 {r.get('chance')}%，"
+                        f"掷出 {r.get('roll')}）")
+                if int(r.get("bonus") or 0) > 0:
+                    _why += (f"\n🧤 你的装备加成 +{r.get('bonus')}%"
+                             + (f"（{r.get('tool_names')}）"
+                                if r.get("tool_names") else ""))
+                if int(r.get("guard") or 0) > 0:
+                    _why += f"\n🐕 对方看门犬防偷 -{r.get('guard')}%"
+            _out = [_why]
+            # ★ 用户要求：失败要赔对方积分（随机区间）
+            if r.get("reason") == "failed":
+                _comp = int(r.get("comp") or 0)
+                _paid = 0
+                if _comp > 0:
+                    _paid = min(_comp, max(0, self._farm_wallet(
+                        group_id, uid)))
+                    if _paid > 0:
+                        self._farm_spend(group_id, uid, _paid)
+                        self._farm_earn(group_id, target, _paid)
+                    try:
+                        fm.note(group_id, uid, "stole_fail", 1,
+                                pre.get("now"))
+                        fm.note(group_id, uid, "stole_paid", _paid,
+                                pre.get("now"))
+                        fm.note(group_id, target, "comp_got", _paid,
+                                pre.get("now"))
+                        fm.save()
+                    except Exception:
+                        logger.debug("[farm] 记赔付统计失败", exc_info=True)
+                _sn2 = self._farm_score_name()
+                if _comp <= 0:
+                    _out.append("💸 不过后台把赔付关了，这次不用赔")
+                elif _paid < _comp:
+                    _out.append(f"💸 被抓了！该赔 {fmt_num(_comp)} {_sn2}，"
+                                f"但你只有 {fmt_num(_paid)}，全赔光了")
+                else:
+                    _out.append(f"💸 被主人抓个正着，赔付对方 "
+                                f"{fmt_num(_paid)} {_sn2}")
+                _out.append(f"💰 你的余额："
+                            f"{fmt_num(self._farm_wallet(group_id, uid))}")
+            _out.append(f"📅 今天还剩 {left - 1} 次"
+                        if r.get("reason") == "failed"
+                        else f"📅 今天还剩 {left} 次")
+            async for _r in self._farm_send(event, "\n".join(_out)):
+                yield _r
+            return
+        self._farm_earn(group_id, uid, int(r.get("take") or 0))
+        # ★ 记今日统计：偷到的算自己的，被偷的记在对方头上
+        try:
+            fm.note(group_id, uid, "stole_times", 1, pre.get("now"))
+            fm.note(group_id, uid, "stole_amount", int(r.get("take") or 0),
+                    pre.get("now"))
+            fm.note_stolen(group_id, target, uid,
+                           r.get("target_seed"), int(r.get("take") or 0),
+                           pre.get("now"))
+            fm.save()
+        except Exception:
+            logger.debug("[farm] 记今日偷菜统计失败", exc_info=True)
+        sn = self._farm_score_name()
+        lines = ["🥕 偷菜成功！",
+                 f"🏠 目标：{self._farm_nick(group_id, target)}",
+                 f"🌾 偷到：{r.get('target_seed')} "
+                 f"×{fmt_num(r.get('take'))}"]
+        if r.get("victim_emptied"):
+            lines.append("（那块地被你偷空了）")
+        else:
+            lines.append(f"（那块地还剩 {fmt_num(r.get('left_on_land'))}）")
+        lines.append(f"🎲 成功率 {r.get('chance')}%"
+                     + (f"（基础 {fm.steal_base_rate}%"
+                        f" + 装备 {r.get('bonus')}%"
+                        if int(r.get("bonus") or 0) > 0
+                        else f"（基础 {fm.steal_base_rate}%")
+                     + (f" − 对方看门犬防偷 {r.get('guard')}%）"
+                        if int(r.get("guard") or 0) > 0 else "）"))
+        if r.get("tool_names"):
+            lines.append(f"🧤 生效装备：{r.get('tool_names')}")
+        lines.append(f"💰 进账 +{fmt_num(r.get('take'))} {sn}")
+        lines.append(f"📅 今天还剩 {left - 1} 次")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    async def _handle_farm_steal_log(self, event, group_id, uid, arg):
+        """「被偷记录」"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        log = fm.steal_log(group_id, uid, 10)
+        u = fm.user(group_id, uid)
+        guard = pre.get("guard") or {}
+        lines = ["🚨 被偷记录"]
+        lines.append(self._farm_guard_line(guard))
+        lines.append(f"📉 累计被偷：{fmt_num(u.get('stolen_total'))} 积分")
+        lines.append(f"📈 累计偷到：{fmt_num(u.get('stole_total'))} 积分")
+        lines.append("")
+        if not log:
+            lines.append("（还没被偷过，看门犬挺给力）")
+        for x in log:
+            _t = ""
+            try:
+                _t = time.strftime("%m-%d %H:%M",
+                                   time.localtime(int(x.get("at") or 0)))
+            except Exception:
+                _t = ""
+            lines.append(f"· {x.get('seed')} ×{fmt_num(x.get('amount'))}"
+                         f"　被 {x.get('by')} 偷走　{_t}")
+        lines.append("")
+        steal = self._farm_names("cmd_farm_steal", "偷菜")[0]
+        dogshop = self._farm_names("cmd_farm_dog", "工具商店")[0]
+        lines.append(f"💡 提高防偷：去「{dogshop}」换更凶的看门犬")
+        lines.append(f"💡 看门犬累了要喂饲料，不然防偷失效")
+        lines.append(f"💡 你也可以偷别人：{steal} @某人")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    # ── ★ 我的背包（农场种子 / 饲料 + 签到商店食物）────────────
+    def _farm_checkin_foods(self, group_id, uid) -> dict:
+        """签到商店买的**食物**（{名字: 数量}）—— 联动签到系统"""
+        cm = getattr(self, "checkin_module", None)
+        if cm is None:
+            return {}
+        try:
+            return dict(cm.owned_foods_of(group_id, uid) or {})
+        except Exception:
+            logger.debug("[farm] 读签到背包食物失败", exc_info=True)
+            return {}
+
+    def _farm_bag_text(self, group_id, uid, page: int = 1) -> str:
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return "❌ 农场模块未加载，请查看后台日志"
+        pre = self._farm_prepare(group_id, uid)
+        sn = self._farm_score_name()
+        seeds = fm.bag_seeds(group_id, uid)
+        feeds = fm.bag_feeds(group_id, uid)
+        unknown = fm.bag_unknown(group_id, uid)
+        foods = self._farm_checkin_foods(group_id, uid)
+        _bag = fm.bag(group_id, uid)
+
+        lines = [f"🎒 我的背包　{self._farm_nick(group_id, uid)}"]
+        lines.append(f"💰 {sn}：{fmt_num(self._farm_wallet(group_id, uid))}"
+                     f"　👤 Lv.{pre.get('level')}")
+        lines.append("")
+
+        lines.append(f"🌱 种子（{len(seeds)} 种 / 共 "
+                     f"{sum(x['count'] for x in seeds)} 个）")
+        if not seeds:
+            lines.append("　（空，去「种子商店」买）")
+        for i, x in enumerate(seeds):
+            _lock = "" if fm.level_ok(x["seed"], int(pre.get("level") or 1)) \
+                else "🔒"
+            lines.append(
+                f"　{self._farm_no(i)} {x['name']} ×{x['count']}{_lock}"
+                f"　单价 {fmt_num(x['seed']['price'])}"
+                f"　产量 {fmt_num(x['seed']['yield_min'])}~"
+                f"{fmt_num(x['seed']['yield_max'])}"
+                f"　+{fmt_num(x['seed']['exp'])} 经验"
+                f"　需 Lv.{x['seed']['level_req']}")
+
+        lines.append("")
+        lines.append(f"🥩 家畜饲料（{len(feeds)} 种 / 共 "
+                     f"{sum(x['count'] for x in feeds)} 份）")
+        if not feeds:
+            lines.append("　（空，去「工具商店」买）")
+        for i, x in enumerate(feeds):
+            lines.append(f"　{self._farm_no(i)} {x['name']} ×{x['count']}"
+                         f"　恢复体力 +{x['item']['energy']}")
+
+        lines.append("")
+        lines.append(f"🍖 签到商店食物（{len(foods)} 种 / 共 "
+                     f"{sum(int(v or 0) for v in foods.values())} 个）")
+        if not foods:
+            lines.append("　（空，去签到商店买）")
+        cm = getattr(self, "checkin_module", None)
+        for i, (nm, n) in enumerate(sorted(foods.items())):
+            _restore = ""
+            if cm is not None:
+                try:
+                    _restore = (f"　恢复体力 +"
+                                f"{cm.food_restore_of(cm.food_item_of(nm))}")
+                except Exception:
+                    _restore = ""
+            lines.append(f"　{self._farm_no(i)} {nm} ×{int(n or 0)}{_restore}")
+
+        if unknown:
+            lines.append("")
+            lines.append("❔ 已下架（后台删了，无法使用）")
+            for nm, n in ((x["name"], x["count"]) for x in unknown):
+                lines.append(f"　· {nm} ×{n}")
+
+        lines.append("")
+        plant = self._farm_names("cmd_farm_plant", "种菜")[0]
+        feed = self._farm_names("cmd_farm_feed", "喂食")[0]
+        eat = "吃食物"
+        if cm is not None:
+            try:
+                eat = (cm.food_eat_trigger_names or ["吃食物"])[0]
+            except Exception:
+                eat = "吃食物"
+        lines.append(f"💡 {plant} 种子名　／　{feed} 饲料名 [家畜名]"
+                     f"　／　{eat} 食物名")
+        lines.append(f"💡 背包里共 {len(_bag) + len(foods)} 种东西"
+                     f"（农场 {len(_bag)} + 签到食物 {len(foods)}）")
+        _bagcmd2 = self._farm_names("cmd_farm_bag", "我的背包")[0]
+        return "\n".join(self._farm_page_text(_bagcmd2, lines, page))
+
+    async def _handle_farm_bag(self, event, group_id, uid, arg):
+        """「我的背包 [页码]」"""
+        async for _r in self._farm_send(
+                event, self._farm_bag_text(group_id, uid,
+                                           self._farm_page_of(arg))):
+            yield _r
+
+    # ── ★ 农场状态（只看**自己今天**的数据）────────────────────
+    def _farm_status_text(self, group_id, uid, page: int = 1) -> str:
+        """
+        「农场状态 [页码]」—— **只看自己今天**的农场数据。
+
+        ★★ 2.1.x：**去重**。和「我的农场」重复的内容一律删掉：
+            · 等级 / 经验进度（「我的农场」有）
+            · 土地数量 / 品质统计（「我的农场」有）
+            · 看门家畜 + 已养家畜数（「我的农场」有）
+            · 钱包余额（「我的农场」有）
+            · 「今天偷菜：还剩几次」（「我的农场」逐字有）
+          这里只留**今天才有意义**的：
+            收获 / 播种 / 被偷与偷菜明细 / 饲料 / 农机 / 背包数量
+
+        ★ 分页：用通用兜底分页 `_farm_page_text` —— 正文超过
+          `FARM_TEXT_PAGE_LINES`（18）行才分页，没超就原样输出。
+        """
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return "❌ 农场模块未加载，请查看后台日志"
+        pre = self._farm_prepare(group_id, uid)
+        now = pre.get("now")
+        sn = self._farm_score_name()
+        t = fm.today(group_id, uid, now)
+        _feed_n = fm.bag_feed_total(group_id, uid)
+        _seed_n = sum(x["count"] for x in fm.bag_seeds(group_id, uid))
+        _machines = fm.tools_on(group_id, uid)
+
+        # ★★ 2.1.0：标题和昵称**换行**；去掉括号里的日期
+        # ★★ 2.1.x：等级 / 经验 / 土地数量 / 品质统计**删掉** ——
+        #   这些是「我的农场」的总览内容，这里不再重复。
+        lines = ["📋 农场状态",
+                 f"👨‍🌾 {self._farm_nick(group_id, uid)}",
+                 ""]
+
+        # ① 今天收获 / 赚了多少
+        lines.append("🧺 今天收获")
+        # ★★ 2.1.0：作物数量、赚了多少**各占一行**
+        lines.append(f"　 收了 {int(t.get('harvest_times') or 0)} 次")
+        lines.append(f"　 {int(t.get('harvest_crops') or 0)} 个作物")
+        lines.append(f"　 💰 赚了 {fmt_num(t.get('earned'))} {sn}")
+        if int(t.get("auto_harvest") or 0):
+            lines.append(f"　 🤖 其中自动收割机代收 "
+                         f"{int(t.get('auto_harvest'))} 个作物")
+        # ② 今天播种
+        lines.append(f"🌾 今天播种：{int(t.get('planted') or 0)} 个作物")
+        if int(t.get("auto_plant") or 0):
+            lines.append(f"　 🤖 其中自动播种机代播 "
+                         f"{int(t.get('auto_plant'))} 个")
+        # ③ 饲料剩余
+        #   ★★ 2.1.x：原来这里的「🐕 今天上班的看门家畜 / 🏠 已养家畜」
+        #     和「我的农场」的「🐕 看门：…／🏠 家畜：…」是同一份内容
+        #     （连 `_farm_guard_line()` 都是同一个函数），**整段删掉**；
+        #     家畜相关留给「我的农场」，这里只留今天要喂的饲料。
+        lines.append("")
+        # ★★ 2.1.x：用户要求 —— 「看门家畜今日体力」留在本指令
+        #   （只留这一行；「已养家畜 N / M」仍在「我的农场」）。
+        try:
+            _g9 = fm.guard_of_user(group_id, uid)
+            if _g9 and str(_g9.get("name") or "").strip():
+                lines.append("🐕 今天上班："
+                             + self._farm_guard_line(_g9))
+        except Exception:
+            logger.debug("[farm] 读看门家畜失败", exc_info=True)
+        lines.append(f"🥩 饲料剩余：{_feed_n} 份")
+        _feeds = fm.bag_feeds(group_id, uid)
+        if _feeds:
+            lines.append("　 " + "　".join(
+                f"{x['name']}×{x['count']}" for x in _feeds))
+        else:
+            lines.append("　（背包里没饲料了，家畜累了就没人看守）")
+        # ④ 今天有没有被偷 / 今天偷菜
+        lines.append("")
+        _st = int(t.get("stolen_times") or 0)
+        if _st:
+            lines.append(f"🚨 今天被偷了 {_st} 次，共损失 "
+                         f"{fmt_num(t.get('stolen_amount'))} {sn}")
+            for x in (t.get("stolen_log") or [])[-3:]:
+                lines.append(f"　 · {x.get('seed')} "
+                             f"×{fmt_num(x.get('amount'))}"
+                             f"　被 {x.get('by')} 偷走")
+        else:
+            lines.append("✅ 今天还没被偷")
+        if int(t.get("stole_times") or 0):
+            lines.append(f"🥕 今天偷了 {int(t.get('stole_times'))} 次，"
+                         f"进账 {fmt_num(t.get('stole_amount'))} {sn}")
+        # ★★ 2.1.x：用户要求 —— 「今天偷菜剩余次数」**放回本指令**
+        #   （从「我的农场」挪过来）。
+        try:
+            _lim2 = int(getattr(fm, "steal_daily_limit", 0) or 0)
+            if _lim2 > 0:
+                _used2 = int(t.get("stole_times") or 0)
+                lines.append(f"🎯 今天偷菜次数还剩 "
+                             f"{max(0, _lim2 - _used2)} / {_lim2} 次")
+        except Exception:
+            logger.debug("[farm] 读偷菜剩余次数失败", exc_info=True)
+        _sb = fm.steal_bonus_of(group_id, uid)
+        _stools = fm.steal_tools_on(group_id, uid)
+        lines.append(f"　 🥕 偷菜成功率：{fm.steal_base_rate}%"
+                     + (f" + 装备 {_sb}%" if _sb else "（没戴偷菜装备）")
+                     + " − 对方看门犬防偷")
+        if _stools:
+            lines.append("　 🧤 生效装备：" + "、".join(
+                str(x.get("name")) for x in _stools))
+        if int(t.get("stole_fail") or 0):
+            lines.append(f"　 💸 今天偷失败 {int(t.get('stole_fail'))} 次，"
+                         f"赔出去 {fmt_num(t.get('stole_paid'))} {sn}")
+        if int(t.get("comp_got") or 0):
+            lines.append(f"　 💰 今天收到赔付 {fmt_num(t.get('comp_got'))} "
+                         f"{sn}")
+        # ⑤ 农机
+        lines.append("")
+        if _machines:
+            lines.append("🤖 已装备农机：" + "、".join(
+                str(x.get("name")) for x in _machines))
+            lines.append(f"　 每天自动干活一次（当前统计已算进上面）")
+        else:
+            lines.append("🤖 农机：无（去「工具商店」买自动收割机 / "
+                         "自动播种机）")
+        lines.append("")
+        # ★★ 2.1.x：钱包余额**删掉**（「我的农场」里「💰 金圆券：N」有），
+        #   这里只留「我的农场」没有的背包数量。
+        lines.append(f"🎒 背包：种子 {_seed_n} 个　饲料 {_feed_n} 份")
+        _bagcmd = self._farm_names("cmd_farm_bag", "我的背包")[0]
+        _view = self._farm_names("cmd_farm_view", "我的农场")[0]
+        _land = self._farm_names("cmd_farm_land", "土地状态")[0]
+        _all = self._farm_names("cmd_farm_harvest_all", "一键收获")[0]
+        lines.append(f"💡 {_bagcmd} ／ {_view} ／ {_land} ／ {_all}")
+        _scmd = self._farm_names("cmd_farm_status", "农场状态")[0]
+        return "\n".join(self._farm_page_text(_scmd, lines, page))
+
+    async def _handle_farm_status(self, event, group_id, uid, arg):
+        """「农场状态 [页码]」—— 自己今天的农场数据"""
+        async for _r in self._farm_send(
+                event, self._farm_status_text(group_id, uid,
+                                              self._farm_page_of(arg))):
+            yield _r
+
+    # ── ★ 农机（自动收割机 / 自动播种机）──────────────────────
+    async def _handle_farm_buy_tool(self, event, group_id, uid, arg):
+        """「购买工具 名字/编号」—— 买农机（买了默认就装备上）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        item = fm.find_machine(arg)
+        if not item:
+            _names = "、".join(x["name"] for x in fm.tools()) or "（后台没上架）"
+            async for _r in self._farm_send(event, "\n".join([
+                    "⚠️ 没认出这台农机",
+                    f"💡 用法："
+                    f"{self._farm_names('cmd_farm_buy_tool', '购买工具')[0]}"
+                    f" 名字（或编号）",
+                    f"💡 现有农机：{_names}",
+                    f"💡 看商店："
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}",
+            ])):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        lv = int(pre.get("level") or 1)
+        sn = self._farm_score_name()
+        if not fm.level_ok(item, lv):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"🔒 等级不够：{item['name']} 需要 Lv.{item['level_req']}",
+                    f"👤 你当前 Lv.{lv}　"
+                    f"（{fmt_num(pre.get('exp'))} 经验，还差 "
+                    f"{fmt_num(pre.get('next_need'))} 升级）",
+            ])):
+                yield _r
+            return
+        if any(x["name"] == item["name"]
+               for x in fm.tools_owned(group_id, uid)):
+            async for _r in self._farm_send(
+                    event, f"🤖 {item['name']} 你已经有了（不用再买）"):
+                yield _r
+            return
+        price = int(item["price"])
+        if self._farm_wallet(group_id, uid) < price:
+            async for _r in self._farm_send(event, "\n".join([
+                    f"💸 {sn}不够：{item['name']} 要 {fmt_num(price)}，"
+                    f"你只有 {fmt_num(self._farm_wallet(group_id, uid))}",
+                    "💡 去签到/打工/收获攒一攒",
+            ])):
+                yield _r
+            return
+        r = fm.add_tool(group_id, uid, item)
+        if not r.get("ok"):
+            async for _r in self._farm_send(
+                    event, "🚧 买不了（已经有这一台了）"):
+                yield _r
+            return
+        self._farm_spend(group_id, uid, price)
+        _eff = []
+        if int(item.get("auto_harvest", 0) or 0):
+            _eff.append("每天自动收获（直接卖掉）")
+        if int(item.get("auto_plant", 0) or 0):
+            _eff.append("每天自动播种（用背包里的种子）")
+        if int(item.get("steal_bonus", 0) or 0):
+            _eff.append(f"偷菜成功率 +{item['steal_bonus']}%")
+        lines = ["🤖 买下装备！" if int(item.get("steal_bonus", 0) or 0) == 0
+                 else "🧤 买下偷菜装备！", f"🏷 {item['name']}"]
+        lines.append("⚙️ 功能：" + ("、".join(_eff) if _eff else "无"))
+        lines.append("✅ 已自动装备（每天自动干活一次，静默不发群消息）"
+                     if int(item.get("steal_bonus", 0) or 0) == 0
+                     else "✅ 已自动装备（偷菜成功率立刻提高）")
+        lines.append(f"💸 花费：-{fmt_num(price)}　"
+                     f"💰 余额：{fmt_num(self._farm_wallet(group_id, uid))}")
+        lines.append(f"💡 看今天干了什么："
+                     f"{self._farm_names('cmd_farm_status', '农场状态')[0]}")
+        lines.append("⚠️ 自动播种会用掉背包里的种子，记得先囤货"
+                     if int(item.get("auto_plant", 0) or 0) else
+                     f"💡 现在偷菜成功率：{fm.steal_base_rate}% + "
+                     f"{fm.steal_bonus_of(group_id, uid)}%")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    async def _handle_farm_equip_tool(self, event, group_id, uid, arg):
+        """「装备工具 名字」—— 装备 / 卸下农机（开关式）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            async for _r in self._farm_send(
+                    event, "❌ 农场模块未加载，请查看后台日志"):
+                yield _r
+            return
+        pre = self._farm_prepare(group_id, uid)
+        _owned = fm.tools_owned(group_id, uid)
+        _equip = self._farm_names("cmd_farm_equip_tool", "装备工具")[0]
+        if not _owned:
+            async for _r in self._farm_send(event, "\n".join([
+                    "🤖 你还没有农机",
+                    f"💡 去「"
+                    f"{self._farm_names('cmd_farm_dog', '工具商店')[0]}」"
+                    f"用「"
+                    f"{self._farm_names('cmd_farm_buy_tool', '购买工具')[0]}"
+                    f" 名字」买",
+            ])):
+                yield _r
+            return
+        name = str(arg or "").strip()
+        if not name:
+            lines = ["⚠️ 要装备哪一台？", ""]
+            for i, x in enumerate(_owned):
+                lines.append(f"{self._farm_no(i)} {x['name']}"
+                             f"　{'✅ 已装备' if x['on'] else '未装备'}")
+            lines.append("")
+            lines.append(f"💡 用法：{_equip} 名字（或编号）——再发一次就卸下")
+            async for _r in self._farm_send(event, "\n".join(lines)):
+                yield _r
+            return
+        _key = name
+        if name.isdigit() and 1 <= int(name) <= len(_owned):
+            _key = _owned[int(name) - 1]["name"]
+        r = fm.toggle_tool(group_id, uid, _key)
+        if not r.get("ok"):
+            async for _r in self._farm_send(event, "\n".join([
+                    f"⚠️ 你家里没有「{name}」这台农机",
+                    f"💡 发「{_equip}」看不带参数的列表",
+            ])):
+                yield _r
+            return
+        _it = r.get("item") or {}
+        _eff = []
+        if int(_it.get("auto_harvest", 0) or 0):
+            _eff.append("每天自动收获")
+        if int(_it.get("auto_plant", 0) or 0):
+            _eff.append("每天自动播种")
+        if int(_it.get("steal_bonus", 0) or 0):
+            _eff.append(f"偷菜成功率 +{_it['steal_bonus']}%")
+        lines = [f"{'✅ 已装备' if r.get('on') else '⏸ 已卸下'}：{r['name']}"]
+        if _eff:
+            lines.append("⚙️ 功能：" + "、".join(_eff))
+        _cur = fm.steal_bonus_of(group_id, uid)
+        lines.append(f"🥕 当前偷菜加成：+{_cur}%"
+                     f"（成功率 = {fm.steal_base_rate}% + {_cur}%"
+                     f" − 对方看门犬防偷）")
+        if int(_it.get("steal_bonus", 0) or 0) == 0:
+            lines.append("💡 每天自动干活一次，结果只记在「农场状态」里，"
+                         "不会发群消息")
+        async for _r in self._farm_send(event, "\n".join(lines)):
+            yield _r
+
+    # ── ★ 农机每日自动干活（静默；后台定时任务 + 惰性兜底）────
+    def _farm_auto_run(self, group_id, uid, now=None) -> dict:
+        """
+        给一个人跑一次「今天的农机自动作业」（静默，不发送任何消息）。
+
+        返回 {"ran","reason","harvested","earned","planted","exp"}
+        · 只跑**今天还没跑过**的；没装备农机 -> 不跑
+        · 自动收割机：收所有成熟的并直接卖掉（积分进钱包）
+        · 自动播种机：从背包挑最贵的可用种子，把空地都种上
+        """
+        fm = getattr(self, "farm_module", None)
+        if fm is None:
+            return {"ran": False, "reason": "nomod"}
+        if not bool(getattr(self, "farm_auto_enable", True)):
+            return {"ran": False, "reason": "disabled"}
+        now = int(now or time.time())
+        if not fm.auto_due(group_id, uid, now):
+            return {"ran": False, "reason": "not_due"}
+        _do_h = fm.has_machine(group_id, uid, "auto_harvest")
+        _do_p = fm.has_machine(group_id, uid, "auto_plant")
+        out = {"ran": True, "reason": "", "harvested": 0, "earned": 0,
+               "planted": 0, "exp": 0, "auto_harvest": _do_h,
+               "auto_plant": _do_p}
+        # ① 自动收割
+        if _do_h:
+            try:
+                r = fm.harvest(group_id, uid, index=None, now=now)
+            except Exception:
+                logger.exception("[farm] 自动收割失败")
+                r = {}
+            picked = r.get("picked") or []
+            if picked:
+                self._farm_earn(group_id, uid, int(r.get("total") or 0))
+                t = fm.today(group_id, uid, now)
+
+                def _ti(_v):
+                    try:
+                        return int(_v or 0)
+                    except Exception:
+                        return 0
+
+                t["harvest_times"] = _ti(t.get("harvest_times")) + 1
+                t["harvest_crops"] = _ti(t.get("harvest_crops")) + len(picked)
+                t["earned"] = _ti(t.get("earned")) + int(r.get("total") or 0)
+                t["auto_harvest"] = _ti(t.get("auto_harvest")) + len(picked)
+                _up = r.get("exp") or {}
+                out["exp"] = int(_up.get("gain") or 0)
+                fm.save()
+                out["harvested"] = len(picked)
+                out["earned"] = int(r.get("total") or 0)
+                logger.info("[farm] 自动收割机：群=%s 用户=%s 收 %d 块，"
+                            "进账 %d", group_id, uid, len(picked),
+                            out["earned"])
+        # ② 自动播种
+        if _do_p:
+            try:
+                _pre = self._farm_prepare(group_id, uid)
+                lv = int(_pre.get("level") or 1)
+                _n = 0
+                for _ in range(60):          # 上限保护（最多 30 块地）
+                    pick = fm.best_seed_for(group_id, uid, lv)
+                    if not pick:
+                        break
+                    if not fm.bag_take(group_id, uid, pick["name"], 1):
+                        break
+                    rr = fm.plant(group_id, uid, pick["seed"], now)
+                    if not rr.get("ok"):
+                        fm.bag_add(group_id, uid, pick["name"], 1)
+                        break
+                    _n += 1
+                if _n:
+                    fm.note(group_id, uid, "planted", _n, now)
+                    fm.note(group_id, uid, "auto_plant", _n, now)
+                    fm.save()
+                    out["planted"] = _n
+                    logger.info("[farm] 自动播种机：群=%s 用户=%s 播 %d 块",
+                                group_id, uid, _n)
+            except Exception:
+                logger.exception("[farm] 自动播种失败")
+        fm.auto_mark(group_id, uid, now)
+        return out
+
+    def _farm_auto_all(self) -> dict:
+        """给**所有**农场存档跑一次今天的自动作业（后台定时任务用）"""
+        fm = getattr(self, "farm_module", None)
+        if fm is None or not getattr(fm, "enable", True):
+            return {"users": 0, "ran": 0}
+        keys = fm.all_user_keys()
+        ran = 0
+        for gid, uid in keys:
+            try:
+                if self._farm_auto_run(gid, uid).get("ran"):
+                    ran += 1
+            except Exception:
+                logger.exception("[farm] 自动作业失败：群=%s 用户=%s",
+                                 gid, uid)
+        return {"users": len(keys), "ran": ran}
+
+    # ── 参数拆分 ──────────────────────────────────────────────
+    @staticmethod
+    def _farm_split_arg(arg):
+        """
+        把「肥料名 [地块编号]」拆成 (名字, 编号或 None)。
+
+        支持 `复合肥`、`复合肥 3`、`复合肥3` 三种写法。
+        """
+        t = " ".join(str(arg or "").replace("\u3000", " ").split()).strip()
+        if not t:
+            return "", None
+        parts = t.split()
+        if len(parts) >= 2 and parts[-1].isdigit():
+            return " ".join(parts[:-1]).strip(), int(parts[-1]) - 1
+        if len(parts) == 1:
+            import re as _re
+            m = _re.match(r"^(.*?)(\d+)$", parts[0])
+            if m and m.group(1).strip():
+                return m.group(1).strip(), int(m.group(2)) - 1
+        return t, None
+
+    @staticmethod
+    def _farm_split2(arg):
+        """
+        把「名字 [附加参数]」拆成 (名字, 附加参数或 "")。
+
+        用于「喂食 狗粮 柴犬」这种——第一段是物品名，后面全是附加参数。
+        """
+        t = " ".join(str(arg or "").replace("\u3000", " ").split()).strip()
+        if not t:
+            return "", ""
+        parts = t.split(" ", 1)
+        if len(parts) == 1:
+            return parts[0], ""
+        return parts[0], parts[1].strip()
+
+    async def _dispatch_farm(self, event, msg_str, group_id):
+        """
+        农场指令总调度。
+
+        顺序：**菜单入口** -> 查看 -> 收获 -> 三家店 -> 我的家畜 / 被偷记录
+              -> 购买 -> 施肥/喂食 -> 偷菜 -> 种菜。
+        命中后一定会发东西（不会静默）。
+        """
+        if self._is_farm_menu(msg_str):
+            async for _r in self._farm_send(event, self._build_farm_menu()):
+                yield _r
+            return
+        # ★ 下级菜单（种植管理 / 种子图鉴 / 农具图鉴 / 家畜图鉴 /
+        #   农机图鉴 / 偷菜玩法）—— 先判菜单，再判动作指令
+        _sub = self._farm_sub_menu(msg_str)
+        if _sub:
+            async for _r in self._farm_send(
+                    event, self._build_farm_sub_menu(_sub)):
+                yield _r
+            return
+        try:
+            uid = to_str(event.get_sender_id())
+        except Exception:
+            uid = ""
+        if not group_id or not uid:
+            async for _r in self._farm_send(event, "⚠️ 请在群聊里玩农场"):
+                yield _r
+            return
+        for attr, dflt, fn in (
+                ("cmd_farm_view", "我的农场", self._handle_farm_view),
+                ("cmd_farm_harvest_all", "一键收获",
+                 self._handle_farm_harvest_all),
+                ("cmd_farm_harvest", "收获", self._handle_farm_harvest),
+                ("cmd_farm_shop", "种子商店", self._handle_farm_shop),
+                ("cmd_farm_impl_shop", "农具商店",
+                 self._handle_farm_item_shop),
+                ("cmd_farm_dog", "工具商店", self._handle_farm_dog_shop),
+                ("cmd_farm_my_animals", "我的家畜",
+                 self._handle_farm_my_animals),
+                ("cmd_farm_steal_log", "被偷记录",
+                 self._handle_farm_steal_log),
+                ("cmd_farm_buy_seed", "购买种子", self._handle_farm_buy_seed),
+                ("cmd_farm_buy_item", "购买肥料", self._handle_farm_buy_item),
+                ("cmd_farm_buy_dog", "购买家畜", self._handle_farm_buy_dog),
+                ("cmd_farm_buy_feed", "购买饲料",
+                 self._handle_farm_buy_feed),
+                ("cmd_farm_equip_dog", "装备家畜",
+                 self._handle_farm_equip_dog),
+                ("cmd_farm_use_item", "施肥", self._handle_farm_use_item),
+                ("cmd_farm_feed", "喂食", self._handle_farm_feed),
+                ("cmd_farm_steal", "偷菜", self._handle_farm_steal),
+                ("cmd_farm_bag", "我的背包", self._handle_farm_bag),
+                ("cmd_farm_status", "农场状态", self._handle_farm_status),
+                ("cmd_farm_land", "土地状态", self._handle_farm_land),
+                ("cmd_farm_buy_tool", "购买工具",
+                 self._handle_farm_buy_tool),
+                ("cmd_farm_equip_tool", "装备工具",
+                 self._handle_farm_equip_tool),
+                ("cmd_farm_plant", "种菜", self._handle_farm_plant),
+        ):
+            arg = self._farm_match(msg_str, attr, dflt)
+            if arg is None:
+                continue
+            async for _r in fn(event, group_id, uid, arg):
+                yield _r
+            return
+        async for _r in self._farm_send(event, self._build_farm_menu()):
+            yield _r
+
     @filter.event_message_type(EventMessageType.ALL)
     async def on_msg(self, event: AstrMessageEvent):
         GLOBAL_STATS["recv"] += 1
@@ -8922,6 +11780,11 @@ class ApixIqfkSimpleMeme(Star):
             await ensure_daily_news(self)
         except Exception:
             logger.exception("[apix-meme] ensure_daily_news 调用失败")
+        # ★★ 1.6.0：农场农机自动作业（种下去就不用管）
+        try:
+            await ensure_farm_auto(self)
+        except Exception:
+            logger.exception("[apix-meme] ensure_farm_auto 调用失败")
 
         if not self._dirty:
             self.reload_cfg()
@@ -12442,8 +15305,67 @@ class ApixIqfkSimpleMeme(Star):
             GLOBAL_STATS["send"] += 1
             return
 
+        _farm_hit = self._is_farm_menu(msg_str)
+        if not _farm_hit and self._farm_sub_menu(msg_str):
+            _farm_hit = True
+        if not _farm_hit:
+            for _fa, _fd in (("cmd_farm_view", "我的农场"),
+                             ("cmd_farm_plant", "种菜"),
+                             ("cmd_farm_harvest_all", "一键收获"),
+                             ("cmd_farm_harvest", "收获"),
+                             ("cmd_farm_shop", "种子商店"),
+                             ("cmd_farm_buy_seed", "购买种子"),
+                             ("cmd_farm_impl_shop", "农具商店"),
+                             ("cmd_farm_buy_item", "购买肥料"),
+                             ("cmd_farm_use_item", "施肥"),
+                             ("cmd_farm_dog", "工具商店"),
+                             ("cmd_farm_buy_dog", "购买家畜"),
+                             ("cmd_farm_feed", "喂食"),
+                             ("cmd_farm_buy_feed", "购买饲料"),
+                             ("cmd_farm_equip_dog", "装备家畜"),
+                             ("cmd_farm_my_animals", "我的家畜"),
+                             ("cmd_farm_steal", "偷菜"),
+                             ("cmd_farm_steal_log", "被偷记录"),
+                             ("cmd_farm_bag", "我的背包"),
+                             ("cmd_farm_status", "农场状态"),
+                             ("cmd_farm_land", "土地状态"),
+                             ("cmd_farm_buy_tool", "购买工具"),
+                             ("cmd_farm_equip_tool", "装备工具")):
+                if self._farm_match(msg_str, _fa, _fd) is not None:
+                    _farm_hit = True
+                    break
+        if _farm_hit:
+            if not getattr(self, "farm_enable", True):
+                GLOBAL_STATS["send"] += 1
+                return
+            if not group_allowed(group_id,
+                                 getattr(self, "farm_groups", [])):
+                GLOBAL_STATS["send"] += 1
+                return
+            if not self._is_group_feature_enable(group_id, "farm"):
+                GLOBAL_STATS["send"] += 1
+                return
+            # ★★ 2.1.0（后续调整）：农场**跟随本群输出模式**（不再强制图片）
+            async for _r in self._dispatch_farm(event, msg_str, group_id):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+
         if self._is_entertain_menu(msg_str):
             async for _r in self._send_content(event, self._build_entertain_menu()):
+                yield _r
+            GLOBAL_STATS["send"] += 1
+            return
+
+        # ★★ 1.5.1：音乐功能菜单入口（默认「音乐功能」，后台 menu_music_names 可改）
+        if self._is_music_menu(msg_str):
+            if self.music_module is None or not self.music_module.enable:
+                GLOBAL_STATS["send"] += 1
+                return
+            if not self.music_module.is_group_allowed(group_id):
+                GLOBAL_STATS["send"] += 1
+                return
+            async for _r in self._send_content(event, self._build_music_menu()):
                 yield _r
             GLOBAL_STATS["send"] += 1
             return
@@ -12512,6 +15434,343 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
                 GLOBAL_STATS["send"] += 1
                 return
+
+        # ==================================================================
+        # ★★ 1.5.1：音乐功能（点歌 / 搜歌 / 选歌 / 音源 / 榜单随机）
+        #
+        #   ★ 只发**音乐卡片**：AstrBot 原生 `Music` 组件 + 平台适配器签名。
+        #   ★ 音源只有三个：netease / qq / kugou。
+        #   ★ 卡片封面只有两种：音源 LOGO / 点歌人头像（都是直链，不缓存）。
+        # ==================================================================
+        _music = getattr(self, "music_module", None)
+
+        # —— 音源切换（不带参数 = 查看当前与全部音源）——
+        _music_src = _music.match_source(msg_str) if _music is not None else None
+        if _music_src is not None:
+            if not _music.enable:
+                GLOBAL_STATS["send"] += 1
+                return
+            if not _music.is_group_allowed(group_id):
+                logger.warning(f"[apix-meme] 群 {group_id} 未开启音乐功能，忽略指令")
+                GLOBAL_STATS["send"] += 1
+                return
+            try:
+                if not _music_src:
+                    async for _r in self._send_content(
+                            event, _music.build_source_text()):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                if not await self._check_admin(event):
+                    async for _r in self._send_content(
+                            event, "⚠️仅管理员/群主/群管/插件专属管理员可执行"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                _code, _serr = _music.parse_source_arg(_music_src)
+                if _serr:
+                    _avail = " / ".join(_music.source_label(c)
+                                        for c in _music.source_order())
+                    async for _r in self._send_content(
+                            event,
+                            f"⚠️ 无法识别的音源：{_music_src}\n"
+                            f"💡 可选：{_avail}"
+                            "\n　 （酷我 / 咪咕 / 千千 已下线）"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                _music.source = _code
+                _saved = self._write_music_source(_code)
+                _lines = [
+                    f"{title_bar('音源切换')}",
+                    "",
+                    f"✅ 已切换到：{_music.source_label(_code)}",
+                ]
+                if not _saved:
+                    _lines.append("⚠️ 写入配置失败，重启后可能失效")
+                _lines.append("")
+                _lines.append(f"💡 用「{_music.search_name} 歌名」开始点歌")
+                async for _r in self._send_content(event, "\n".join(_lines)):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+            except Exception:
+                logger.exception("[apix-meme] 切换音源失败")
+                async for _r in self._send_content(event, "❌ 切换失败"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+            return
+
+        # —— 搜歌（先出列表，再用「选歌 序号」挑）——
+        if _music is not None:
+            _find_src = _music.match_find_by_source(msg_str)
+            _find_q = _music.match_find(msg_str)
+            if _find_src is not None or _find_q is not None:
+                if not _music.enable:
+                    GLOBAL_STATS["send"] += 1
+                    return
+                if not _music.is_group_allowed(group_id):
+                    logger.warning(f"[apix-meme] 群 {group_id} 未开启音乐功能，忽略指令")
+                    GLOBAL_STATS["send"] += 1
+                    return
+                _fsrc = _find_src[0] if _find_src is not None else ""
+                _fq = (_find_src[1] if _find_src is not None else _find_q)
+                _flabel = _music.source_label(_fsrc) if _fsrc else ""
+                _fcmd = _music.find_name
+                try:
+                    if not _fq:
+                        async for _r in self._send_content(
+                                event,
+                                f"{title_bar(f'{_flabel}{_fcmd}' if _flabel else _fcmd)}\n"
+                                f"用法：「{_flabel}{_fcmd} 歌名」\n"
+                                f"　 例：{_flabel}{_fcmd} 不要说话\n"
+                                f"\n"
+                                f"💡 输出歌曲列表（最多 {_music.limit} 首），"
+                                f"再用「{_music.pick_name} 序号」挑一首"
+                                + (f"\n💡 只这一次用{_flabel}，默认音源不变"
+                                   f"（当前：{_music.source_label(_music.source)}）"
+                                   if _fsrc else "")):
+                            yield _r
+                        GLOBAL_STATS["send"] += 1
+                        return
+                    items, err = await _music.search(_fq, _fsrc or None)
+                    if err == "empty":
+                        async for _r in self._send_content(
+                                event,
+                                f"⚠️ 请给出歌名，例：{_flabel}{_fcmd} 不要说话"):
+                            yield _r
+                    elif err:
+                        async for _r in self._send_content(
+                                event, f"❌ 搜索失败：{err}"):
+                            yield _r
+                    elif not items:
+                        async for _r in self._send_content(
+                                event, _music.empty_hint(_fq, _flabel)):
+                            yield _r
+                    else:
+                        _music.save_session(
+                            group_id, to_str(event.get_sender_id()), items,
+                            _fsrc or _music.source)
+                        async for _r in self._send_content(
+                                event, _music.build_search_text(_fq, items)):
+                            yield _r
+                    GLOBAL_STATS["send"] += 1
+                except Exception:
+                    logger.exception("[apix-meme] 搜歌失败")
+                    async for _r in self._send_content(event, "❌ 搜索失败，请稍后再试"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                return
+
+        # —— 点歌（直接播第一首）：音源专属写法 `QQ点歌 歌名` ——
+        if _music is not None:
+            _src_query = _music.match_search_by_source(msg_str)
+            if _src_query is not None:
+                _src_code, _mq = _src_query
+                if not _music.enable:
+                    GLOBAL_STATS["send"] += 1
+                    return
+                if not _music.is_group_allowed(group_id):
+                    logger.warning(f"[apix-meme] 群 {group_id} 未开启音乐功能，忽略指令")
+                    GLOBAL_STATS["send"] += 1
+                    return
+                _src_label = _music.source_label(_src_code)
+                try:
+                    if not _mq:
+                        async for _r in self._send_content(event, "\n".join([
+                                f"{title_bar(f'{_src_label}点歌')}",
+                                f"用法：「{_src_label}{_music.search_name} 歌名」",
+                                f"　 例：{_src_label}{_music.search_name} 不要说话",
+                                "",
+                                f"💡 只这一首用{_src_label}，默认音源不变"
+                                f"（当前：{_music.source_label(_music.source)}）",
+                        ])):
+                            yield _r
+                        GLOBAL_STATS["send"] += 1
+                        return
+                    items, err = await _music.search(_mq, _src_code)
+                    if err == "empty":
+                        async for _r in self._send_content(
+                                event,
+                                f"⚠️ 请给出歌名，例：{_src_label}{_music.search_name} 不要说话"):
+                            yield _r
+                    elif err:
+                        async for _r in self._send_content(
+                                event, f"❌ 搜索失败：{err}"):
+                            yield _r
+                    elif not items:
+                        async for _r in self._send_content(
+                                event, _music.empty_hint(_mq, _src_label)):
+                            yield _r
+                    else:
+                        async for _r in self._music_play_pick(
+                                event, group_id, "", _music, items[0],
+                                _src_code, skip_search=True):
+                            yield _r
+                    GLOBAL_STATS["send"] += 1
+                except Exception:
+                    logger.exception("[apix-meme] 点歌失败（指定音源）")
+                    async for _r in self._send_content(event, "❌ 搜索失败，请稍后再试"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                return
+
+        # —— 榜单随机（新歌榜随机 / 热歌榜随机）——
+        _span_kind = None
+        if _music is not None:
+            try:
+                _span_kind = _music.match_span(msg_str)
+            except Exception:
+                _span_kind = None
+        if _span_kind is not None:
+            if not _music.enable:
+                GLOBAL_STATS["send"] += 1
+                return
+            if not _music.is_group_allowed(group_id):
+                logger.warning(f"[apix-meme] 群 {group_id} 未开启音乐功能，忽略榜单随机")
+                GLOBAL_STATS["send"] += 1
+                return
+            try:
+                _rs = None
+                if music_toplist is not None:
+                    _rs = await music_toplist.random_song(_span_kind, logger=logger)
+                if not _rs:
+                    async for _r in self._send_content(
+                            event, "❌ 榜单取歌失败，请稍后再试（网络或接口波动）"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                _q = _rs["name"]
+                if _rs.get("artist"):
+                    _q = f"{_rs['name']} {_rs['artist']}"
+                logger.info("[apix-meme] 榜单随机 %s -> %r",
+                            _rs.get("label"), _q)
+                items, _err = await _music.search(_q)
+                if (not items) and _rs.get("artist"):
+                    items, _err = await _music.search(_rs["name"])
+                if not items:
+                    async for _r in self._send_content(
+                            event,
+                            f"⚠️ 抽到「{_rs['name']}」但没搜到资源，换一首再试\n"
+                            f"　 来源：QQ音乐{_rs.get('label', '')}"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                async for _r in self._music_play_pick(
+                        event, group_id, "", _music, items[0],
+                        _music.source, skip_search=True):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+            except Exception:
+                logger.exception("[apix-meme] 榜单随机失败")
+                async for _r in self._send_content(event, "❌ 播放失败，请稍后再试"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+            return
+
+        # —— 点歌（默认音源，直接播第一首）——
+        _music_q = _music.match_search(msg_str) if _music is not None else None
+        if _music_q is not None:
+            if not _music.enable:
+                GLOBAL_STATS["send"] += 1
+                return
+            if not _music.is_group_allowed(group_id):
+                logger.warning(f"[apix-meme] 群 {group_id} 未开启音乐功能，忽略指令")
+                GLOBAL_STATS["send"] += 1
+                return
+            try:
+                if not _music_q:
+                    async for _r in self._send_content(event, "\n".join([
+                            f"{title_bar('点歌')}",
+                            f"用法：「{_music.search_name} 歌名」",
+                            f"　 例：{_music.search_name} 不要说话",
+                    ])):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                items, err = await _music.search(_music_q)
+                if err == "empty":
+                    async for _r in self._send_content(
+                            event,
+                            f"⚠️ 请给出歌名，例：{_music.search_name} 不要说话"):
+                        yield _r
+                elif err:
+                    async for _r in self._send_content(
+                            event, f"❌ 搜索失败：{err}"):
+                        yield _r
+                elif not items:
+                    async for _r in self._send_content(
+                            event, _music.empty_hint(_music_q)):
+                        yield _r
+                else:
+                    async for _r in self._music_play_pick(
+                            event, group_id, "", _music, items[0],
+                            _music.source, skip_search=True):
+                        yield _r
+                GLOBAL_STATS["send"] += 1
+            except Exception:
+                logger.exception("[apix-meme] 点歌失败")
+                async for _r in self._send_content(event, "❌ 搜索失败，请稍后再试"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+            return
+
+        # —— 选歌 ——
+        _music_pick = _music.match_pick(msg_str) if _music is not None else None
+        if _music_pick is not None:
+            if not _music.enable:
+                GLOBAL_STATS["send"] += 1
+                return
+            if not _music.is_group_allowed(group_id):
+                logger.warning(f"[apix-meme] 群 {group_id} 未开启音乐功能，忽略指令")
+                GLOBAL_STATS["send"] += 1
+                return
+            try:
+                if not _music_pick:
+                    async for _r in self._send_content(event, "\n".join([
+                            f"{title_bar('点歌')}",
+                            f"用法：「{_music.pick_name} 序号」",
+                            f"　 先搜索：{_music.find_name} 歌名",
+                    ])):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                _uid = to_str(event.get_sender_id())
+                _sess_src = _music.get_session_source(group_id, _uid)
+                items, _serr = _music.consume_session(group_id, _uid)
+                if _serr == "used":
+                    async for _r in self._send_content(
+                            event,
+                            "⚠️ 这次搜索已经选过歌了（一次搜索只能选一首）\n"
+                            f"💡 想再选请重新「{_music.find_name} 歌名」"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                if not items:
+                    async for _r in self._send_content(
+                            event,
+                            "⚠️ 还没有搜索结果\n"
+                            f"💡 先「{_music.find_name} 歌名」，"
+                            f"再「{_music.pick_name} 序号」"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                idx = _music.parse_index(_music_pick)
+                if idx < 1 or idx > len(items):
+                    _music.restore_session(group_id, _uid)
+                    async for _r in self._send_content(
+                            event, f"⚠️ 序号超出范围（1-{len(items)}）"):
+                        yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+                async for _r in self._music_play_pick(
+                        event, group_id, _uid, _music, items[idx - 1], _sess_src):
+                    yield _r
+            except Exception:
+                logger.exception("[apix-meme] 选歌失败")
+                async for _r in self._send_content(event, "❌ 点歌失败，请稍后再试"):
+                    yield _r
+                GLOBAL_STATS["send"] += 1
+            return
 
         async for _r in self._dispatch_qqinfo(event, msg_str, group_id):
             yield _r
@@ -12683,6 +15942,74 @@ class ApixIqfkSimpleMeme(Star):
                     yield _r
                 GLOBAL_STATS["send"] += 1
                 return
+
+        # ★★ 1.5.1：音乐指令兜底 —— 「点歌/搜歌 + 与指令重名的歌名」。
+        #
+        # 为什么需要：
+        #   `path_utils._looks_like_arg()` 和 `music._arg_is_other_cmd()`
+        #   都会把「和已知指令重名」的词判成**别的指令**，避免
+        #   `点歌功能` 这类被当成歌名搜掉。
+        #   副作用：**跟指令重名的歌名就永远搜不了**（例如「打工」「天气」）。
+        #
+        #   这里加的兜底：用户明确写了 `点歌`/`搜歌` 前缀时，说明他要搜歌；
+        #   既然上面精确匹配都没命中，就把剩下的部分当歌名。
+        #   ★ `点歌打工` -> 直接播第一首（同 `点歌 歌名`）
+        #     `搜歌打工` -> 输出歌曲列表（同 `搜歌 歌名`）
+        _fbm = getattr(self, "music_module", None)
+        if _fbm is not None and _fbm.enable:
+            try:
+                _fb = ""
+                _fbrest = ""
+                _fb_is_list = False
+                _pairs = [(str(x), True) for x in
+                          (getattr(_fbm, "find_names", None) or []) if x] + \
+                    [(str(x), False) for x in
+                     (getattr(_fbm, "search_names", None) or []) if x]
+                for _nm, _is_list in sorted(_pairs, key=lambda x: len(x[0]),
+                                            reverse=True):
+                    for _canon in (_nm, "/" + _nm):
+                        if not msg_str.startswith(_canon):
+                            continue
+                        _tail = msg_str[len(_canon):]
+                        if not _tail:
+                            break
+                        if not _tail[0].isspace() and not _tail[0].isalnum():
+                            break
+                        if _tail.strip():
+                            _fb, _fbrest, _fb_is_list = _nm, _tail.strip(), _is_list
+                        break
+                    if _fb:
+                        break
+                if _fb and _fbrest and _fbm.is_group_allowed(group_id):
+                    logger.info(
+                        f"[apix-meme] 音乐兜底：「{_fb}{_fbrest}」"
+                        f"（歌名与其它指令重名）-> "
+                        f"{'出列表' if _fb_is_list else '直接播第一首'}")
+                    items, err = await _fbm.search(_fbrest, None)
+                    if err:
+                        async for _r in self._send_content(
+                                event, f"❌ 搜索失败：{err}"):
+                            yield _r
+                    elif not items:
+                        async for _r in self._send_content(
+                                event, _fbm.empty_hint(_fbrest, "")):
+                            yield _r
+                    elif _fb_is_list:
+                        _fbm.save_session(
+                            group_id, to_str(event.get_sender_id()), items,
+                            _fbm.source)
+                        async for _r in self._send_content(
+                                event, _fbm.build_search_text(_fbrest, items)):
+                            yield _r
+                    else:
+                        async for _r in self._music_play_pick(
+                                event, group_id, "", _fbm, items[0],
+                                _fbm.source, skip_search=True):
+                            yield _r
+                    GLOBAL_STATS["send"] += 1
+                    return
+            except Exception:
+                logger.exception("[apix-meme] 音乐兜底搜索失败")
 
         if (self.meme_enable
                 and group_allowed(group_id, self.meme_groups)

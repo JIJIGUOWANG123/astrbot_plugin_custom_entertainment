@@ -138,13 +138,65 @@ async function loadBirdStatus() {
 
 /** 走插件自己的 /bankFrozen 路由（同源，不受跨域限制） */
 async function bankFrozenCall(params) {
-  const qs = new URLSearchParams(params || {}).toString();
+  // ★★ 1.9.1 修复：以前**所有**操作都走 `bridge.apiGet("bankFrozen?...")`
+  //   —— 只查询（无参数）能通，但**解冻**（带 qq/gid）走不通，
+  //   兜底的同源 fetch 抛 `TypeError: Failed to fetch`，
+  //   把桥接的真实错误盖掉，用户只看到没头没尾的失败。
+  //
+  //   后端 `/bankFrozen` 本来就支持 **POST + JSON 体**，
+  //   所以写操作改走 POST。三级兜底，不依赖某个全局 helper 一定存在。
+  const p = params || {};
+  const isWrite = Object.keys(p).length > 0;
   let lastErr = "";
-  // ① 优先桥接（带超时）
+
+  if (isWrite) {
+    // ① 插件自己的 POST helper（本地版有）
+    if (typeof pluginApiPost === "function") {
+      try {
+        const r = await pluginApiPost("bankFrozen", p);
+        if (r && r.ok !== false) return r;
+        lastErr = (r && (r.msg || r.error)) || "桥接返回失败";
+      } catch (e) {
+        lastErr = `${e.name || "错误"}: ${e.message || e}`;
+      }
+    }
+    // ② 桥接 POST
+    if (bridgeReady && bridge && typeof bridge.apiPost === "function") {
+      try {
+        const r = await Promise.race([
+          bridge.apiPost("bankFrozen", p),
+          new Promise((_, rej) =>
+            setTimeout(() => rej(new Error("桥接超时")), 8000)),
+        ]);
+        if (r && r.ok !== false) return r;
+        lastErr = (r && (r.msg || r.error)) || "桥接返回失败";
+      } catch (e) {
+        if (!lastErr) lastErr = `${e.name || "错误"}: ${e.message || e}`;
+      }
+    }
+    // ③ 同源 POST（JSON 体）
+    for (const route of buildRouteUrls("bankFrozen")) {
+      try {
+        const resp = await fetch(route, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(p),
+        });
+        const r = await resp.json();
+        if (r && r.ok !== false) return r;
+        lastErr = (r && (r.msg || r.error)) || "返回失败";
+      } catch (e) {
+        if (!lastErr) lastErr = `${e.name || "错误"}: ${e.message || e}`;
+      }
+    }
+    throw new Error(lastErr || "解冻失败");
+  }
+
+  // 只查询：桥接 GET（这条一直是通的）
   if (bridgeReady && bridge && typeof bridge.apiGet === "function") {
     try {
       const r = await Promise.race([
-        bridge.apiGet(`bankFrozen${qs ? "?" + qs : ""}`),
+        bridge.apiGet("bankFrozen"),
         new Promise((_, rej) =>
           setTimeout(() => rej(new Error("桥接超时")), 4000)),
       ]);
@@ -154,21 +206,17 @@ async function bankFrozenCall(params) {
       lastErr = `${e.name || "错误"}: ${e.message || e}`;
     }
   }
-  // ② 兜底：同源 fetch
   for (const route of buildRouteUrls("bankFrozen")) {
     try {
-      const u = qs ? `${route}${route.includes("?") ? "&" : "?"}${qs}` : route;
-      const r = await tryFetchJSON(u);
+      const r = await tryFetchJSON(route);
       if (r && r.ok !== false) return r;
       lastErr = (r && r.msg) || "返回失败";
     } catch (e) {
-      lastErr = `${e.name || "错误"}: ${e.message || e}`;
+      if (!lastErr) lastErr = `${e.name || "错误"}: ${e.message || e}`;
     }
   }
   throw new Error(lastErr || "无法连接插件");
 }
-
-/** 拉取冻结列表（不传参数 = 只查询） */
 async function loadBankFrozen() {
   try {
     const r = await bankFrozenCall({});
@@ -380,21 +428,39 @@ function buildBankFrozenHtml() {
   inner += `<div class="muted small" style="margin-bottom:8px">
     共 <b style="color:#e57373">${BANK_FROZEN.length}</b> 个账号冻结中
   </div>`;
-  inner += `<div class="bird-status-list">`;
+  // ★★ 1.9.1：以前复用 `.bird-status-list`（横向 flex）——
+  //   卡片一多、「解除冻结」按钮就被挤到框框外面去了。
+  //   改成**自适应网格**：每列最小 240px，自动换行，按钮留在卡片内。
+  // ★★ 1.9.1：卡片的 CSS 类是 `.bird-status-item`，它带**固定 width:168px** ——
+  //   放在网格列里会空出一截，看着"间隔很大"。下面用 width:100% 覆盖掉，
+  //   列宽也调小，用户多的时候更省空间。
+  inner += `<div class="bank-frozen-grid" style="
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(170px,1fr));
+    gap:8px;
+    align-items:stretch;
+    margin-top:4px">`;
   BANK_FROZEN.forEach((r) => {
     const gid = String((r && r.group_id) || "");
     const uid = String((r && r.user_id) || "");
     const nm = String((r && r.name) || "").trim() || `QQ${uid}`;
     const left = String((r && r.left_text) || "").trim() || "—";
     const until = String((r && r.until_text) || "").trim();
-    inner += `<div class="bird-status-item miss">
-      <div><b>${esc(nm)}</b>
+    inner += `<div class="bird-status-item miss" style="
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+      width:100%;
+      max-width:none;
+      min-width:0;
+      box-sizing:border-box">
+      <div style="word-break:break-all"><b>${esc(nm)}</b>
         <span class="muted">（QQ ${esc(uid)}）</span></div>
-      <div class="muted small">群 ${esc(gid)}　剩余 <b>${esc(left)}</b>${
-        until ? `　解冻时间 ${esc(until)}` : ""}</div>
+      <div class="muted small" style="word-break:break-all">群 ${esc(gid)}　剩余 <b>${esc(left)}</b>${
+        until ? `<br>解冻时间 ${esc(until)}` : ""}</div>
       <button class="btn btn-sm btn-danger" data-action="bank-unfreeze"
               data-gid="${esc(gid)}" data-qq="${esc(uid)}"
-              style="margin-top:6px">🗑 解除冻结</button>
+              style="margin-top:auto;align-self:stretch">🗑 解除冻结</button>
     </div>`;
   });
   inner += `</div>`;
@@ -2535,7 +2601,7 @@ const VIEWS = {
     groups: [
       // ★★ 1.5.0：**所有**菜单入口名集中到这里（可逗号分隔多个）
       { title: "★ 菜单入口名（其余未列出的子菜单）",
-        keys: ["cmd_entertain_menu", "cmd_guess_menu", "cmd_qqinfo_menu", "cmd_race_menu", "cmd_weather_menu", "menu_auth_names", "menu_bank_fund_names", "menu_bank_loan_names", "menu_bank_rob_names", "menu_bank_save_names", "menu_checkin_bank_names", "menu_checkin_job_names", "menu_checkin_lottery_names", "menu_checkin_query_names", "menu_checkin_shop_help_names", "menu_checkin_signin_names", "menu_checkin_steal_names", "menu_mount_admin_names", "menu_mount_manage_names", "menu_pet_care_names", "menu_pet_fight_names", "menu_pet_item_names", "menu_pet_names", "menu_stats_names"] },
+        keys: ["cmd_entertain_menu", "cmd_guess_menu", "cmd_qqinfo_menu", "cmd_race_menu", "cmd_weather_menu", "menu_auth_names", "menu_bank_fund_names", "menu_bank_loan_names", "menu_bank_rob_names", "menu_bank_save_names", "menu_checkin_bank_names", "menu_checkin_job_names", "menu_checkin_lottery_names", "menu_checkin_query_names", "menu_checkin_shop_help_names", "menu_checkin_signin_names", "menu_checkin_steal_names", "menu_mount_admin_names", "menu_mount_manage_names", "menu_music_names", "menu_pet_care_names", "menu_pet_fight_names", "menu_pet_item_names", "menu_pet_names", "menu_stats_names"] },
       { title: "全局标题前缀（影响所有指令输出的标题）",
         keys: ["title_prefix"] },
       { title: "全局标题前缀说明", type: "hint", tone: "info",
@@ -2800,7 +2866,13 @@ const VIEWS = {
       { title: "群号黑名单（留空=所有群都生效）", keys: ["bank_groups"] },
       { title: "指令配置", keys: ["bank_trigger_names", "bank_deposit_names", "bank_withdraw_names"] },
       { title: "利率与结算", keys: ["bank_interest_rate", "bank_interest_hour"] },
-      { title: "借款（1.7.6）", keys: ["loan_enable", "loan_trigger_names", "loan_repay_names", "loan_info_names", "loan_max", "loan_interest_rate"] },
+      // ★★ 1.9.1：**每日借款上限**等新增项要放出来，否则后台根本看不到
+      { title: "借款（1.7.6）", keys: ["loan_enable", "loan_trigger_names", "loan_repay_names", "loan_info_names", "loan_max", "loan_daily_max", "loan_interest_rate"] },
+      { title: "每日借款上限说明", type: "hint", tone: "info", text:
+        "· `loan_daily_max` = **每个用户每天**累计最多能借多少（默认 **10 亿**）\n" +
+        "· 和「单次上限 `loan_max`」是**两道独立的闸门**，都要满足才借得到\n" +
+        "· 额度**每天 0 点重置**（跨天自动清零重新累计）\n" +
+        "· 填 `0` = 不限每日额度（只受单次上限约束）" },
       { title: "扣款方式（1.7.6）", keys: ["use_bank_pay"] },
       { title: "抢银行（1.7.6，银行子功能）",
         keys: ["rob_enable", "rob_trigger_names", "rob_success_rate",
@@ -2852,7 +2924,7 @@ const VIEWS = {
         "· 冻结期间**存/取/借/还/查询全部不可用**\n" +
         "· 默认成功率只有 5%，故意让人心疼 😈\n" +
         "· 群开关：`开启功能 抢银行` / `关闭功能 抢银行`" },
-      { title: "⏰ 逾期罚息 / 老赖（1.7.6 新增）", keys: ["loan_due_days", "loan_overdue_step_hours", "loan_overdue_rate", "loan_deadbeat_days", "loan_deadbeat_tag", "loan_overdue_notice"] },
+      { title: "⏰ 逾期罚息 / 老赖（1.7.6 新增）", keys: ["loan_due_days", "loan_overdue_step_hours", "loan_overdue_rate", "loan_deadbeat_days", "loan_deadbeat_tag", "loan_overdue_notice", "loan_wipe_enable", "loan_wipe_after_due_days"] },
       { title: "逾期规则说明", type: "hint", tone: "danger", text:
         "· 借款时记下**还款期限**（`loan_due_days` 天）；超过就开始算逾期\n" +
         "· 逾期后每 `loan_overdue_step_hours` 小时加一次罚息\n" +
@@ -3266,6 +3338,48 @@ const VIEWS = {
         "· **留空 = 所有群都生效**；填了群号 = 这些群**不生效**\n" +
         "· 多个群号用**英文逗号**隔开，例如：`123456,789012`\n" +
         "· 也可以在群里直接发 `关闭功能 猜拳功能` / `开启功能 猜拳功能`\n" +
+        "　 指令一发，本群号会**自动写进/移出**上面这个黑名单，后台立刻能看到\n" +
+        "· 想看某个群到底开着哪些功能：发 `功能状态`" },
+    ],
+  },
+  // ★★ 1.5.1：音乐功能（**只发卡片**）
+  music: {
+    title: "音乐功能",
+    groups: [
+      { title: "功能开关", keys: ["music_enable"] },
+      { title: "群号黑名单（留空=所有群都生效）", keys: ["music_groups"] },
+      { title: "指令配置（点歌=直接播第一首，搜歌=出列表）",
+        keys: ["cmd_music_search_names", "cmd_music_find_names",
+               "cmd_music_pick_names", "cmd_music_source_names",
+               "cmd_music_span_new_names", "cmd_music_span_hot_names",
+               "cmd_music_menu_extra_names"] },
+      { title: "接口地址与音源（音源只有 网易 / QQ / 酷狗，默认 QQ）",
+        keys: ["music_api_base", "music_default_source",
+               "music_search_limit"] },
+      { title: "🖼️ 卡片封面（二选一，都是直链）",
+        keys: ["music_card_cover_source"] },
+      { title: "音乐功能怎么用", type: "hint", tone: "tip", text:
+        "🎵 **点歌 歌名** —— 搜索后**直接播第一首**（不用选歌）\n" +
+        "🔍 **搜歌 歌名** —— 先出列表，再用「**选歌 序号**」挑一首\n" +
+        "🔊 **音源** —— 看全部音源与当前音源；「音源 酷狗」切换（仅管理员）\n" +
+        "🎲 **新歌榜随机** / **热歌榜随机** —— 从 QQ音乐榜单抽一首直接播\n" +
+        "\n**音源专属指令**（只这一首换音源，默认音源不变）\n" +
+        "```\n" +
+        "QQ点歌 歌名     网易点歌 歌名     酷狗点歌 歌名\n" +
+        "QQ搜歌 歌名     网易搜歌 歌名     酷狗搜歌 歌名\n" +
+        "```\n" +
+        "\n📇 **输出方式：只有音乐卡片**\n" +
+        "· 用 AstrBot 原生的 `Music` 消息组件，**签名交给平台适配器**，\n" +
+        "　 插件自己不调任何外部签名服务、不发语音\n" +
+        "· 卡片封面二选一：**音源 LOGO**（按歌曲音源显示对应平台 logo）\n" +
+        "　 或 **点歌人头像**（点歌那个群员的 QQ 头像）\n" +
+        "· 封面都是**直链地址**：不下载、不做图像处理、不写磁盘、不缓存\n" +
+        "\n🔌 **接口地址**：只能填**一个**，默认 `https://music.90svip.cn/`\n" +
+        "　 全插件所有音乐请求都走它。" },
+      { title: "群号黑名单怎么用", type: "hint", tone: "info", text:
+        "· **留空 = 所有群都生效**；填了群号 = 这些群**不生效**\n" +
+        "· 多个群号用**英文逗号**隔开，例如：`123456,789012`\n" +
+        "· 也可以在群里直接发 `关闭功能 音乐功能` / `开启功能 音乐功能`\n" +
         "　 指令一发，本群号会**自动写进/移出**上面这个黑名单，后台立刻能看到\n" +
         "· 想看某个群到底开着哪些功能：发 `功能状态`" },
     ],

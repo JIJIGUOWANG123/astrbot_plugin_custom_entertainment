@@ -59,6 +59,8 @@ COLLECTIONS = [
     "race_car_list",
     "race_lottery_pool",
     "race_npc_cars",
+    # ★★ 1.6.0：农场物品总表（种子 / 肥料 / 家畜 / 饲料 / 农机）
+    "farm_item_list",
 ]
 
 SUMMARY_FIELDS = {
@@ -78,6 +80,8 @@ SUMMARY_FIELDS = {
     "race_car_list": ("name", "price", "kind"),
     "race_lottery_pool": ("kind", "name", "weight"),
     "race_npc_cars": ("name", "speed", "accel", "handling"),
+    # ★★ 1.6.0：农场物品总表
+    "farm_item_list": ("kind", "name", "price", "level_req"),
 }
 
 TEMPLATE_KEYS = {

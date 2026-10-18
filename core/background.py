@@ -6,6 +6,7 @@ _mc_checker_lock = None
 _chime_checker_lock = None
 _status_push_lock = None
 _daily_news_lock = None
+_farm_auto_lock = None
 
 _BG_TASKS = {}
 
@@ -411,3 +412,61 @@ async def ensure_hourly_chime(plugin):
             logger.info("[apix-meme] 整点报时任务已启动")
         except Exception:
             logger.exception("[apix-meme] 启动整点报时任务失败")
+
+def _get_farm_auto_lock():
+    global _farm_auto_lock
+    if _farm_auto_lock is None:
+        _farm_auto_lock = asyncio.Lock()
+    return _farm_auto_lock
+async def farm_auto_checker(plugin):
+    await asyncio.sleep(45)
+    logger.info("[farm] 农场自动作业循环已启动（每个用户每天只跑一次，静默）")
+    while True:
+        try:
+            fm = getattr(plugin, "farm_module", None)
+            if fm is None or not getattr(fm, "enable", True):
+                await asyncio.sleep(120)
+                continue
+            if not bool(getattr(plugin, "farm_auto_enable", True)):
+                await asyncio.sleep(180)
+                continue
+            res = plugin._farm_auto_all()
+            if int(res.get("ran") or 0) > 0:
+                logger.info("[farm] 自动作业完成：%d / %d 个农场干了活"
+                            "（静默，未发群消息）",
+                            int(res.get("ran") or 0),
+                            int(res.get("users") or 0))
+            try:
+                _min = int(getattr(plugin, "farm_auto_interval_min", 10) or 10)
+            except Exception:
+                _min = 10
+            await asyncio.sleep(max(60, _min * 60))
+        except asyncio.CancelledError:
+            logger.info("[farm] 农场自动作业任务被取消")
+            raise
+        except Exception:
+            logger.exception("[farm] 农场自动作业循环异常")
+            await asyncio.sleep(300)
+
+async def ensure_farm_auto(plugin):
+    if getattr(plugin, "_farm_auto_started", False):
+        return
+    lock = _get_farm_auto_lock()
+    async with lock:
+        if getattr(plugin, "_farm_auto_started", False):
+            return
+        if getattr(plugin, "farm_module", None) is None:
+            return
+        plugin._farm_auto_started = True
+        try:
+            await _cancel_bg_task("farm_auto", "（启动新的之前）")
+        except Exception:
+            pass
+        try:
+            loop = asyncio.get_event_loop()
+            plugin._farm_auto_task = loop.create_task(
+                farm_auto_checker(plugin))
+            _register_bg_task("farm_auto", plugin._farm_auto_task)
+            logger.info("[apix-meme] 农场自动作业任务已启动")
+        except Exception:
+            logger.exception("[apix-meme] 启动农场自动作业任务失败")

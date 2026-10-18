@@ -18,6 +18,7 @@ PLUGIN_NICKNAME_DATA_FILENAME = f"{PLUGIN_ID}_nickname.json"
 PLUGIN_SPEAK_STATS_DATA_FILENAME = f"{PLUGIN_ID}_speak_stats.json"
 PLUGIN_AUTH_DATA_FILENAME = f"{PLUGIN_ID}_auth.json"
 PLUGIN_PET_DATA_FILENAME = f"{PLUGIN_ID}_pet.json"
+PLUGIN_FARM_DATA_FILENAME = f"{PLUGIN_ID}_farm.json"
 PLUGIN_BIRD_DATA_FILENAME = f"{PLUGIN_ID}_bird.json"
 PLUGIN_DATA_STORE_FILENAME = f"{PLUGIN_ID}_data.json"
 PLUGIN_RPS_DATA_FILENAME = f"{PLUGIN_ID}_rps.json"
@@ -26,6 +27,8 @@ PLUGIN_RACING_DATA_FILENAME = f"{PLUGIN_ID}_racing.json"
 PLUGIN_MSG_STATS_FILENAME = f"{PLUGIN_ID}_msg_stats.json"
 # ★★ 1.5.0：接口测试结果（落盘，重载插件 / 重进后台页面都还能看到上次结果）
 PLUGIN_API_TEST_FILENAME = f"{PLUGIN_ID}_api_test.json"
+# ★★ 1.5.1：音乐功能数据文件（搜歌会话等，当前只留占位，不写盘）
+PLUGIN_MUSIC_DATA_FILENAME = f"{PLUGIN_ID}_music.json"
 
 TITLE_PREFIX_DEFAULT = "铁剑娘系统："
 TITLE_PREFIX = TITLE_PREFIX_DEFAULT
@@ -907,6 +910,10 @@ def auth_data_path() -> str:
 def pet_data_path() -> str:
     return os.path.join(_cfg_dir(), PLUGIN_PET_DATA_FILENAME)
 
+def farm_data_path() -> str:
+    """★★ 1.6.0：农场存档（每群每人一块地，独立文件）"""
+    return os.path.join(_cfg_dir(), PLUGIN_FARM_DATA_FILENAME)
+
 def rps_data_path() -> str:
     """猜拳数据文件"""
     return os.path.join(_cfg_dir(), PLUGIN_RPS_DATA_FILENAME)
@@ -938,6 +945,15 @@ def bird_data_path() -> str:
 def racing_data_path() -> str:
     """赛车数据文件路径（市场版 1.1 新增）"""
     return os.path.join(_cfg_dir(), PLUGIN_RACING_DATA_FILENAME)
+
+def music_data_path() -> str:
+    """
+    音乐功能的数据文件路径（★ 1.5.1 新增）。
+
+    ★ 目前音乐模块的「搜歌 -> 选歌」会话只存在内存里，**不写盘**；
+      这里只是按插件统一规范把路径交出去，方便以后需要持久化时直接用。
+    """
+    return os.path.join(_cfg_dir(), PLUGIN_MUSIC_DATA_FILENAME)
 
 BIRD_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
 

@@ -1,6 +1,24 @@
 
 def source_label(code):
-    """音源代码 -> 中文名（音乐功能已移除，这里只做原样返回）"""
+    """
+    音源代码 -> 中文名。
+
+    ★★ 1.5.1：音乐功能回来了，这里改成读 `core/music.py` 的真实映射
+      （netease -> 网易 / qq -> QQ / kugou -> 酷狗）。
+      读不到时原样返回，绝不让菜单因为 import 异常而空掉。
+    """
+    try:
+        from .music import source_label as _sl
+    except Exception:
+        try:
+            from core.music import source_label as _sl
+        except Exception:
+            _sl = None
+    if _sl is not None:
+        try:
+            return str(_sl(code) or "")
+        except Exception:
+            pass
     return str(code or "")
 
 BAR_N = 8
@@ -2554,6 +2572,74 @@ def build_super_admin_menu(plugin) -> str:
         _bar_plain(),
     ])
 
+def build_music_menu(plugin) -> str:
+    """
+    ★★ 1.5.1：音乐功能主菜单。
+
+    结构（用户确定）：点歌「一行就会用」，搜歌 -> 选歌 走列表，
+    音源可切换，另外两条榜单随机指令。
+    ★ 输出**只有音乐卡片**（封面：音源 LOGO / 点歌人头像）。
+    """
+    mod = getattr(plugin, "music_module", None)
+
+    def _first(attr, dflt):
+        v = getattr(mod, attr, None) if mod else None
+        if isinstance(v, (list, tuple)):
+            for x in v:
+                s = str(x or "").strip()
+                if s:
+                    return s
+        return dflt
+
+    search = _first("search_names", "点歌")
+    find = _first("find_names", "搜歌")
+    pick = _first("pick_names", "选歌")
+    src = _first("source_names", "音源")
+    span_new = _first("span_new_names", "新歌榜随机")
+    span_hot = _first("span_hot_names", "热歌榜随机")
+    try:
+        limit = int(getattr(mod, "limit", 10) or 10)
+    except Exception:
+        limit = 10
+    try:
+        cur_src = mod.source_label() if mod else "QQ"
+    except Exception:
+        cur_src = "QQ"
+    try:
+        cover = mod.cover_style()
+    except Exception:
+        cover = "brand"
+    cover_txt = "音源 LOGO" if cover == "brand" else "点歌人头像"
+    try:
+        src_names = " / ".join(
+            source_label(c) for c in (mod.source_order() if mod
+                                      else ["netease", "qq", "kugou"]))
+    except Exception:
+        src_names = "网易 / QQ / 酷狗"
+    try:
+        _src0 = source_label((mod.source_order() if mod else ["qq"])[0] or "qq")
+    except Exception:
+        _src0 = "网易"
+    return "\n".join([
+        _bar(_entry_name(plugin, "music", "音乐功能")),
+        f"🎵{search} 歌名",
+        "　 搜索后**直接播第一首**（不用选歌）",
+        f"🔍{find} 歌名",
+        f"　 先出列表（最多 {limit} 首），再用「{pick} 序号」挑一首",
+        f"🔊{src} [音源名]",
+        f"　 不带参数看全部音源，带参数切换（当前：{cur_src}）",
+        f"　 可选：{src_names}",
+        f"🎲{span_new}　/　{span_hot}",
+        "　 从 QQ音乐榜单随机抽一首直接播",
+        "",
+        f"💡 只这一首换音源：{_src0}{search} 歌名（默认音源不变）",
+        f"💡 输出方式：**音乐卡片**（封面：{cover_txt}，后台可改）",
+        "💡 一次搜索只能选一首，想再选请重新「"
+        f"{find} 歌名」",
+        _bar_plain(),
+    ])
+
+
 MENU_REGISTRY = {
     "main":            ("主菜单",         "build_main_menu"),
     "meme":            ("接口系统",       "build_meme_menu"),
@@ -2605,6 +2691,8 @@ MENU_REGISTRY = {
     "pet_fight":       ("宠物玩法",       "build_pet_fight_menu"),
     "pet_item":        ("宠物道具",       "build_pet_item_menu"),
     "guess":           ("猜数功能",       "build_guess_menu"),
+    # ★★ 1.5.1：音乐功能（点歌 / 搜歌 / 选歌 / 音源 / 榜单随机，只发卡片）
+    "music":           ("音乐功能",       "build_music_menu"),
     "meme_admin":      ("接口管理",       "build_meme_admin_menu"),
     "word_admin":      ("词库管理",       "build_word_admin_menu"),
     "checkin_admin":   ("签到管理",       "build_checkin_admin_menu"),
@@ -2619,6 +2707,13 @@ MENU_REGISTRY = {
     "auth":            ("授权功能",       "build_auth_menu"),
     "auth_cmd":        ("授权指令",       "build_auth_cmd_menu"),
     "auth_query":      ("授权查询",       "build_auth_query_menu"),
+    "farm":            ("农场功能",       "build_farm_menu"),
+    "farm_plant":      ("种植管理",       "build_farm_plant_menu"),
+    "farm_seed":       ("种子说明",       "build_farm_seed_menu"),
+    "farm_fert":       ("农具说明",       "build_farm_fert_menu"),
+    "farm_livestock":  ("家畜说明",       "build_farm_livestock_menu"),
+    "farm_machine":    ("农机说明",       "build_farm_machine_menu"),
+    "farm_steal":      ("偷菜玩法",       "build_farm_steal_menu"),
 }
 
 def menu_default(plugin, menu_id: str) -> str:
@@ -2653,3 +2748,290 @@ def resolve_menu(plugin, menu_id: str, custom=None) -> str:
         if val:
             return val
     return menu_default(plugin, menu_id)
+
+
+# ============================================================
+# ★★ 1.6.0：农场功能菜单（本地版移植）
+# ============================================================
+
+def build_farm_menu(plugin) -> str:
+    """
+    ★★ 2.1.0：农场功能 —— **简约版**总入口。
+
+    ★ 用户要求：总菜单只做「分类入口」，各分类的正文放到**下级菜单**里，
+      这样一屏就能看完，不用来回滚。
+
+    下级菜单（入口名都后台可配）：
+        🌱 种植管理 / 🛒 种子说明 / 🧪 农具说明
+        🐕 家畜说明 / 🤖 农机说明 / 🥕 偷菜玩法
+    """
+    title = _entry_name(plugin, "farm", "农场功能")
+    e_plant = _entry_name(plugin, "farm_plant", "种植管理")
+    e_seed = _entry_name(plugin, "farm_seed", "种子说明")
+    e_fert = _entry_name(plugin, "farm_fert", "农具说明")
+    e_live = _entry_name(plugin, "farm_livestock", "家畜说明")
+    e_mach = _entry_name(plugin, "farm_machine", "农机说明")
+    e_steal = _entry_name(plugin, "farm_steal", "偷菜玩法")
+    status = _names_of(getattr(plugin, "cmd_farm_status", None),
+                       ["农场状态"])[0]
+    bagcmd = _names_of(getattr(plugin, "cmd_farm_bag", None),
+                       ["我的背包"])[0]
+    view = _names_of(getattr(plugin, "cmd_farm_view", None),
+                     ["我的农场"])[0]
+    # ★★ 2.1.x：**土地状态** —— 从「我的农场」拆出来的逐块明细指令
+    landcmd = _names_of(getattr(plugin, "cmd_farm_land", None),
+                        ["土地状态"])[0]
+    return _grid([
+        (f"🌱{e_plant}", f"🛒{e_seed}"),
+        (f"🧪{e_fert}", f"🐕{e_live}"),
+        (f"🤖{e_mach}", f"🥕{e_steal}"),
+        (f"📋{status}", f"📊{landcmd}"),
+        (f"🎒{bagcmd}", f"🌾{view}"),
+    ], title=title)
+
+
+def build_farm_plant_menu(plugin) -> str:
+    """下级菜单：🌱 种植管理（种植类指令 + 土地 / 经验 / 品质规则）"""
+    def _n1(attr, dflt):
+        return _names_of(getattr(plugin, attr, None), [dflt])[0]
+
+    view = _n1("cmd_farm_view", "我的农场")
+    status = _n1("cmd_farm_status", "农场状态")
+    landcmd = _n1("cmd_farm_land", "土地状态")
+    bagcmd = _n1("cmd_farm_bag", "我的背包")
+    plant = _n1("cmd_farm_plant", "种菜")
+    harvest = _n1("cmd_farm_harvest", "收获")
+    hall = _n1("cmd_farm_harvest_all", "一键收获")
+    seedshop = _n1("cmd_farm_shop", "种子商店")
+    fm = getattr(plugin, "farm_module", None)
+    init_lands = int(getattr(fm, "init_lands", 3) or 3)
+    max_lands = int(getattr(fm, "max_lands", 30) or 30)
+    max_level = int(getattr(fm, "max_level", 30) or 30)
+    exp_base = int(getattr(fm, "exp_base", 100) or 100)
+    exp_step = int(getattr(fm, "exp_step", 60) or 60)
+    up = int(getattr(fm, "upgrade_chance", 5) or 5)
+    b_red = int(getattr(fm, "bonus_red", 10) or 10)
+    b_black = int(getattr(fm, "bonus_black", 20) or 20)
+    rows = [
+        f"🌾{view}",
+        "　　等级 / 经验 / 土地数量 / 品质统计 / 看门家畜 / 被偷记录",
+        f"📊{landcmd} [页码]",
+        "　　★ **逐块**列每块地：有没有种 / 种的是什么 / 熟了没 / 还剩多久",
+        f"📋{status} [页码]",
+        "　　★ 只看**自己今天**的：收了多少 / 赚了多少 / 播了多少 /",
+        "　　　被偷与偷菜明细 / 饲料剩多少 / 农机 / 背包数量",
+        f"🎒{bagcmd}",
+        "　　背包：农场种子 + 农场饲料 + 签到商店食物",
+        "",
+        f"🌱{plant} 种子名 [地块编号]",
+        "　　从**背包**拿种子种下",
+        "　　· 不写编号 = 按顺序种**第一块空地**",
+        f"　　· 写了编号 = 就种那一块（例：{plant} 番茄 3）",
+        f"🧺{hall}",
+        "　　★ 所有成熟的一次收完并**直接卖掉**，积分立刻到手",
+        f"🧺{harvest}　／　{harvest} 编号",
+        "　　收全部 / 只收第 N 块",
+        "",
+        "📌土地与等级：",
+        f"　· 初始 {init_lands} 块，**每升 1 级解锁 1 块**，"
+        f"最多 {max_lands} 块",
+        f"　· 等级靠**农场经验**：种子自带 exp，**收获**时结算；",
+        f"　　升到 2 级要 {exp_base} 经验，之后每级多 {exp_step}"
+        f"（上限 Lv.{max_level}）",
+        f"　· 🏞**收获机遇**：每次收获 {up}% 概率给那块地升品质，",
+        f"　　普通 → 红土地 +{b_red}% 产量 → 黑土地 +{b_black}% 产量",
+        "　　（升级**永久**留在那块地上）",
+        "",
+        f"💡 种子不够先去「{seedshop}」买",
+        "💡 输出跟随本群「输出模式」：文本模式发文字 / 图片模式发图",
+    ]
+    return "\n".join(_finish(_entry_name(plugin, "farm_plant", "种植管理"),
+                             rows))
+
+
+def build_farm_seed_menu(plugin) -> str:
+    """
+    下级菜单：🛒 种子说明 —— **只讲怎么用**（买 / 种 / 收）。
+
+    ★★ 2.1.x：用户要求「图鉴菜单太长了」——
+      这里**不再逐条列种子的价格 / 生长时间 / 产量 / 经验 / 等级**
+      （那些看「种子商店」，一行一件 + 分页），
+      本页只回答一件事：**种子怎么用**。
+    """
+    def _n1(attr, dflt):
+        return _names_of(getattr(plugin, attr, None), [dflt])[0]
+
+    shop = _n1("cmd_farm_shop", "种子商店")
+    buy = _n1("cmd_farm_buy_seed", "购买种子")
+    plant = _n1("cmd_farm_plant", "种菜")
+    harvest = _n1("cmd_farm_harvest", "收获")
+    hall = _n1("cmd_farm_harvest_all", "一键收获")
+    bagcmd = _n1("cmd_farm_bag", "我的背包")
+    rows = [
+        f"🛒{shop} [页码]",
+        "　看当页在售种子：价格 / 时间",
+        f"🌾{buy} 种子名（或编号）",
+        "　扣积分，进背包（不自动种）",
+        f"🌱{plant} 种子名 [地块]",
+        "　从背包拿出来种下",
+        f"🧺{harvest}　／　{hall}",
+        "　收一块 / 全收并卖掉",
+        f"🎒{bagcmd}",
+        "　背包里还有哪些种子",
+        "",
+        "💡 等级不够先种菜攒经验",
+    ]
+    return "\n".join(_finish(_entry_name(plugin, "farm_seed", "种子说明"),
+                             rows))
+
+def build_farm_fert_menu(plugin) -> str:
+    """
+    下级菜单：🧪 农具说明 —— **只讲肥料怎么用**（买 / 施）。
+
+    ★★ 2.1.x：不再逐条列肥料的价格 / 效果 / 等级
+      （那些看「农具商店」，一行一件 + 分页）。
+    """
+    def _n1(attr, dflt):
+        return _names_of(getattr(plugin, attr, None), [dflt])[0]
+
+    shop = _n1("cmd_farm_impl_shop", "农具商店")
+    buy = _n1("cmd_farm_buy_item", "购买肥料")
+    use = _n1("cmd_farm_use_item", "施肥")
+    view = _n1("cmd_farm_view", "我的农场")
+    rows = [
+        f"🧪{shop} [页码]",
+        "　看当页在售肥料：价格 / 效果",
+        f"🧪{buy} 肥料名 [地块]",
+        "　扣积分并立刻施用",
+        f"🧪{use} 肥料名 [地块]",
+        "　同上，但不扣积分",
+        f"🌾{view}",
+        "　看每块地还剩多久成熟",
+        "",
+        "💡 不写地块 = 挑剩余最长的",
+        "💡 只有正在长的地能施肥",
+    ]
+    return "\n".join(_finish(_entry_name(plugin, "farm_fert", "农具说明"),
+                             rows))
+
+def build_farm_livestock_menu(plugin) -> str:
+    """
+    下级菜单：🐕 家畜说明 —— **只讲家畜 / 饲料怎么用**。
+
+    ★★ 2.1.x：不再逐条列家畜（防偷 %）和饲料（恢复体力）
+      （那些看「工具商店」，一行一件 + 分页）。
+    """
+    def _n1(attr, dflt):
+        return _names_of(getattr(plugin, attr, None), [dflt])[0]
+
+    shop = _n1("cmd_farm_dog", "工具商店")
+    buy = _n1("cmd_farm_buy_dog", "购买家畜")
+    equip = _n1("cmd_farm_equip_dog", "装备家畜")
+    myan = _n1("cmd_farm_my_animals", "我的家畜")
+    buyf = _n1("cmd_farm_buy_feed", "购买饲料")
+    feed = _n1("cmd_farm_feed", "喂食")
+    fm = getattr(plugin, "farm_module", None)
+    max_a = int(getattr(fm, "max_animals", 5) or 5)
+    rows = [
+        f"🐕{shop} [页码]",
+        "　看当页在售家畜 / 饲料",
+        f"🐕{buy} 家畜名（或编号）",
+        f"　扣积分（最多养 {max_a} 只）",
+        f"🐕{equip} 家畜名",
+        "　换上看门犬",
+        f"🏠{myan}",
+        "　看体力条 / 看门状态",
+        f"🥩{buyf} 饲料名",
+        "　扣积分，进背包",
+        f"🍖{feed} 饲料名 [家畜名]",
+        "　从背包拿一份喂",
+        "",
+        "💡 看门会累：体力归零不防偷",
+    ]
+    return "\n".join(_finish(
+        _entry_name(plugin, "farm_livestock", "家畜说明"), rows))
+
+def build_farm_machine_menu(plugin) -> str:
+    """
+    下级菜单：🤖 农机说明 —— **只讲农机怎么用**。
+
+    ★★ 2.1.x：不再逐条列农机（价格 / 功能 / 等级）
+      （那些看「工具商店」最后一页，一行一件 + 分页）。
+    """
+    def _n1(attr, dflt):
+        return _names_of(getattr(plugin, attr, None), [dflt])[0]
+
+    shop = _n1("cmd_farm_dog", "工具商店")
+    buytool = _n1("cmd_farm_buy_tool", "购买工具")
+    equiptool = _n1("cmd_farm_equip_tool", "装备工具")
+    status = _n1("cmd_farm_status", "农场状态")
+    bagcmd = _n1("cmd_farm_bag", "我的背包")
+    rows = [
+        f"🐕{shop} [页码]",
+        "　农机在商店最后一页",
+        f"🤖{buytool} 农机名",
+        "　扣积分（买了就装备）",
+        f"🤖{equiptool} 农机名",
+        "　开关式：再发一次卸下",
+        f"📋{status}",
+        "　看今天代收 / 代播多少",
+        f"🎒{bagcmd}",
+        "　播种机要用背包的种子",
+        "",
+        "💡 装备后每天自动干活一次",
+        "💡 全程静默，不发群消息",
+    ]
+    return "\n".join(_finish(
+        _entry_name(plugin, "farm_machine", "农机说明"), rows))
+
+
+def build_farm_steal_menu(plugin) -> str:
+    """
+    下级菜单：🥕 偷菜玩法
+
+    ★★ 2.1.0：**精简**（用户要求：「没必要的别输出了」）。
+      以前 29 行、还逐条列了 5 件偷菜装备的完整属性（价格/成功率/等级）。
+      现在只留：**怎么用 + 玩法要点**；
+      装备属性本来就能在「工具商店」里看到，不重复。
+    """
+    def _n1(attr, dflt):
+        return _names_of(getattr(plugin, attr, None), [dflt])[0]
+
+    steal = _n1("cmd_farm_steal", "偷菜")
+    stlog = _n1("cmd_farm_steal_log", "被偷记录")
+    status = _n1("cmd_farm_status", "农场状态")
+    shop = _n1("cmd_farm_dog", "工具商店")
+    buy_tool = _n1("cmd_farm_buy_tool", "购买工具")
+    equip_tool = _n1("cmd_farm_equip_tool", "装备工具")
+    fm = getattr(plugin, "farm_module", None)
+    base = int(getattr(fm, "steal_base_rate", 3) or 3)
+    ratio = int(getattr(fm, "steal_ratio", 30) or 30)
+    lim = int(getattr(fm, "steal_daily_limit", 3) or 3)
+    amin = int(getattr(fm, "steal_min_amount", 10) or 10)
+    cmin = int(getattr(fm, "steal_comp_min", 1) or 1)
+    cmax = int(getattr(fm, "steal_comp_max", 500) or 500)
+    on = bool(getattr(fm, "steal_enable", True))
+    rows = [
+        f"🥕{steal} @某人 ／ {steal} QQ号",
+        "　偷对方**已成熟**的作物",
+        f"🚨{stlog}",
+        "　看自己被谁偷了多少",
+        f"📋{status}",
+        "　看今天被偷 / 剩几次 / 当前成功率",
+        f"🐕{shop}",
+        "　买看门犬（防偷）／偷菜装备",
+        "",
+        "📌玩法",
+        f"　当前状态：{'✅ 已开启' if on else '❌ 已关闭'}",
+        f"　成功率 = 基础 {base}% + 装备 − 对方防偷",
+        f"　失败赔对方 {cmin}~{cmax}（被抓正着）",
+        f"　偷走该地 {ratio}% 产量（品质不会被偷）",
+        f"　每天 **{lim} 次**，跨天重置",
+        f"　只能偷已成熟的（产量 < {amin} 不值得偷）",
+        "　对方看门家畜**累了**就不防偷",
+        "",
+        f"💡 {buy_tool} 装备名 ／ {equip_tool} 装备名",
+    ]
+    return "\n".join(_finish(_entry_name(plugin, "farm_steal", "偷菜玩法"),
+                             rows))
+
